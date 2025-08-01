@@ -4,6 +4,7 @@ from views_pipeline_core.files.utils import read_dataframe
 from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
 from views_baseline.model.baseline import ZeroModel
+from views_baseline.model.baseline import LocfModel
 import pandas as pd
 from datetime import datetime
 
@@ -140,33 +141,34 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Trained model object (used in sweeps)
         """
         # Common paths and data loading (provided)
-        path_raw = self._model_path.data_raw # Path to raw data
-        path_artifacts = self._model_path.artifacts # Path to save model artifacts
-        run_type = self.config["run_type"] # e.g., "calibration", "validation", "forecasting"
-        df_viewser = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        ) # Dataframe obtained from viewser
-        partition_dict = self._data_loader.partition_dict # Partition dict from ViewsDataLoader
+        #path_raw = self._model_path.data_raw # Path to raw data
+        #path_artifacts = self._model_path.artifacts # Path to save model artifacts
+        #run_type = self.config["run_type"] # e.g., "calibration", "validation", "forecasting"
+        #df_viewser = read_dataframe(
+        #    path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
+        #) # Dataframe obtained from viewser
+        #partition_dict = self._data_loader.partition_dict # Partition dict from ViewsDataLoader
 
         # --- USER IMPLEMENTATION STARTS HERE ---
         # 1. Preprocessing
         #logger.info("Preprocessing data")
         # YOUR PREPROCESSING CODE HERE
 
-        loa = self.config["level"]
-        logger.info(f"Level of Analysis {loa}")
+        #loa = self.config["level"]
+        #logger.info(f"Level of Analysis {loa}")
         
         # 2. Model initialization
-        logger.info(f"Initializing ZeroModel with config: {self.config}")
+        logger.info(f"Baseline Models does not require training - skipping training")
+        logger.warning(f"Baseline Models does not require training - skipping training")
         # YOUR MODEL INITIALIZATION CODE HERE
-        self.model = ZeroModel(
-            targets=self.config["targets"],
-            partition_dict=partition_dict,
-            loa = loa
-        )
+        #self.model = ZeroModel(
+        #    targets=self.config["targets"],
+        #    partition_dict=partition_dict,
+        #    loa = loa
+        #)
 
-        logger.info("Fitting ZeroModel (noop)")
-        self.model.fit(df_viewser)
+        #logger.info("Fitting ZeroModel (noop)")
+        #self.model.fit(df_viewser)
         
         # 4. Save artifact (if not in sweep)
         #if not self.config["sweep"]:
@@ -175,7 +177,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         #    # YOUR SAVING CODE HERE
         #    # Example: model.save(path_artifacts / model_filename)
         
-        return self.model  # Return trained model for sweep evaluation
+        #return self.model  # Return trained model for sweep evaluation
         # --- USER IMPLEMENTATION ENDS HERE ---
 
     def _evaluate_model_artifact(
@@ -226,7 +228,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         # https://github.com/views-platform/views-pipeline-core/tree/main/views_pipeline_core/managers#dataframe-structures-for-evaluation-and-forecast-methods
 
         partition_dict = self._data_loader.partition_dict
-        self.model = ZeroModel(self.config["targets"], partition_dict, loa=loa)
+        self.model = LocfModel(self.config["targets"], partition_dict, loa=loa)
         self.model.fit(df_viewser)
 
         logger.info(f"Generating predictions for {eval_type} evaluation")
@@ -283,7 +285,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         partition_dict = self._data_loader.partition_dict
 
-        self.model = ZeroModel(self.config["targets"], partition_dict, loa=loa)
+        self.model = LocfModel(self.config["targets"], partition_dict, loa=loa)
         self.model.fit(df_viewser)
 
         forecasts = self.model.predict(sequence_number=0, df=df_viewser)

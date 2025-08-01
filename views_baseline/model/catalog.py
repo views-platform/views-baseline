@@ -1,4 +1,5 @@
 from views_baseline.model.baseline import ZeroModel
+from views_baseline.model.baseline import LocfModel
 
 
 class BaselineModelCatalog:
@@ -6,6 +7,7 @@ class BaselineModelCatalog:
         self.config = config
         self.models = {
             "ZeroModel": self._get_zero_model,
+            "LocfModel": self._get_locf_model,
         }
 
     def get_model(self, model_name: str):
@@ -16,5 +18,8 @@ class BaselineModelCatalog:
 
     def _get_zero_model(self):
         return ZeroModel(targets=self.config["targets"])
+    
+    def _get_locf_model(self):
+        return LocfModel(targets=self.config["targets"])
 
 
