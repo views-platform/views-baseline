@@ -7,6 +7,8 @@ from views_baseline.model.baseline import ZeroModel
 from views_baseline.model.baseline import LocfModel
 import pandas as pd
 from datetime import datetime
+from views_baseline.model.catalog import BaselineModelCatalog
+
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,15 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         path_artifacts = self._model_path.artifacts
         run_type = self.config["run_type"]
         loa = self.config["level"]
+        partition_dict = self._data_loader.partition_dict
+        catalog = BaselineModelCatalog(
+        config=self.config,
+        partition_dict=partition_dict,
+        loa=loa)
+        model_name = self.config["algorithm"]  # e.g., "ZeroModel" or "LocfModel"
+        self.model = catalog.get_model(model_name)
+
+        logger.info(f"Model type is {model_name}")
 
         # Resolve artifact path
         #if artifact_name:
@@ -227,8 +238,6 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         # The expected format of your prediction dataframe can be found here: 
         # https://github.com/views-platform/views-pipeline-core/tree/main/views_pipeline_core/managers#dataframe-structures-for-evaluation-and-forecast-methods
 
-        partition_dict = self._data_loader.partition_dict
-        self.model = LocfModel(self.config["targets"], partition_dict, loa=loa)
         self.model.fit(df_viewser)
 
         logger.info(f"Generating predictions for {eval_type} evaluation")
@@ -263,6 +272,14 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         path_artifacts = self._model_path.artifacts
         run_type = self.config["run_type"]
         loa = self.config["level"]
+        partition_dict = self._data_loader.partition_dict
+        catalog = BaselineModelCatalog(
+        config=self.config,
+        partition_dict=partition_dict,
+        loa=loa)
+        model_name = self.config["algorithm"]  # e.g., "ZeroModel" or "LocfModel"
+        self.model = catalog.get_model(model_name)
+        logger.info(f"Model type is {model_name}")
 
         # Resolve artifact path
         #if artifact_name:
@@ -283,9 +300,9 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         # 2. Generate forecasts
         logger.info("Generating forecasts")
 
-        partition_dict = self._data_loader.partition_dict
+        #partition_dict = self._data_loader.partition_dict
 
-        self.model = LocfModel(self.config["targets"], partition_dict, loa=loa)
+        #self.model = model_class(self.config["targets"], partition_dict, loa=loa)
         self.model.fit(df_viewser)
 
         forecasts = self.model.predict(sequence_number=0, df=df_viewser)
