@@ -1,5 +1,4 @@
-from views_baseline.model.baseline import ZeroModel
-from views_baseline.model.baseline import LocfModel, AverageModel
+from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel
 
 
 class BaselineModelCatalog:
