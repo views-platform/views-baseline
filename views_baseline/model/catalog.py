@@ -1,5 +1,5 @@
 from views_baseline.model.baseline import ZeroModel
-from views_baseline.model.baseline import LocfModel
+from views_baseline.model.baseline import LocfModel, AverageModel
 
 
 class BaselineModelCatalog:
@@ -14,6 +14,7 @@ class BaselineModelCatalog:
         self.models = {
             "ZeroModel": self._get_zero_model,
             "LocfModel": self._get_locf_model,
+            "AverageModel":self._get_average_model
         }
 
     def get_model(self, model_name: str):
@@ -37,6 +38,14 @@ class BaselineModelCatalog:
     def _get_locf_model(self):
         return LocfModel( 
             targets=self.config["targets"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
+    
+    def _get_average_model(self):
+        return AverageModel( 
+            targets=self.config["targets"],
+            months = self.config["months"],
             partition_dict=self.partition_dict,
             loa=self.loa
         )
