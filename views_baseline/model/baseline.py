@@ -177,7 +177,7 @@ class AverageModel:
         prediction_start = test_start + sequence_number
         prediction_end = prediction_start + output_length
 
-        logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
+        logger.info(f"Generating AverAGE predictions on level: {self.entity_idx}")
 
         train_end = test_start - 1
         loa_ids = df.loc[df.index.get_level_values(self.time_idx) == train_end].index.get_level_values(self.entity_idx).unique()
@@ -205,3 +205,80 @@ class AverageModel:
 
         return df_preds[pred_cols]
 
+class ConflictologyModel:
+    def __init__(self, targets: List[str], months: int, partition_dict: dict, loa: str):
+        """
+        Baseline model that carries forward the last observation for each entity and target.
+        """
+        self.targets = targets
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.months = months
+        self.time_idx = None
+        self.entity_idx = None
+        self.last_n_months = None
+
+    def fit(self, df: pd.DataFrame):
+        """
+        Store the last available observation before the test period for each entity.
+        """
+        test_start, _ = self.partition_dict["test"]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+
+         # filter to training part and sort
+        df_fit = df[df.index.get_level_values(self.time_idx) < test_start]
+        df_fit = df_fit.sort_index(level=[self.entity_idx, self.time_idx])
+
+        logger.info(f"Fitting ConflictologyModel on level: {self.entity_idx}")
+
+        # Group by loa_index and take mean of last 6 rows
+        self.last_n_months = (
+        df_fit.groupby(level=self.entity_idx, group_keys=False).tail(self.months))
+
+        return self
+
+    def predict(
+        self,
+        df: pd.DataFrame,
+        sequence_number: int,
+        output_length: int = 36,
+    ) -> pd.DataFrame:
+        """
+        Repeats the last observed value for each target and entity over the forecast horizon.
+        """
+        test_start, _ = self.partition_dict["test"]
+        prediction_start = test_start + sequence_number
+        prediction_end = prediction_start + output_length
+
+        logger.info(f"Generating Conflictology predictions on level: {self.entity_idx}")
+
+        train_end = test_start - 1
+        loa_ids = df.loc[df.index.get_level_values(self.time_idx) == train_end].index.get_level_values(self.entity_idx).unique()
+
+        time_ids = list(range(prediction_start, prediction_end))
+
+        records = []
+        for cid in loa_ids:
+            # Get last n months for this entity
+            history = self.last_n_months.xs(cid, level=self.entity_idx, drop_level=False)
+
+            if history.empty:
+                logger.warning(f"No history found for {self.entity_idx}={cid}")
+                continue
+
+            # Turn the last n months into a list of draws per target
+            for tid in time_ids:
+                row = {self.time_idx: tid, self.entity_idx: cid}
+                for t in self.targets:
+                    # conflictology model: return the *list* of last n values as a column
+                    row[f"pred_{t}"] = history[t].tolist()
+                records.append(row)
+            #if cid == 65:
+            #    logger.info(f"Example for {self.entity_idx}={cid}, history:\n{history}")
+            #    logger.info(f"Example row for time {tid}:\n{row}")
+
+        df_preds = pd.DataFrame(records)
+        df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
+
+        return df_preds

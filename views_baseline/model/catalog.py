@@ -1,4 +1,4 @@
-from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel
+from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel, ConflictologyModel
 
 
 class BaselineModelCatalog:
@@ -13,7 +13,8 @@ class BaselineModelCatalog:
         self.models = {
             "ZeroModel": self._get_zero_model,
             "LocfModel": self._get_locf_model,
-            "AverageModel":self._get_average_model
+            "AverageModel":self._get_average_model,
+            "ConflictologyModel":self._get_conflictology_model,
         }
 
     def get_model(self, model_name: str):
@@ -49,4 +50,11 @@ class BaselineModelCatalog:
             loa=self.loa
         )
 
+    def _get_conflictology_model(self):
+        return ConflictologyModel( 
+            targets=self.config["targets"],
+            months = self.config["months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
 
