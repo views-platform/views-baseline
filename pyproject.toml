@@ -1,18 +1,14 @@
-[project]
+[tool.poetry]
 name = "views-baseline"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Sonhaf-prio",email = "sonhaf@prio.org"}
-]
-readme = "README.md"
-requires-python = ">=3.11,<3.15"
-dependencies = [
+    "Sonja Häffner <sonhaf@prio.org>"
 ]
 
-[tool.poetry]
-packages = [{include = "views_baseline"}]
-
+[tool.poetry.dependencies]
+python = ">=3.11,<3.15"
+views-pipeline-core = ">=2.0.0,<=3.0.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
