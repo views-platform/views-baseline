@@ -1,5 +1,6 @@
 import pandas as pd
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -75,8 +76,8 @@ def make_manager(config, partition_dict):
     # Attach config and minimal path / data_loader stubs
     mgr.config = config
     mgr._model_path = SimpleNamespace(
-        data_raw="dummy_raw_path",
-        artifacts="dummy_artifacts_path",
+        data_raw=Path("dummy_raw_path"),
+        artifacts=Path("dummy_artifacts_path"),
     )
     mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
 

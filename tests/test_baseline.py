@@ -378,9 +378,11 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
     )
     model.fit(conflictology_df_pgm)
 
+    time_idx, entity_idx = conflictology_df_pgm.index.names
     test_start, _ = partition_dict["test"]
+
     seq_num = 2
-    output_length = 36
+    output_length = 4
 
     preds = model.predict(
         df=conflictology_df_pgm,
@@ -388,14 +390,36 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
         output_length=output_length,
     )
 
-    time_idx, entity_idx = conflictology_df_pgm.index.names
+    # --- prediction window checks ---
+    train_end = test_start - 1 + seq_num
+    prediction_start = train_end + 1
+    prediction_end = prediction_start + output_length - 1
 
-    # Time index shift as for other baselines
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert preds.index.get_level_values(time_idx).min() == prediction_start
+    assert preds.index.get_level_values(time_idx).max() == prediction_end
 
-    # And still list-valued predictions
-    any_row = preds.iloc[0]
-    for col in preds.columns:
-        assert isinstance(any_row[col], list)
-        assert len(any_row[col]) == months
+    # --- history window checks ---
+    history_start = train_end - (months - 1)
+
+    # build expected lists from the shifted history window
+    df_hist = conflictology_df_pgm[
+        (conflictology_df_pgm.index.get_level_values(time_idx) >= history_start)
+        & (conflictology_df_pgm.index.get_level_values(time_idx) <= train_end)
+    ].sort_index(level=[entity_idx, time_idx])
+
+    for ent in df_hist.index.get_level_values(entity_idx).unique():
+        ent_hist = df_hist.xs(ent, level=entity_idx)
+        for target in targets:
+            expected_list = ent_hist[target].tolist()
+
+            # at first prediction time for this entity
+            first_time = prediction_start
+            cell_value = preds.loc[(first_time, ent), f"pred_{target}"]
+
+            assert isinstance(cell_value, list)
+            assert len(cell_value) == months
+            assert cell_value == expected_list
+
+            for t in range(prediction_start, prediction_end + 1):
+                assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
+
