@@ -1,4 +1,3 @@
-
 from views_pipeline_core.managers.model import ModelPathManager, ForecastingModelManager
 from views_pipeline_core.files.utils import read_dataframe
 from views_pipeline_core.configs.pipeline import PipelineConfig
@@ -20,36 +19,32 @@ class BaselineForecastingModelManager(ForecastingModelManager):
     """
 
     def __init__(
-        self, 
-        model_path: ModelPathManager, 
+        self,
+        model_path: ModelPathManager,
         wandb_notifications: bool = False,
-        use_prediction_store: bool = False
+        use_prediction_store: bool = False,
     ) -> None:
         """
         Initialize Baseline Forecasting Model Manager.
         """
         super().__init__(model_path, wandb_notifications, use_prediction_store)
-        
+
         # Add your custom initialization below
         logger.info("Initializing BaselineModelManager")
-    
+
         # YOUR CODE HERE
 
     def _train_model_artifact(self) -> any:
         """
         Train and save your model artifact.
- 
+
         """
-        
+
         # 2. Model initialization
-        logger.info(f"Baseline Models does not require training - skipping training")
         logger.warning(f"Baseline Models does not require training - skipping training")
 
-
     def _evaluate_model_artifact(
-        self, 
-        eval_type: str, 
-        artifact_name: str = None
+        self, eval_type: str, artifact_name: str = None
     ) -> list:
         """
         Evaluate trained model artifact.
@@ -63,15 +58,13 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         loa = self.config["level"]
         partition_dict = self._data_loader.partition_dict
         catalog = BaselineModelCatalog(
-        config=self.config,
-        partition_dict=partition_dict,
-        loa=loa)
-        model_name = self.config["algorithm"]  
+            config=self.config, partition_dict=partition_dict, loa=loa
+        )
+        model_name = self.config["algorithm"]
         self.model = catalog.get_model(model_name)
 
         logger.info(f"Model type is {model_name}")
 
-        
         self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
         df_viewser = read_dataframe(
             path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
@@ -81,14 +74,14 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         logger.info(f"Generating predictions for {eval_type} evaluation")
         predictions = []
-        
+
         # Determine evaluation length
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
         for seq_num in range(sequence_numbers):
             # YOUR PREDICTION CODE HERE
-            preds = self.model.predict(df = df_viewser,sequence_number=seq_num)
+            preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
             predictions.append(preds)  # Append predictions for each sequence
-        
+
         return predictions
 
     def _forecast_model_artifact(self, artifact_name: str = None) -> pd.DataFrame:
@@ -103,14 +96,12 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         loa = self.config["level"]
         partition_dict = self._data_loader.partition_dict
         catalog = BaselineModelCatalog(
-        config=self.config,
-        partition_dict=partition_dict,
-        loa=loa)
+            config=self.config, partition_dict=partition_dict, loa=loa
+        )
         model_name = self.config["algorithm"]  # e.g., "ZeroModel" or "LocfModel"
         self.model = catalog.get_model(model_name)
         logger.info(f"Model type is {model_name}")
 
-        
         self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
         df_viewser = read_dataframe(
             path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
@@ -124,8 +115,11 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         return forecasts
 
-
     def _evaluate_sweep(self, eval_type: str, model: any) -> list:
-    
-        logger.info(f"Baseline Models does not support sweep evaluation - skipping evaluation")
-        raise NotImplementedError("Baseline Models does not support sweep evaluation - skipping evaluation")
+
+        logger.info(
+            f"Baseline Models does not support sweep evaluation - skipping evaluation"
+        )
+        raise NotImplementedError(
+            "Baseline Models does not support sweep evaluation - skipping evaluation"
+        )

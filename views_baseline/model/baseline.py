@@ -3,18 +3,18 @@ import numpy as np
 from typing import List, Optional
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 
-
 class ZeroModel:
-    def __init__(self, targets: List[str], partition_dict:dict, loa:str):
+    def __init__(self, targets: List[str], partition_dict: dict, loa: str):
         """
         Baseline model that predicts 0 for all targets.
         """
         self.targets = targets
         self.partition_dict = partition_dict
-        self.loa=loa
+        self.loa = loa
 
     def fit(self, df: pd.DataFrame):
         # No training needed
@@ -34,14 +34,18 @@ class ZeroModel:
         time_idx = df.index.names[0]
         entity_idx = df.index.names[1]
         prediction_start = test_start + sequence_number
-        logger.debug(f'prediction_start: {prediction_start}')
+        logger.debug(f"prediction_start: {prediction_start}")
         prediction_end = prediction_start + output_length
-        logger.debug(f'prediction_end: {prediction_end}')
-        
+        logger.debug(f"prediction_end: {prediction_end}")
+
         logger.info(f"Currently running a {entity_idx} model")
 
         train_end = test_start - 1
-        loa_ids = df.loc[df.index.get_level_values(time_idx) == train_end].index.get_level_values(entity_idx).unique()
+        loa_ids = (
+            df.loc[df.index.get_level_values(time_idx) == train_end]
+            .index.get_level_values(entity_idx)
+            .unique()
+        )
 
         time_ids = list(range(prediction_start, prediction_end))
 
@@ -58,9 +62,8 @@ class ZeroModel:
         df_preds = pd.DataFrame(records)
         df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
         pred_cols = [f"pred_{t}" for t in self.targets]
-        
+
         return df_preds[pred_cols]
-    
 
 
 class LocfModel:
@@ -72,7 +75,7 @@ class LocfModel:
         self.partition_dict = partition_dict
         self.loa = loa
         self.last_observations = None
-        self.time_idx = None,
+        self.time_idx = (None,)
         self.entity_idx = None
 
     def fit(self, df: pd.DataFrame):
@@ -100,18 +103,24 @@ class LocfModel:
         test_start, _ = self.partition_dict["test"]
         prediction_start = test_start + sequence_number
         prediction_end = prediction_start + output_length
-        
+
         logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
 
-        #unique ids at test_start -1
+        # unique ids at test_start -1
         train_end = test_start - 1
-        loa_ids = df.loc[df.index.get_level_values(self.time_idx) == train_end].index.get_level_values(self.entity_idx).unique()
+        loa_ids = (
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
         time_ids = list(range(prediction_start, prediction_end))
 
         records = []
         for cid in loa_ids:
             if cid not in self.last_observations.index:
-                logger.warning(f"No last observation found for {self.entity_idx} = {cid}")
+                logger.warning(
+                    f"No last observation found for {self.entity_idx} = {cid}"
+                )
                 continue
 
             last_vals = self.last_observations.loc[cid]
@@ -157,9 +166,8 @@ class AverageModel:
         df = df.sort_index(level=[self.entity_idx, self.time_idx])
 
         # Group by loa_index and take mean of last 6 rows
-        last_6_rows_mean = (
-            df.groupby(level=self.entity_idx, group_keys=False)
-            .apply(lambda g: g.tail(self.months)[self.targets].mean())
+        last_6_rows_mean = df.groupby(level=self.entity_idx, group_keys=False).apply(
+            lambda g: g.tail(self.months)[self.targets].mean()
         )
         self.mean = last_6_rows_mean
         return self
@@ -180,14 +188,20 @@ class AverageModel:
         logger.info(f"Generating AverAGE predictions on level: {self.entity_idx}")
 
         train_end = test_start - 1
-        loa_ids = df.loc[df.index.get_level_values(self.time_idx) == train_end].index.get_level_values(self.entity_idx).unique()
+        loa_ids = (
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
 
         time_ids = list(range(prediction_start, prediction_end))
 
         records = []
         for cid in loa_ids:
             if cid not in self.mean.index:
-                logger.warning(f"No last observation found for {self.entity_idx} = {cid}")
+                logger.warning(
+                    f"No last observation found for {self.entity_idx} = {cid}"
+                )
                 continue
 
             last_vals = self.mean.loc[cid]
@@ -205,10 +219,11 @@ class AverageModel:
 
         return df_preds[pred_cols]
 
+
 class ConflictologyModel:
     def __init__(self, targets: List[str], months: int, partition_dict: dict, loa: str):
         """
-        Baseline model that takes the set of the last w=12 months of data for a given cm/pgm (so for a sequence 
+        Baseline model that takes the set of the last w=12 months of data for a given cm/pgm (so for a sequence
         starting at month m, the 12 months from m-12 to m-1).
         """
         self.targets = targets
@@ -223,28 +238,20 @@ class ConflictologyModel:
         """
         Store the index names.
         """
-        #test_start, _ = self.partition_dict["test"]
+
         self.time_idx = df.index.names[0]
         self.entity_idx = df.index.names[1]
 
-         # filter to training part and sort
-        #df_fit = df[df.index.get_level_values(self.time_idx) < test_start]
-        #df_fit = df_fit.sort_index(level=[self.entity_idx, self.time_idx])
-
-        #logger.info(f"Fitting ConflictologyModel on level: {self.entity_idx}")
-
-        # Group by loa_index and take mean of last 6 rows
-        #self.last_n_months = (
-        #df_fit.groupby(level=self.entity_idx, group_keys=False).tail(self.months))
-
         return self
 
-    def predict(self, df: pd.DataFrame, sequence_number: int, output_length: int = 36) -> pd.DataFrame:
+    def predict(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
 
         # --- 1. Compute sliding history window for this sequence ---
         # train_end is "last month with data" for this sequence
-        train_end = test_start - 1 + sequence_number
+        train_end = test_start - 1
         history_start = train_end - (self.months - 1)
 
         time_idx = self.time_idx
@@ -259,18 +266,19 @@ class ConflictologyModel:
         ]
 
         # last `months` per entity
-        last_n_months = (
-            df_hist.groupby(level=entity_idx, group_keys=False)
-            .apply(lambda g: g.tail(self.months))
+        last_n_months = df_hist.groupby(level=entity_idx, group_keys=False).apply(
+            lambda g: g.tail(self.months)
         )
 
         # entities present at train_end (i.e. have data at the last month with data)
-        loa_ids = df_hist.loc[
-            df_hist.index.get_level_values(time_idx) == train_end
-        ].index.get_level_values(entity_idx).unique()
+        loa_ids = (
+            df_hist.loc[df_hist.index.get_level_values(time_idx) == train_end]
+            .index.get_level_values(entity_idx)
+            .unique()
+        )
 
         # --- 2. Forecast window for this sequence ---
-        prediction_start = train_end + 1
+        prediction_start = test_start + sequence_number
         prediction_end = prediction_start + output_length
         time_ids = list(range(prediction_start, prediction_end))
 
