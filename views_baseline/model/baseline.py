@@ -312,3 +312,113 @@ class ConflictologyModel:
             )
 
         return df_preds
+
+
+class MirrorModel:
+    def __init__(self, targets: List[str], partition_dict: dict, loa: str):
+        """
+        Baseline model that mirrors (reverses) the historical data to create forecasts.
+        
+        The forecast is the reverse of the history before the test period.
+        For example, if the last 36 months before test are [v1, v2, ..., v35, v36],
+        the forecast will be [v36, v35, ..., v2, v1].
+        """
+        self.targets = targets
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.mirrored_history = None
+        self.time_idx = None
+        self.entity_idx = None
+
+    def fit(self, df: pd.DataFrame, output_length: int = 36):
+        """
+        Extract and reverse the last output_length months of history for each entity.
+        
+        Args:
+            df: DataFrame with MultiIndex (time, entity)
+            output_length: Number of historical months to mirror (default 36)
+        """
+        test_start, _ = self.partition_dict["test"]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+        
+        # Filter to training data only
+        df_train = df[df.index.get_level_values(self.time_idx) < test_start]
+        
+        logger.info(f"Fitting MirrorModel on level: {self.entity_idx}")
+        
+        # Sort by entity and time
+        df_train = df_train.sort_index(level=[self.entity_idx, self.time_idx])
+        
+        # Get last output_length rows per entity and reverse them
+        self.mirrored_history = {}
+        for entity_id in df_train.index.get_level_values(self.entity_idx).unique():
+            entity_data = df_train.xs(entity_id, level=self.entity_idx)
+            # Take last output_length months and reverse
+            last_n = entity_data[self.targets].tail(output_length)
+            # Reverse the order (mirror)
+            mirrored = last_n.iloc[::-1].reset_index(drop=True)
+            self.mirrored_history[entity_id] = mirrored
+        
+        return self
+
+    def predict(
+        self,
+        df: pd.DataFrame,
+        sequence_number: int,
+        output_length: int = 36,
+    ) -> pd.DataFrame:
+        """
+        Generates forecasts by mirroring the historical data.
+        
+        The prediction at step k is the value from (output_length - k) months before test_start.
+        """
+        test_start, _ = self.partition_dict["test"]
+        prediction_start = test_start + sequence_number
+        prediction_end = prediction_start + output_length
+
+        logger.info(f"Generating Mirror predictions on level: {self.entity_idx}")
+
+        # Get entities available at train_end
+        train_end = test_start - 1
+        loa_ids = (
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
+
+        time_ids = list(range(prediction_start, prediction_end))
+
+        records = []
+        for cid in loa_ids:
+            if cid not in self.mirrored_history:
+                logger.warning(
+                    f"No mirrored history found for {self.entity_idx} = {cid}"
+                )
+                continue
+
+            mirrored_vals = self.mirrored_history[cid]
+            n_available = len(mirrored_vals)
+            
+            for i, tid in enumerate(time_ids):
+                row = {
+                    self.time_idx: tid,
+                    self.entity_idx: cid,
+                }
+                # Use mirrored value if available, otherwise use last available
+                idx = min(i, n_available - 1)
+                for t in self.targets:
+                    row[f"pred_{t}"] = mirrored_vals[t].iloc[idx] if idx < n_available else 0.0
+                records.append(row)
+
+        df_preds = pd.DataFrame(records)
+        if not df_preds.empty:
+            df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
+        else:
+            df_preds = pd.DataFrame(columns=[f"pred_{t}" for t in self.targets])
+            df_preds.index = pd.MultiIndex.from_arrays(
+                [[] for _ in range(2)], names=[self.time_idx, self.entity_idx]
+            )
+        
+        pred_cols = [f"pred_{t}" for t in self.targets]
+        return df_preds[pred_cols]
