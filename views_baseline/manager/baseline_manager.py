@@ -80,6 +80,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         for seq_num in range(sequence_numbers):
             # YOUR PREDICTION CODE HERE
             preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
+            # preds = preds.clip(lower=1e-4)
             predictions.append(preds)  # Append predictions for each sequence
 
         return predictions

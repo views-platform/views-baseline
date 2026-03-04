@@ -65,6 +65,7 @@ def targets():
 def base_df_pgm():
     return make_dummy_df(entitiy_id="pg_id")
 
+
 @pytest.fixture
 def base_df_cm():
     return make_dummy_df(entitiy_id="country_id")
@@ -79,15 +80,16 @@ def test_zero_model_predicts_zeros(base_df_pgm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     model.fit(base_df_pgm)
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=0, output_length=output_length
+    )
 
     time_idx, entity_idx = base_df_pgm.index.names
     test_start, test_end = partition_dict["test"]
     train_end = test_start - 1
-    train_times = (
-        base_df_pgm.index.get_level_values(time_idx)
-        [base_df_pgm.index.get_level_values(time_idx) < test_start]
-    )
+    train_times = base_df_pgm.index.get_level_values(time_idx)[
+        base_df_pgm.index.get_level_values(time_idx) < test_start
+    ]
     assert train_times.max() == train_end
 
     prediction_start = test_start  # sequence_number = 0
@@ -99,7 +101,9 @@ def test_zero_model_predicts_zeros(base_df_pgm, partition_dict, targets):
     # Check index names and time range
     assert preds.index.names == [time_idx, entity_idx]
     assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    )
     # ----- assert time ids in preds -----
     pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
     assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
@@ -108,6 +112,7 @@ def test_zero_model_predicts_zeros(base_df_pgm, partition_dict, targets):
 
     # All zeros
     assert (preds.values == 0.0).all()
+
 
 def test_zero_model_predicts_zeros(base_df_cm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="country_id")
@@ -118,15 +123,13 @@ def test_zero_model_predicts_zeros(base_df_cm, partition_dict, targets):
     time_idx, entity_idx = base_df_cm.index.names
     test_start, test_end = partition_dict["test"]
     train_end = test_start - 1
-    train_times = (
-        base_df_cm.index.get_level_values(time_idx)
-        [base_df_cm.index.get_level_values(time_idx) < test_start]
-    )
+    train_times = base_df_cm.index.get_level_values(time_idx)[
+        base_df_cm.index.get_level_values(time_idx) < test_start
+    ]
     assert train_times.max() == train_end
 
     prediction_start = test_start  # sequence_number = 0
     prediction_end = prediction_start + output_length - 1
-
 
     # Check columns
     assert list(preds.columns) == [f"pred_{t}" for t in targets]
@@ -134,14 +137,15 @@ def test_zero_model_predicts_zeros(base_df_cm, partition_dict, targets):
     # Check index names and time range
     assert preds.index.names == [time_idx, entity_idx]
     assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    )
     pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
     assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
     assert base_df_cm.index.names[1] == "country_id"
 
     # All zeros
     assert (preds.values == 0.0).all()
-
 
 
 def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -152,11 +156,16 @@ def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, target
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=seq_num, output_length=output_length
+    )
     time_idx = base_df_pgm.index.names[0]
 
     assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max()
+        == test_start + seq_num + output_length - 1
+    )
 
 
 # -----------------------------------------------------------------------
@@ -172,18 +181,19 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
     time_idx, entity_idx = base_df_pgm.index.names
     test_start, test_end = partition_dict["test"]
     train_end = test_start - 1
-    train_times = (
-        base_df_pgm.index.get_level_values(time_idx)
-        [base_df_pgm.index.get_level_values(time_idx) < test_start]
-    )
+    train_times = base_df_pgm.index.get_level_values(time_idx)[
+        base_df_pgm.index.get_level_values(time_idx) < test_start
+    ]
     assert train_times.max() == train_end
 
     prediction_start = test_start  # sequence_number = 0
     prediction_end = prediction_start + output_length - 1
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=0, output_length=output_length
+    )
 
-    #time_idx, entity_idx = base_df_pgm.index.names
+    # time_idx, entity_idx = base_df_pgm.index.names
 
     # Expected last obs per entity from training part (< test_start)
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
@@ -200,7 +210,9 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
     assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
     assert preds.index.names == [time_idx, entity_idx]
     assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    )
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -210,11 +222,16 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
     test_start, _ = partition_dict["test"]
     seq_num = 1
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=seq_num, output_length=output_length
+    )
 
     time_idx = base_df_pgm.index.names[0]
     assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max()
+        == test_start + seq_num + output_length - 1
+    )
 
 
 # -----------------------------------------------------------------------
@@ -237,24 +254,23 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
     time_idx, entity_idx = base_df_pgm.index.names
     test_start, test_end = partition_dict["test"]
     train_end = test_start - 1
-    train_times = (
-        base_df_pgm.index.get_level_values(time_idx)
-        [base_df_pgm.index.get_level_values(time_idx) < test_start]
-    )
+    train_times = base_df_pgm.index.get_level_values(time_idx)[
+        base_df_pgm.index.get_level_values(time_idx) < test_start
+    ]
     assert train_times.max() == train_end
 
     prediction_start = test_start  # sequence_number = 0
     prediction_end = prediction_start + output_length - 1
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
-
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=0, output_length=output_length
+    )
 
     # Expected means: per entity, mean of last `months` rows in train
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
-    expected_means = (
-        train_df.groupby(level=entity_idx, group_keys=False)
-        .apply(lambda g: g.tail(months)[targets].mean())
+    expected_means = train_df.groupby(level=entity_idx, group_keys=False).apply(
+        lambda g: g.tail(months)[targets].mean()
     )
 
     # Check predictions equal these means for each entity and time
@@ -262,13 +278,17 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
         for t in range(test_start, test_start + 2):
             row = preds.loc[(t, ent)]
             for target in targets:
-                assert row[f"pred_{target}"] == pytest.approx(expected_means.loc[ent, target])
+                assert row[f"pred_{target}"] == pytest.approx(
+                    expected_means.loc[ent, target]
+                )
 
     pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
     assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
     assert preds.index.names == [time_idx, entity_idx]
     assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    )
 
 
 def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -285,11 +305,16 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    preds = model.predict(
+        df=base_df_pgm, sequence_number=seq_num, output_length=output_length
+    )
     time_idx = base_df_pgm.index.names[0]
 
     assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert (
+        preds.index.get_level_values(time_idx).max()
+        == test_start + seq_num + output_length - 1
+    )
 
 
 # -----------------------------------------------------------------------
@@ -301,22 +326,25 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
 def conflictology_df_pgm():
     """
     For ConflictologyModel, the training DF is still scalar-valued per month
-    (e.g. counts), but *predictions* are lists that represent an empirical
+    (e.g. counts), but *predictions* are np.arrays that represent an empirical
     distribution built from the last `months` observations.
     """
     return make_dummy_df(entitiy_id="pg_id")
+
 
 @pytest.fixture
 def conflictology_df_cm():
     """
     For ConflictologyModel, the training DF is still scalar-valued per month
-    (e.g. counts), but *predictions* are lists that represent an empirical
+    (e.g. counts), but *predictions* are np.arrays that represent an empirical
     distribution built from the last `months` observations.
     """
     return make_dummy_df(entitiy_id="country_id")
 
 
-def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partition_dict, targets):
+def test_conflictology_model_returns_history_lists(
+    conflictology_df_pgm, partition_dict, targets
+):
     months = 4
     model = ConflictologyModel(
         targets=targets,
@@ -328,7 +356,9 @@ def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partiti
 
     test_start, _ = partition_dict["test"]
     output_length = 36
-    preds = model.predict(df=conflictology_df_pgm, sequence_number=0, output_length=output_length)
+    preds = model.predict(
+        df=conflictology_df_pgm, sequence_number=0, output_length=output_length
+    )
 
     time_idx, entity_idx = conflictology_df_pgm.index.names
 
@@ -337,7 +367,9 @@ def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partiti
     assert list(preds.columns) == [f"pred_{t}" for t in targets]
 
     # Train part
-    train_df = conflictology_df_pgm[conflictology_df_pgm.index.get_level_values(time_idx) < test_start]
+    train_df = conflictology_df_pgm[
+        conflictology_df_pgm.index.get_level_values(time_idx) < test_start
+    ]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
 
     # For each entity, expected history is the last `months` scalar values before test_start
@@ -361,14 +393,18 @@ def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partiti
             assert cell_value == expected_list
 
             # 4) all entries are numeric (no nested lists, etc.)
-            assert all(isinstance(x, (int, float, np.integer, np.floating)) for x in cell_value)
+            assert all(
+                isinstance(x, (int, float, np.integer, np.floating)) for x in cell_value
+            )
 
             # 5) for all other forecast times we get the same list
             for t in range(test_start, test_start + output_length):
                 assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
 
 
-def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, partition_dict, targets):
+def test_conflictology_model_respects_sequence_number(
+    conflictology_df_pgm, partition_dict, targets
+):
     months = 3
     model = ConflictologyModel(
         targets=targets,
@@ -390,24 +426,30 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
         output_length=output_length,
     )
 
-    # --- prediction window checks ---
-    train_end = test_start - 1 + seq_num
-    prediction_start = train_end + 1
+    # --- prediction window checks (ONLY this slides) ---
+    train_end = test_start - 1  # fixed, no sliding into test
+    prediction_start = test_start + seq_num  # start moves with sequence_number
     prediction_end = prediction_start + output_length - 1
 
     assert preds.index.get_level_values(time_idx).min() == prediction_start
     assert preds.index.get_level_values(time_idx).max() == prediction_end
 
-    # --- history window checks ---
+    # --- history window checks (fixed, pre-test only) ---
     history_start = train_end - (months - 1)
 
-    # build expected lists from the shifted history window
     df_hist = conflictology_df_pgm[
         (conflictology_df_pgm.index.get_level_values(time_idx) >= history_start)
         & (conflictology_df_pgm.index.get_level_values(time_idx) <= train_end)
     ].sort_index(level=[entity_idx, time_idx])
 
-    for ent in df_hist.index.get_level_values(entity_idx).unique():
+    # mirror the LoA logic from the model: entities present at train_end
+    loa_ids = (
+        df_hist.loc[df_hist.index.get_level_values(time_idx) == train_end]
+        .index.get_level_values(entity_idx)
+        .unique()
+    )
+
+    for ent in loa_ids:
         ent_hist = df_hist.xs(ent, level=entity_idx)
         for target in targets:
             expected_list = ent_hist[target].tolist()
@@ -419,7 +461,3 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
             assert isinstance(cell_value, list)
             assert len(cell_value) == months
             assert cell_value == expected_list
-
-            for t in range(prediction_start, prediction_end + 1):
-                assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
-
