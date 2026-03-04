@@ -4,8 +4,9 @@
 
 ## Features
 
-- **ZeroModel**: Predicts zero for all targets and all forecast horizons.
-- **LastValueModel**: not implemented yet - Repeats the last observed value for each target into the future.
+- **ZeroModel**: predicts zero for all targets and all forecast horizons.
+- **LOCFModel**: repeats the last observed value for each target into the future.
+- **AverageModel**: predicts the average of the last n months (default 18 months)
 - **Plug-and-play**: Fully compatible with the VIEWS pipeline and model manager interfaces.
 - **No training required**: Baseline models are stateless and require no fitting.
 
