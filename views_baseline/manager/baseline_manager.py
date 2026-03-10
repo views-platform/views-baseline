@@ -124,3 +124,42 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         raise NotImplementedError(
             "Baseline Models does not support sweep evaluation - skipping evaluation"
         )
+
+
+    def _evaluate_prediction_dataframe(
+        self, df_predictions, eval_type, ensemble=False
+    ) -> None:
+
+        import pandas as pd
+        from views_evaluation.evaluation.evaluation_manager import EvaluationManager
+        from views_pipeline_core.files.utils import read_dataframe
+
+        evaluation_manager = EvaluationManager(self.config["metrics"])
+
+        df_path = self._model_path._get_raw_data_file_paths(
+            run_type=self.args.run_type
+        )[0]
+
+        df_viewser = read_dataframe(df_path)
+        df_actual = df_viewser[self.config["targets"]]
+
+        for target in self.config["targets"]:
+            logger.info(f"Calculating evaluation metrics for {target}")
+
+            eval_result_dict = evaluation_manager.evaluate(
+                df_actual,
+                df_predictions,
+                target,
+                self.config,
+            )
+
+            step_eval, df_step = eval_result_dict["step"]
+            ts_eval, df_ts = eval_result_dict["time_series"]
+            month_eval, df_month = eval_result_dict["month"]
+
+            self._wandb_module.log_evaluation_results(
+                step_eval,
+                month_eval,
+                ts_eval,
+                "",   
+            )
