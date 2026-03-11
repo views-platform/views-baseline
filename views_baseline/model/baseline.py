@@ -4,6 +4,8 @@ from typing import List
 
 import logging
 
+from views_baseline.model.helpers import build_prediction_grid
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,37 +35,26 @@ class ZeroModel:
         test_start, _ = self.partition_dict["test"]
         time_idx = df.index.names[0]
         entity_idx = df.index.names[1]
-        prediction_start = test_start + sequence_number
-        logger.debug(f"prediction_start: {prediction_start}")
-        prediction_end = prediction_start + output_length
-        logger.debug(f"prediction_end: {prediction_end}")
+        train_end = test_start - 1
 
         logger.info(f"Currently running a {entity_idx} model")
 
-        train_end = test_start - 1
         loa_ids = (
             df.loc[df.index.get_level_values(time_idx) == train_end]
             .index.get_level_values(entity_idx)
             .unique()
         )
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        time_ids = list(range(prediction_start, prediction_end))
-
-        records = []
-        for cid in loa_ids:
-            for tid in time_ids:
-                row = {
-                    time_idx: tid,
-                    entity_idx: cid,
-                }
-                row.update({f"pred_{t}": 0.0 for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=time_idx,
+            entity_idx=entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: 0.0,
+        )
 
 
 class LocfModel:
@@ -75,7 +66,7 @@ class LocfModel:
         self.partition_dict = partition_dict
         self.loa = loa
         self.last_observations = None
-        self.time_idx = (None,)
+        self.time_idx = None
         self.entity_idx = None
 
     def fit(self, df: pd.DataFrame):
@@ -88,6 +79,7 @@ class LocfModel:
         df = df[df.index.get_level_values(self.time_idx) < test_start]
 
         logger.info(f"Fitting LastObservationModel on level: {self.entity_idx}")
+        df = df.sort_index(level=[self.entity_idx, self.time_idx])
         self.last_observations = df.groupby(self.entity_idx)[self.targets].last()
         return self
 
@@ -101,42 +93,29 @@ class LocfModel:
         Repeats the last observed value for each target and entity over the forecast horizon.
         """
         test_start, _ = self.partition_dict["test"]
-        prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
+        train_end = test_start - 1
 
         logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
 
-        # unique ids at test_start -1
-        train_end = test_start - 1
         loa_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
-        time_ids = list(range(prediction_start, prediction_end))
+        # Filter to entities that have stored observations
+        loa_ids = [cid for cid in loa_ids if cid in self.last_observations.index]
 
-        records = []
-        for cid in loa_ids:
-            if cid not in self.last_observations.index:
-                logger.warning(
-                    f"No last observation found for {self.entity_idx} = {cid}"
-                )
-                continue
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-            last_vals = self.last_observations.loc[cid]
-            for tid in time_ids:
-                row = {
-                    self.time_idx: tid,
-                    self.entity_idx: cid,
-                }
-                row.update({f"pred_{t}": last_vals[t] for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self.last_observations.loc[cid, t],
+        )
 
 
 class AverageModel:
@@ -182,42 +161,28 @@ class AverageModel:
         Repeats the average over the last m months for each target and entity over the forecast horizon.
         """
         test_start, _ = self.partition_dict["test"]
-        prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
-
-        logger.info(f"Generating AverAGE predictions on level: {self.entity_idx}")
-
         train_end = test_start - 1
+
+        logger.info(f"Generating average predictions on level: {self.entity_idx}")
+
         loa_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
+        loa_ids = [cid for cid in loa_ids if cid in self.mean.index]
 
-        time_ids = list(range(prediction_start, prediction_end))
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        records = []
-        for cid in loa_ids:
-            if cid not in self.mean.index:
-                logger.warning(
-                    f"No last observation found for {self.entity_idx} = {cid}"
-                )
-                continue
-
-            last_vals = self.mean.loc[cid]
-            for tid in time_ids:
-                row = {
-                    self.time_idx: tid,
-                    self.entity_idx: cid,
-                }
-                row.update({f"pred_{t}": last_vals[t] for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self.mean.loc[cid, t],
+        )
 
 
 class ConflictologyModel:
@@ -278,35 +243,20 @@ class ConflictologyModel:
         self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
     ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
-        time_idx = self.time_idx
-        entity_idx = self.entity_idx
+
+        loa_ids = [cid for cid in self.loa_ids if cid in self.hist_per_entity]
 
         prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
-        time_ids = list(range(prediction_start, prediction_end))
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        records = []
-        for cid in self.loa_ids:
-            if cid not in self.hist_per_entity:
-                continue
-
-            hist_lists = self.hist_per_entity[cid]
-            for tid in time_ids:
-                row = {time_idx: tid, entity_idx: cid}
-                for t in self.targets:
-                    row[f"pred_{t}"] = hist_lists[t]
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        if not df_preds.empty:
-            df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
-        else:
-            df_preds = pd.DataFrame(columns=[f"pred_{t}" for t in self.targets])
-            df_preds.index = pd.MultiIndex.from_arrays(
-                [[] for _ in range(2)], names=[time_idx, entity_idx]
-            )
-
-        return df_preds
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self.hist_per_entity[cid][t],
+        )
 
     def predict_prediction_frame(
         self, df: pd.DataFrame, sequence_number: int, output_length: int = 36

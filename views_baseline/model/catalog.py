@@ -13,8 +13,8 @@ class BaselineModelCatalog:
         self.models = {
             "ZeroModel": self._get_zero_model,
             "LocfModel": self._get_locf_model,
-            "AverageModel":self._get_average_model,
-            "ConflictologyModel":self._get_conflictology_model,
+            "AverageModel": self._get_average_model,
+            "ConflictologyModel": self._get_conflictology_model,
         }
 
     def get_model(self, model_name: str):

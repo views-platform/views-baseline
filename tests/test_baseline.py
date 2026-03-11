@@ -12,13 +12,13 @@ from views_baseline.model.baseline import (
 )
 
 
-def make_dummy_df(entitiy_id=str):
+def make_dummy_df(entity_id="pg_id"):
     """
     Create a simple MultiIndex dataframe with 2 entities and a range of months.
     Index names matter because the models read them from df.index.names[0/1].
     """
     time_idx_name = "month_id"
-    entity_idx_name = entitiy_id
+    entity_idx_name = entity_id
 
     times = list(range(440, 540))
     entities = [1, 2]
@@ -63,11 +63,11 @@ def targets():
 
 @pytest.fixture
 def base_df_pgm():
-    return make_dummy_df(entitiy_id="pg_id")
+    return make_dummy_df(entity_id="pg_id")
 
 @pytest.fixture
 def base_df_cm():
-    return make_dummy_df(entitiy_id="country_id")
+    return make_dummy_df(entity_id="country_id")
 
 
 # -----------------------------------------------------------------------
@@ -183,8 +183,6 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
 
     preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    #time_idx, entity_idx = base_df_pgm.index.names
-
     # Expected last obs per entity from training part (< test_start)
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     expected_last = train_df.groupby(level=entity_idx)[targets].last()
@@ -215,6 +213,26 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
     time_idx = base_df_pgm.index.names[0]
     assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
     assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+
+
+def test_locf_model_time_idx_is_not_tuple_before_fit(partition_dict, targets):
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    assert model.time_idx is None
+
+
+def test_locf_model_fit_handles_unsorted_data(partition_dict, targets):
+    time_idx_name, entity_idx_name = "month_id", "pg_id"
+    rows = []
+    for t in [490, 492, 491]:  # deliberately unsorted
+        rows.append({time_idx_name: t, entity_idx_name: 1, "y1": t * 10 + 1, "y2": t * 100 + 1})
+    rows.append({time_idx_name: 492, entity_idx_name: 2, "y1": 4921, "y2": 49202})
+    df = pd.DataFrame(rows).set_index([time_idx_name, entity_idx_name])
+
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(df)
+    # Must use month 492 (temporally last), not 491 (positionally last)
+    assert model.last_observations.loc[1, "y1"] == 492 * 10 + 1
+    assert model.last_observations.loc[1, "y2"] == 492 * 100 + 1
 
 
 # -----------------------------------------------------------------------
@@ -297,26 +315,7 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
 # -----------------------------------------------------------------------
 
 
-@pytest.fixture
-def conflictology_df_pgm():
-    """
-    For ConflictologyModel, the training DF is still scalar-valued per month
-    (e.g. counts), but *predictions* are lists that represent an empirical
-    distribution built from the last `months` observations.
-    """
-    return make_dummy_df(entitiy_id="pg_id")
-
-@pytest.fixture
-def conflictology_df_cm():
-    """
-    For ConflictologyModel, the training DF is still scalar-valued per month
-    (e.g. counts), but *predictions* are lists that represent an empirical
-    distribution built from the last `months` observations.
-    """
-    return make_dummy_df(entitiy_id="country_id")
-
-
-def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partition_dict, targets):
+def test_conflictology_model_returns_history_lists(base_df_pgm, partition_dict, targets):
     months = 4
     model = ConflictologyModel(
         targets=targets,
@@ -324,20 +323,20 @@ def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partiti
         partition_dict=partition_dict,
         loa="pg_id",
     )
-    model.fit(conflictology_df_pgm)
+    model.fit(base_df_pgm)
 
     test_start, _ = partition_dict["test"]
     output_length = 36
-    preds = model.predict(df=conflictology_df_pgm, sequence_number=0, output_length=output_length)
+    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    time_idx, entity_idx = conflictology_df_pgm.index.names
+    time_idx, entity_idx = base_df_pgm.index.names
 
     # Basic shape checks
     assert preds.index.names == [time_idx, entity_idx]
     assert list(preds.columns) == [f"pred_{t}" for t in targets]
 
     # Train part
-    train_df = conflictology_df_pgm[conflictology_df_pgm.index.get_level_values(time_idx) < test_start]
+    train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
 
     # For each entity, expected history is the last `months` scalar values before test_start
@@ -368,7 +367,7 @@ def test_conflictology_model_returns_history_lists(conflictology_df_pgm, partiti
                 assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
 
 
-def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, partition_dict, targets):
+def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
     months = 3
     model = ConflictologyModel(
         targets=targets,
@@ -376,16 +375,16 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
         partition_dict=partition_dict,
         loa="pg_id",
     )
-    model.fit(conflictology_df_pgm)
+    model.fit(base_df_pgm)
 
-    time_idx, entity_idx = conflictology_df_pgm.index.names
+    time_idx, entity_idx = base_df_pgm.index.names
     test_start, _ = partition_dict["test"]
 
     seq_num = 2
     output_length = 4
 
     preds = model.predict(
-        df=conflictology_df_pgm,
+        df=base_df_pgm,
         sequence_number=seq_num,
         output_length=output_length,
     )
@@ -402,9 +401,9 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
     train_end = test_start - 1
     history_start = train_end - (months - 1)
 
-    df_hist = conflictology_df_pgm[
-        (conflictology_df_pgm.index.get_level_values(time_idx) >= history_start)
-        & (conflictology_df_pgm.index.get_level_values(time_idx) <= train_end)
+    df_hist = base_df_pgm[
+        (base_df_pgm.index.get_level_values(time_idx) >= history_start)
+        & (base_df_pgm.index.get_level_values(time_idx) <= train_end)
     ].sort_index(level=[entity_idx, time_idx])
 
     for ent in df_hist.index.get_level_values(entity_idx).unique():
@@ -423,7 +422,7 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
                 assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
 
 
-def test_conflictology_model_predict_prediction_frame(conflictology_df_pgm, partition_dict, targets):
+def test_conflictology_model_predict_prediction_frame(base_df_pgm, partition_dict, targets):
     from views_pipeline_core.data.prediction_frame import PredictionFrame
 
     months = 4
@@ -433,17 +432,17 @@ def test_conflictology_model_predict_prediction_frame(conflictology_df_pgm, part
         partition_dict=partition_dict,
         loa="pg_id",
     )
-    model.fit(conflictology_df_pgm)
+    model.fit(base_df_pgm)
 
     test_start, _ = partition_dict["test"]
     output_length = 5
     result = model.predict_prediction_frame(
-        df=conflictology_df_pgm, sequence_number=0, output_length=output_length,
+        df=base_df_pgm, sequence_number=0, output_length=output_length,
     )
 
-    time_idx, entity_idx = conflictology_df_pgm.index.names
-    n_entities = conflictology_df_pgm.loc[
-        conflictology_df_pgm.index.get_level_values(time_idx) == test_start - 1
+    time_idx, entity_idx = base_df_pgm.index.names
+    n_entities = base_df_pgm.loc[
+        base_df_pgm.index.get_level_values(time_idx) == test_start - 1
     ].index.get_level_values(entity_idx).nunique()
 
     assert isinstance(result, dict)
@@ -457,7 +456,7 @@ def test_conflictology_model_predict_prediction_frame(conflictology_df_pgm, part
         assert len(pf.identifiers["unit"]) == n_entities * output_length
 
     # Verify values match the DataFrame path
-    df_preds = model.predict(df=conflictology_df_pgm, sequence_number=0, output_length=output_length)
+    df_preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
     for target in targets:
         pf = result[target]
         for i in range(pf.n_rows):
@@ -465,4 +464,42 @@ def test_conflictology_model_predict_prediction_frame(conflictology_df_pgm, part
             uid = pf.identifiers["unit"][i]
             expected = df_preds.loc[(tid, uid), f"pred_{target}"]
             assert list(pf.y_pred[i]) == pytest.approx(expected)
+
+
+# -----------------------------------------------------------------------
+# build_prediction_grid helper
+# -----------------------------------------------------------------------
+
+
+def test_build_prediction_grid_shape_and_values():
+    from views_baseline.model.helpers import build_prediction_grid
+
+    df = build_prediction_grid(
+        time_idx="month_id",
+        entity_idx="pg_id",
+        loa_ids=[1, 2],
+        time_ids=[100, 101],
+        targets=["y1"],
+        value_fn=lambda cid, t: float(cid),
+    )
+    assert df.index.names == ["month_id", "pg_id"]
+    assert list(df.columns) == ["pred_y1"]
+    assert len(df) == 4  # 2 entities x 2 times
+    assert df.loc[(100, 2), "pred_y1"] == 2.0
+
+
+def test_build_prediction_grid_empty():
+    from views_baseline.model.helpers import build_prediction_grid
+
+    df = build_prediction_grid(
+        time_idx="month_id",
+        entity_idx="pg_id",
+        loa_ids=[],
+        time_ids=[100, 101],
+        targets=["y1"],
+        value_fn=lambda cid, t: 0.0,
+    )
+    assert len(df) == 0
+    assert list(df.columns) == ["pred_y1"]
+    assert df.index.names == ["month_id", "pg_id"]
 

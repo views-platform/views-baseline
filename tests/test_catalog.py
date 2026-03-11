@@ -1,3 +1,5 @@
+import pytest
+
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.baseline import (
     ZeroModel,
@@ -5,7 +7,6 @@ from views_baseline.model.baseline import (
     AverageModel,
     ConflictologyModel,
 )
-import pytest
 
 def test_catalog_lists_all_models():
     config = {"targets": ["y1"], "months": 3}
@@ -83,8 +84,5 @@ def test_catalog_raises_for_unknown_model():
 
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa=loa)
 
-    try:
+    with pytest.raises(ValueError, match="Model 'NonExistingModel'"):
         catalog.get_model("NonExistingModel")
-        assert False, "Expected ValueError for unknown model"
-    except ValueError as e:
-        assert "Model 'NonExistingModel'" in str(e)
