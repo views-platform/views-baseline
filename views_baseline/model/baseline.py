@@ -144,7 +144,7 @@ class AverageModel:
 
         df = df.sort_index(level=[self.entity_idx, self.time_idx])
 
-        # Group by loa_index and take mean of last 6 rows
+        # Group by entity and take mean of last `months` rows
         last_6_rows_mean = df.groupby(level=self.entity_idx, group_keys=False).apply(
             lambda g: g.tail(self.months)[self.targets].mean()
         )
@@ -302,6 +302,149 @@ class ConflictologyModel:
 
             result[t] = PredictionFrame(
                 y_pred=y_pred,
+                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
+            )
+
+        return result
+
+
+class MixtureBaseline:
+    def __init__(
+        self,
+        targets: List[str],
+        window_months: int,
+        lambda_mix: float,
+        n_samples: int,
+        partition_dict: dict,
+        loa: str,
+        seed: int = 42,
+    ):
+        """
+        Mixture empirical baseline that combines local history with a global
+        positive pool to avoid the zero-probability trap.
+        """
+        self.targets = targets
+        self.window_months = window_months
+        self.lambda_mix = lambda_mix
+        self.n_samples = n_samples
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.seed = seed
+        self.time_idx = None
+        self.entity_idx = None
+        self.local_pool = None
+        self.global_pool = None
+        self.loa_ids = None
+
+    def fit(self, df: pd.DataFrame):
+        test_start, _ = self.partition_dict["test"]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+
+        train_df = df[df.index.get_level_values(self.time_idx) < test_start]
+        train_df = train_df.sort_index(level=[self.entity_idx, self.time_idx])
+
+        train_end = test_start - 1
+        self.loa_ids = (
+            train_df.loc[train_df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
+
+        # Local pool: last window_months values per entity per target
+        self.local_pool = {}
+        for cid in self.loa_ids:
+            entity_data = train_df.xs(cid, level=self.entity_idx, drop_level=False)
+            tail = entity_data.tail(self.window_months)
+            self.local_pool[cid] = {
+                t: np.array(tail[t].tolist(), dtype=np.float64) for t in self.targets
+            }
+
+        # Global pool: all positive values per target across all entities
+        self.global_pool = {}
+        for t in self.targets:
+            vals = train_df[t].values
+            self.global_pool[t] = vals[vals > 0].astype(np.float64)
+
+        return self
+
+    def _sample(self, cid, target, rng):
+        """Generate n_samples by mixing local and global pools."""
+        local = self.local_pool[cid][target]
+        glob = self.global_pool[target]
+
+        if len(glob) == 0:
+            # No positive values in training data — local only
+            return rng.choice(local, size=self.n_samples).tolist()
+
+        use_global = rng.random(self.n_samples) < self.lambda_mix
+        n_global = int(np.sum(use_global))
+        n_local = self.n_samples - n_global
+
+        samples = np.empty(self.n_samples, dtype=np.float64)
+        samples[use_global] = rng.choice(glob, size=n_global)
+        samples[~use_global] = rng.choice(local, size=n_local)
+        return samples.tolist()
+
+    def predict(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> pd.DataFrame:
+        test_start, _ = self.partition_dict["test"]
+        loa_ids = [cid for cid in self.loa_ids if cid in self.local_pool]
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
+
+        rng = np.random.default_rng(self.seed)
+
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self._sample(cid, t, rng),
+        )
+
+    def predict_prediction_frame(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> dict:
+        from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+        test_start, _ = self.partition_dict["test"]
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
+
+        entities_with_pool = [cid for cid in self.loa_ids if cid in self.local_pool]
+
+        if not entities_with_pool:
+            return {}
+
+        time_arr = []
+        unit_arr = []
+        for cid in entities_with_pool:
+            for tid in time_ids:
+                time_arr.append(tid)
+                unit_arr.append(cid)
+
+        time_arr = np.array(time_arr)
+        unit_arr = np.array(unit_arr)
+        n_rows = len(time_arr)
+
+        rng = np.random.default_rng(self.seed)
+
+        # Iterate entity→time→target to match predict()/build_prediction_grid order
+        y_preds = {t: np.empty((n_rows, self.n_samples), dtype=np.float64) for t in self.targets}
+        idx = 0
+        for cid in entities_with_pool:
+            for _ in time_ids:
+                for t in self.targets:
+                    y_preds[t][idx] = self._sample(cid, t, rng)
+                idx += 1
+
+        result = {}
+        for t in self.targets:
+            result[t] = PredictionFrame(
+                y_pred=y_preds[t],
                 identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
             )
 

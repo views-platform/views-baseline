@@ -30,7 +30,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         logger.info("Initializing BaselineModelManager")
 
-    def _train_model_artifact(self) -> any:
+    def _train_model_artifact(self):
         """
         Train and save your model artifact.
 
