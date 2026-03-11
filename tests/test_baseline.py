@@ -75,7 +75,7 @@ def base_df_cm():
 # -----------------------------------------------------------------------
 
 
-def test_zero_model_predicts_zeros(base_df_pgm, partition_dict, targets):
+def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     model.fit(base_df_pgm)
     output_length = 36
@@ -109,7 +109,7 @@ def test_zero_model_predicts_zeros(base_df_pgm, partition_dict, targets):
     # All zeros
     assert (preds.values == 0.0).all()
 
-def test_zero_model_predicts_zeros(base_df_cm, partition_dict, targets):
+def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="country_id")
     model.fit(base_df_cm)
     output_length = 36
@@ -391,17 +391,17 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
     )
 
     # --- prediction window checks ---
-    train_end = test_start - 1 + seq_num
-    prediction_start = train_end + 1
+    # sequence_number only shifts the prediction window, NOT the history window
+    prediction_start = test_start + seq_num
     prediction_end = prediction_start + output_length - 1
 
     assert preds.index.get_level_values(time_idx).min() == prediction_start
     assert preds.index.get_level_values(time_idx).max() == prediction_end
 
-    # --- history window checks ---
+    # --- history window checks (fixed, does not depend on seq_num) ---
+    train_end = test_start - 1
     history_start = train_end - (months - 1)
 
-    # build expected lists from the shifted history window
     df_hist = conflictology_df_pgm[
         (conflictology_df_pgm.index.get_level_values(time_idx) >= history_start)
         & (conflictology_df_pgm.index.get_level_values(time_idx) <= train_end)
@@ -412,7 +412,6 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
         for target in targets:
             expected_list = ent_hist[target].tolist()
 
-            # at first prediction time for this entity
             first_time = prediction_start
             cell_value = preds.loc[(first_time, ent), f"pred_{target}"]
 
@@ -422,4 +421,48 @@ def test_conflictology_model_respects_sequence_number(conflictology_df_pgm, part
 
             for t in range(prediction_start, prediction_end + 1):
                 assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
+
+
+def test_conflictology_model_predict_prediction_frame(conflictology_df_pgm, partition_dict, targets):
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+    months = 4
+    model = ConflictologyModel(
+        targets=targets,
+        months=months,
+        partition_dict=partition_dict,
+        loa="pg_id",
+    )
+    model.fit(conflictology_df_pgm)
+
+    test_start, _ = partition_dict["test"]
+    output_length = 5
+    result = model.predict_prediction_frame(
+        df=conflictology_df_pgm, sequence_number=0, output_length=output_length,
+    )
+
+    time_idx, entity_idx = conflictology_df_pgm.index.names
+    n_entities = conflictology_df_pgm.loc[
+        conflictology_df_pgm.index.get_level_values(time_idx) == test_start - 1
+    ].index.get_level_values(entity_idx).nunique()
+
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+
+    for target in targets:
+        pf = result[target]
+        assert isinstance(pf, PredictionFrame)
+        assert pf.y_pred.shape == (n_entities * output_length, months)
+        assert len(pf.identifiers["time"]) == n_entities * output_length
+        assert len(pf.identifiers["unit"]) == n_entities * output_length
+
+    # Verify values match the DataFrame path
+    df_preds = model.predict(df=conflictology_df_pgm, sequence_number=0, output_length=output_length)
+    for target in targets:
+        pf = result[target]
+        for i in range(pf.n_rows):
+            tid = pf.identifiers["time"][i]
+            uid = pf.identifiers["unit"][i]
+            expected = df_preds.loc[(tid, uid), f"pred_{target}"]
+            assert list(pf.y_pred[i]) == pytest.approx(expected)
 

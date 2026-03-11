@@ -2,8 +2,6 @@ from views_pipeline_core.managers.model import ModelPathManager, ForecastingMode
 from views_pipeline_core.files.utils import read_dataframe
 from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
-from views_baseline.model.baseline import ZeroModel
-from views_baseline.model.baseline import LocfModel
 import pandas as pd
 from datetime import datetime
 from views_baseline.model.catalog import BaselineModelCatalog
@@ -73,14 +71,22 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         self.model.fit(df_viewser)
 
         logger.info(f"Generating predictions for {eval_type} evaluation")
-        predictions = []
 
         # Determine evaluation length
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+
+        if self._prediction_format == "prediction_frame" and hasattr(self.model, "predict_prediction_frame"):
+            predictions = {}
+            for seq_num in range(sequence_numbers):
+                pf_dict = self.model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
+                for target, pf in pf_dict.items():
+                    predictions.setdefault(target, []).append(pf)
+            return predictions
+
+        predictions = []
         for seq_num in range(sequence_numbers):
-            # YOUR PREDICTION CODE HERE
             preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
-            predictions.append(preds)  # Append predictions for each sequence
+            predictions.append(preds)
 
         return predictions
 
@@ -111,9 +117,10 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         self.model.fit(df_viewser)
 
-        forecasts = self.model.predict(sequence_number=0, df=df_viewser)
+        if self._prediction_format == "prediction_frame" and hasattr(self.model, "predict_prediction_frame"):
+            return self.model.predict_prediction_frame(df=df_viewser, sequence_number=0)
 
-        return forecasts
+        return self.model.predict(sequence_number=0, df=df_viewser)
 
     def _evaluate_sweep(self, eval_type: str, model: any) -> list:
 

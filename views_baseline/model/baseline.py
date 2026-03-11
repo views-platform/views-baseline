@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List, Optional
+from typing import List
 
 import logging
 
@@ -232,15 +232,45 @@ class ConflictologyModel:
         self.months = months
         self.time_idx = None
         self.entity_idx = None
-        self.last_n_months = None
+        self.hist_per_entity = None
+        self.loa_ids = None
 
     def fit(self, df: pd.DataFrame):
         """
-        Store the index names.
+        Extract and store the last `months` of history per entity before the test period.
         """
-
+        test_start, _ = self.partition_dict["test"]
         self.time_idx = df.index.names[0]
         self.entity_idx = df.index.names[1]
+
+        train_end = test_start - 1
+        history_start = train_end - (self.months - 1)
+
+        df = df.sort_index(level=[self.time_idx, self.entity_idx])
+
+        df_hist = df[
+            (df.index.get_level_values(self.time_idx) >= history_start)
+            & (df.index.get_level_values(self.time_idx) <= train_end)
+        ]
+
+        last_n_months = df_hist.groupby(level=self.entity_idx, group_keys=False).apply(
+            lambda g: g.tail(self.months)
+        )
+
+        self.loa_ids = (
+            df_hist.loc[df_hist.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
+
+        self.hist_per_entity = {}
+        for cid in self.loa_ids:
+            history = last_n_months.xs(cid, level=self.entity_idx, drop_level=False)
+            if history.empty:
+                continue
+            self.hist_per_entity[cid] = {
+                t: history[t].tolist() for t in self.targets
+            }
 
         return self
 
@@ -248,53 +278,19 @@ class ConflictologyModel:
         self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
     ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
-
-        # --- 1. Compute sliding history window for this sequence ---
-        # train_end is "last month with data" for this sequence
-        train_end = test_start - 1
-        history_start = train_end - (self.months - 1)
-
         time_idx = self.time_idx
         entity_idx = self.entity_idx
 
-        df = df.sort_index(level=[time_idx, entity_idx])
-
-        # restrict to history window
-        df_hist = df[
-            (df.index.get_level_values(time_idx) >= history_start)
-            & (df.index.get_level_values(time_idx) <= train_end)
-        ]
-
-        # last `months` per entity
-        last_n_months = df_hist.groupby(level=entity_idx, group_keys=False).apply(
-            lambda g: g.tail(self.months)
-        )
-
-        # entities present at train_end (i.e. have data at the last month with data)
-        loa_ids = (
-            df_hist.loc[df_hist.index.get_level_values(time_idx) == train_end]
-            .index.get_level_values(entity_idx)
-            .unique()
-        )
-
-        # --- 2. Forecast window for this sequence ---
         prediction_start = test_start + sequence_number
         prediction_end = prediction_start + output_length
         time_ids = list(range(prediction_start, prediction_end))
 
         records = []
-        for cid in loa_ids:
-            # history for this entity
-            history = last_n_months.xs(cid, level=entity_idx, drop_level=False)
-
-            if history.empty:
-                # skip entities without enough history
+        for cid in self.loa_ids:
+            if cid not in self.hist_per_entity:
                 continue
 
-            hist_lists = {}
-            for t in self.targets:
-                hist_lists[t] = history[t].tolist()
-
+            hist_lists = self.hist_per_entity[cid]
             for tid in time_ids:
                 row = {time_idx: tid, entity_idx: cid}
                 for t in self.targets:
@@ -305,10 +301,58 @@ class ConflictologyModel:
         if not df_preds.empty:
             df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
         else:
-            # return an empty frame with the right columns if nothing could be computed
             df_preds = pd.DataFrame(columns=[f"pred_{t}" for t in self.targets])
             df_preds.index = pd.MultiIndex.from_arrays(
                 [[] for _ in range(2)], names=[time_idx, entity_idx]
             )
 
         return df_preds
+
+    def predict_prediction_frame(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> dict:
+        """
+        Return predictions as Dict[str, PredictionFrame] — one PF per target.
+        Each PF has y_pred shape (N, S) where S = self.months.
+        """
+        from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+        test_start, _ = self.partition_dict["test"]
+        prediction_start = test_start + sequence_number
+        prediction_end = prediction_start + output_length
+        time_ids = list(range(prediction_start, prediction_end))
+
+        entities_with_history = [
+            cid for cid in self.loa_ids if cid in self.hist_per_entity
+        ]
+
+        if not entities_with_history:
+            return {}
+
+        time_arr = []
+        unit_arr = []
+        for cid in entities_with_history:
+            for tid in time_ids:
+                time_arr.append(tid)
+                unit_arr.append(cid)
+
+        time_arr = np.array(time_arr)
+        unit_arr = np.array(unit_arr)
+        n_rows = len(time_arr)
+
+        result = {}
+        for t in self.targets:
+            y_pred = np.empty((n_rows, self.months), dtype=np.float32)
+            idx = 0
+            for cid in entities_with_history:
+                hist = self.hist_per_entity[cid][t]
+                for _ in time_ids:
+                    y_pred[idx] = hist
+                    idx += 1
+
+            result[t] = PredictionFrame(
+                y_pred=y_pred,
+                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
+            )
+
+        return result
