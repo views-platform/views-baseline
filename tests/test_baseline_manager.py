@@ -1,16 +1,15 @@
-import pandas as pd
 import pickle
 import re
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
-
-from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
-from views_baseline.model.baseline import ZeroModel, LocfModel
-import views_baseline.manager.baseline_manager as bm
 from conftest import make_dummy_df
 
+import views_baseline.manager.baseline_manager as bm
+from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
+from views_baseline.model.baseline import LocfModel, ZeroModel
 
 # ---------------------------------------------------------------------
 # Shared helpers / fixtures

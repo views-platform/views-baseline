@@ -1,13 +1,14 @@
 import pytest
 
-from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.baseline import (
-    ZeroModel,
-    LocfModel,
     AverageModel,
     ConflictologyModel,
+    LocfModel,
     MixtureBaseline,
+    ZeroModel,
 )
+from views_baseline.model.catalog import BaselineModelCatalog
+
 
 def test_catalog_lists_all_models():
     config = {"targets": ["y1"], "months": 3}
@@ -17,7 +18,13 @@ def test_catalog_lists_all_models():
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa=loa)
     models = set(catalog.list_models())
 
-    assert {"ZeroModel", "LocfModel", "AverageModel", "ConflictologyModel", "MixtureBaseline"}.issubset(models)
+    assert {
+        "ZeroModel",
+        "LocfModel",
+        "AverageModel",
+        "ConflictologyModel",
+        "MixtureBaseline",
+    }.issubset(models)
 
 
 def test_catalog_returns_zero_model():
@@ -60,7 +67,7 @@ def test_catalog_returns_average_model():
     assert model.targets == config["targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
-    assert model.months == config["months"]
+    assert model.window_months == config["months"]
 
 
 def test_catalog_returns_conflictology_model():
@@ -75,7 +82,7 @@ def test_catalog_returns_conflictology_model():
     assert model.targets == config["targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
-    assert model.months == config["months"]
+    assert model.window_months == config["months"]
 
 
 def test_catalog_raises_for_unknown_model():

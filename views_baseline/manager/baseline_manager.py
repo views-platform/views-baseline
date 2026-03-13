@@ -1,13 +1,13 @@
-from views_pipeline_core.managers.model import ModelPathManager, ForecastingModelManager
-from views_pipeline_core.files.utils import read_dataframe, generate_model_file_name
-from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
 import pickle
-import pandas as pd
 from datetime import datetime
+
+from views_pipeline_core.configs.pipeline import PipelineConfig
+from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
+from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
+
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.protocol import DistributionalBaselineModel
-
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 class BaselineForecastingModelManager(ForecastingModelManager):
     """
     Baseline Forecasting Model Manager
-
     """
 
     def __init__(
@@ -68,51 +67,52 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model.fit(df)
         return model, df
 
-    def _evaluate_model_artifact(
-        self, eval_type: str, artifact_name: str = None
-    ) -> list:
+    def _generate_predictions(self, model, df, eval_type):
         """
-        Evaluate trained model artifact.
+        Generate predictions for all sequence numbers in an evaluation.
 
+        Dispatches to the appropriate predict method based on model type:
+        distributional models return Dict[str, list[PredictionFrame]],
+        point models return list[DataFrame].
         """
-        logger.info("Evaluating baseline model artifact")
-
-        self.model, df_viewser = self._setup_model_and_data()
-
-        logger.info(f"Generating predictions for {eval_type} evaluation")
-
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
 
-        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
+        if isinstance(model, DistributionalBaselineModel):
             predictions = {}
             for seq_num in range(sequence_numbers):
-                pf_dict = self.model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
+                pf_dict = model.predict(df=df, sequence_number=seq_num)
                 for target, pf in pf_dict.items():
                     predictions.setdefault(target, []).append(pf)
             return predictions
 
         predictions = []
         for seq_num in range(sequence_numbers):
-            preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
+            preds = model.predict(df=df, sequence_number=seq_num)
             predictions.append(preds)
-
         return predictions
 
-    def _forecast_model_artifact(self, artifact_name: str = None) -> pd.DataFrame:
+    def _evaluate_model_artifact(self, eval_type: str, artifact_name: str = None):
+        """
+        Evaluate trained model artifact.
+        """
+        logger.info("Evaluating baseline model artifact")
+        self.model, df_viewser = self._setup_model_and_data()
+        logger.info(f"Generating predictions for {eval_type} evaluation")
+        return self._generate_predictions(self.model, df_viewser, eval_type)
+
+    def _forecast_model_artifact(self, artifact_name: str = None):
         """
         Generate forecasts using trained model artifact.
-
         """
         logger.info("Generating forecasts")
-
         self.model, df_viewser = self._setup_model_and_data()
 
-        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
-            return self.model.predict_prediction_frame(df=df_viewser, sequence_number=0)
+        if isinstance(self.model, DistributionalBaselineModel):
+            return self.model.predict(df=df_viewser, sequence_number=0)
 
         return self.model.predict(sequence_number=0, df=df_viewser)
 
-    def _evaluate_sweep(self, eval_type: str, model) -> list:
+    def _evaluate_sweep(self, eval_type: str, model):
         """
         Evaluate a baseline model during a WandB sweep iteration.
 
@@ -124,19 +124,4 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         df_viewser = read_dataframe(
             path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
         )
-
-        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
-
-        if self._prediction_format == "prediction_frame" and isinstance(model, DistributionalBaselineModel):
-            predictions = {}
-            for seq_num in range(sequence_numbers):
-                pf_dict = model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
-                for target, pf in pf_dict.items():
-                    predictions.setdefault(target, []).append(pf)
-            return predictions
-
-        predictions = []
-        for seq_num in range(sequence_numbers):
-            preds = model.predict(df=df_viewser, sequence_number=seq_num)
-            predictions.append(preds)
-        return predictions
+        return self._generate_predictions(model, df_viewser, eval_type)

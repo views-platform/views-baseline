@@ -20,8 +20,17 @@ class BaselineModel(Protocol):
 
 
 @runtime_checkable
-class DistributionalBaselineModel(BaselineModel, Protocol):
-    def predict_prediction_frame(
+class DistributionalBaselineModel(Protocol):
+    """Distributional baseline that returns Dict[str, PredictionFrame] from predict()."""
+
+    targets: List[str]
+    partition_dict: dict
+    loa: str
+    distributional: bool
+
+    def fit(self, df: pd.DataFrame) -> "DistributionalBaselineModel": ...
+
+    def predict(
         self,
         df: pd.DataFrame,
         sequence_number: int,
