@@ -1,4 +1,4 @@
-from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel, ConflictologyModel
+from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel, ConflictologyModel, MixtureBaseline
 
 
 class BaselineModelCatalog:
@@ -13,8 +13,9 @@ class BaselineModelCatalog:
         self.models = {
             "ZeroModel": self._get_zero_model,
             "LocfModel": self._get_locf_model,
-            "AverageModel":self._get_average_model,
-            "ConflictologyModel":self._get_conflictology_model,
+            "AverageModel": self._get_average_model,
+            "ConflictologyModel": self._get_conflictology_model,
+            "MixtureBaseline": self._get_mixture_model,
         }
 
     def get_model(self, model_name: str):
@@ -36,25 +37,36 @@ class BaselineModelCatalog:
         )
     
     def _get_locf_model(self):
-        return LocfModel( 
+        return LocfModel(
             targets=self.config["targets"],
             partition_dict=self.partition_dict,
             loa=self.loa
         )
-    
+
     def _get_average_model(self):
-        return AverageModel( 
+        return AverageModel(
             targets=self.config["targets"],
-            months = self.config["months"],
+            months=self.config["months"],
             partition_dict=self.partition_dict,
             loa=self.loa
         )
 
     def _get_conflictology_model(self):
-        return ConflictologyModel( 
+        return ConflictologyModel(
             targets=self.config["targets"],
-            months = self.config["months"],
+            months=self.config["months"],
             partition_dict=self.partition_dict,
-            loa=self.loa
+            loa=self.loa,
+            n_samples=self.config.get("n_samples", 256),
+        )
+
+    def _get_mixture_model(self):
+        return MixtureBaseline(
+            targets=self.config["targets"],
+            window_months=self.config.get("window_months", 18),
+            lambda_mix=self.config.get("lambda_mix", 0.05),
+            n_samples=self.config.get("n_samples", 256),
+            partition_dict=self.partition_dict,
+            loa=self.loa,
         )
 

@@ -1,4 +1,6 @@
 import pandas as pd
+import pickle
+import re
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -7,6 +9,7 @@ import pytest
 from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
 from views_baseline.model.baseline import ZeroModel, LocfModel
 import views_baseline.manager.baseline_manager as bm
+from conftest import make_dummy_df
 
 
 # ---------------------------------------------------------------------
@@ -14,45 +17,9 @@ import views_baseline.manager.baseline_manager as bm
 # ---------------------------------------------------------------------
 
 
-def make_dummy_df():
-    """
-    Simple MultiIndex dataframe with 2 entities and a range of months.
-    Index names matter because the baselines read them from df.index.names[0/1].
-    """
-    time_idx_name = "month_id"
-    entity_idx_name = "pg_id"
-
-    times = list(range(110, 126))  # includes train and test period
-    entities = [1, 2]
-
-    index = pd.MultiIndex.from_product(
-        [times, entities],
-        names=[time_idx_name, entity_idx_name],
-    )
-
-    df = pd.DataFrame(index=index)
-
-    # Deterministic targets
-    df["y1"] = [
-        t * 10 + e
-        for t, e in zip(
-            df.index.get_level_values(time_idx_name),
-            df.index.get_level_values(entity_idx_name),
-        )
-    ]
-    df["y2"] = [
-        t * 100 + e
-        for t, e in zip(
-            df.index.get_level_values(time_idx_name),
-            df.index.get_level_values(entity_idx_name),
-        )
-    ]
-    return df
-
-
 @pytest.fixture
 def base_df():
-    return make_dummy_df()
+    return make_dummy_df(time_range=range(110, 126))
 
 
 @pytest.fixture
@@ -61,29 +28,36 @@ def partition_dict():
     return {"test": (120, 125)}
 
 
-@pytest.fixture
-def targets():
-    return ["y1", "y2"]
-
-
 def make_manager(config, partition_dict):
     """
     Create a BaselineForecastingModelManager instance without calling its __init__,
     and manually attach the attributes we need for our tests.
     """
+    from views_pipeline_core.managers.configuration.configuration import ConfigurationManager
+
     mgr = BaselineForecastingModelManager.__new__(BaselineForecastingModelManager)
 
-    # Attach config and minimal path / data_loader stubs
+    # The base class __init__ creates _config_manager and _sweep.
+    # Since we skip __init__, we must create them manually.
+    mgr._config_manager = ConfigurationManager(
+        config_hyperparameters={},
+        config_deployment={},
+        config_meta={},
+        partition_dict={},
+        config_sweep=None,
+    )
+    mgr._sweep = False
+
+    # Now the property setter works
     mgr.config = config
+
     mgr._model_path = SimpleNamespace(
         data_raw=Path("dummy_raw_path"),
         artifacts=Path("dummy_artifacts_path"),
     )
     mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
 
-    # Stub out the sequence number resolver from the base class
     def fake_resolve_evaluation_sequence_number(eval_type: str) -> int:
-        # Use config if present, otherwise default to 1 sequence
         return config.get("sequence_numbers", 1)
 
     mgr._resolve_evaluation_sequence_number = fake_resolve_evaluation_sequence_number
@@ -230,3 +204,67 @@ def test_manager_forecast_respects_algorithm_choice(monkeypatch, base_df, partit
 
     # But at least one value should differ (for our deterministic dummy data)
     assert (forecasts_zero.values != forecasts_locf.values).any()
+
+
+# ---------------------------------------------------------------------
+# Tests: _setup_model_and_data
+# ---------------------------------------------------------------------
+
+
+def test_manager_setup_returns_model_and_data(monkeypatch, base_df, partition_dict, targets):
+    """
+    _setup_model_and_data should instantiate the correct model via the catalog,
+    fit it on the data, and return (model, df).
+    """
+    config = {
+        "run_type": "eval",
+        "level": "pg_id",
+        "algorithm": "ZeroModel",
+        "targets": targets,
+    }
+    manager = make_manager(config, partition_dict)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
+
+    model, df = manager._setup_model_and_data()
+
+    assert isinstance(model, ZeroModel)
+    assert df.shape == base_df.shape
+
+
+# ---------------------------------------------------------------------
+# Tests: _train_model_artifact
+# ---------------------------------------------------------------------
+
+
+def test_manager_train_saves_artifact(monkeypatch, base_df, partition_dict, targets, tmp_path):
+    """
+    _train_model_artifact should pickle the fitted model to artifacts/.
+    """
+    config = {
+        "run_type": "calibration",
+        "level": "pg_id",
+        "algorithm": "ZeroModel",
+        "targets": targets,
+    }
+    manager = make_manager(config, partition_dict)
+    manager._model_path = SimpleNamespace(
+        data_raw=Path("dummy_raw_path"),
+        artifacts=tmp_path,
+    )
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
+
+    model = manager._train_model_artifact()
+
+    assert isinstance(model, ZeroModel)
+
+    pkl_files = list(tmp_path.glob("calibration_model_*.pkl"))
+    assert len(pkl_files) == 1
+
+    # Filename matches expected pattern
+    assert re.match(r"calibration_model_\d{8}_\d{6}\.pkl", pkl_files[0].name)
+
+    # Unpickle and verify it's a valid model
+    with open(pkl_files[0], "rb") as f:
+        loaded = pickle.load(f)
+    assert isinstance(loaded, ZeroModel)
+    assert loaded.targets == targets

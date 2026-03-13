@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
-from typing import List, Optional
+from typing import List
 
 import logging
+
+from views_baseline.model.helpers import build_prediction_grid
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +17,12 @@ class ZeroModel:
         self.targets = targets
         self.partition_dict = partition_dict
         self.loa = loa
+        self.time_idx = None
+        self.entity_idx = None
 
     def fit(self, df: pd.DataFrame):
-        # No training needed
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
         return self
 
     def predict(
@@ -31,39 +36,26 @@ class ZeroModel:
         starting from test_start + sequence_number.
         """
         test_start, _ = self.partition_dict["test"]
-        time_idx = df.index.names[0]
-        entity_idx = df.index.names[1]
-        prediction_start = test_start + sequence_number
-        logger.debug(f"prediction_start: {prediction_start}")
-        prediction_end = prediction_start + output_length
-        logger.debug(f"prediction_end: {prediction_end}")
-
-        logger.info(f"Currently running a {entity_idx} model")
-
         train_end = test_start - 1
+
+        logger.info(f"Currently running a {self.entity_idx} model")
+
         loa_ids = (
-            df.loc[df.index.get_level_values(time_idx) == train_end]
-            .index.get_level_values(entity_idx)
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
             .unique()
         )
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        time_ids = list(range(prediction_start, prediction_end))
-
-        records = []
-        for cid in loa_ids:
-            for tid in time_ids:
-                row = {
-                    time_idx: tid,
-                    entity_idx: cid,
-                }
-                row.update({f"pred_{t}": 0.0 for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: 0.0,
+        )
 
 
 class LocfModel:
@@ -75,7 +67,7 @@ class LocfModel:
         self.partition_dict = partition_dict
         self.loa = loa
         self.last_observations = None
-        self.time_idx = (None,)
+        self.time_idx = None
         self.entity_idx = None
 
     def fit(self, df: pd.DataFrame):
@@ -88,6 +80,7 @@ class LocfModel:
         df = df[df.index.get_level_values(self.time_idx) < test_start]
 
         logger.info(f"Fitting LastObservationModel on level: {self.entity_idx}")
+        df = df.sort_index(level=[self.entity_idx, self.time_idx])
         self.last_observations = df.groupby(self.entity_idx)[self.targets].last()
         return self
 
@@ -101,42 +94,32 @@ class LocfModel:
         Repeats the last observed value for each target and entity over the forecast horizon.
         """
         test_start, _ = self.partition_dict["test"]
-        prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
+        train_end = test_start - 1
 
         logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
 
-        # unique ids at test_start -1
-        train_end = test_start - 1
         loa_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
-        time_ids = list(range(prediction_start, prediction_end))
+        # Filter to entities that have stored observations
+        n_before = len(loa_ids)
+        loa_ids = [cid for cid in loa_ids if cid in self.last_observations.index]
+        if len(loa_ids) < n_before:
+            logger.warning(f"LocfModel: {n_before - len(loa_ids)} entities dropped (missing from last_observations)")
 
-        records = []
-        for cid in loa_ids:
-            if cid not in self.last_observations.index:
-                logger.warning(
-                    f"No last observation found for {self.entity_idx} = {cid}"
-                )
-                continue
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-            last_vals = self.last_observations.loc[cid]
-            for tid in time_ids:
-                row = {
-                    self.time_idx: tid,
-                    self.entity_idx: cid,
-                }
-                row.update({f"pred_{t}": last_vals[t] for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self.last_observations.loc[cid, t],
+        )
 
 
 class AverageModel:
@@ -165,7 +148,7 @@ class AverageModel:
 
         df = df.sort_index(level=[self.entity_idx, self.time_idx])
 
-        # Group by loa_index and take mean of last 6 rows
+        # Group by entity and take mean of last `months` rows
         last_6_rows_mean = df.groupby(level=self.entity_idx, group_keys=False).apply(
             lambda g: g.tail(self.months)[self.targets].mean()
         )
@@ -182,65 +165,94 @@ class AverageModel:
         Repeats the average over the last m months for each target and entity over the forecast horizon.
         """
         test_start, _ = self.partition_dict["test"]
-        prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
-
-        logger.info(f"Generating AverAGE predictions on level: {self.entity_idx}")
-
         train_end = test_start - 1
+
+        logger.info(f"Generating average predictions on level: {self.entity_idx}")
+
         loa_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
+        n_before = len(loa_ids)
+        loa_ids = [cid for cid in loa_ids if cid in self.mean.index]
+        if len(loa_ids) < n_before:
+            logger.warning(f"AverageModel: {n_before - len(loa_ids)} entities dropped (missing from mean)")
 
-        time_ids = list(range(prediction_start, prediction_end))
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        records = []
-        for cid in loa_ids:
-            if cid not in self.mean.index:
-                logger.warning(
-                    f"No last observation found for {self.entity_idx} = {cid}"
-                )
-                continue
-
-            last_vals = self.mean.loc[cid]
-            for tid in time_ids:
-                row = {
-                    self.time_idx: tid,
-                    self.entity_idx: cid,
-                }
-                row.update({f"pred_{t}": last_vals[t] for t in self.targets})
-                records.append(row)
-
-        df_preds = pd.DataFrame(records)
-        df_preds = df_preds.set_index([self.time_idx, self.entity_idx]).sort_index()
-        pred_cols = [f"pred_{t}" for t in self.targets]
-
-        return df_preds[pred_cols]
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self.mean.loc[cid, t],
+        )
 
 
 class ConflictologyModel:
-    def __init__(self, targets: List[str], months: int, partition_dict: dict, loa: str):
+    def __init__(
+        self,
+        targets: List[str],
+        months: int,
+        partition_dict: dict,
+        loa: str,
+        n_samples: int = 256,
+        seed: int = 42,
+    ):
         """
-        Baseline model that takes the set of the last w=12 months of data for a given cm/pgm (so for a sequence
-        starting at month m, the 12 months from m-12 to m-1).
+        Climatology baseline that resamples with replacement from the last w months
+        of data for a given cm/pgm, producing n_samples i.i.d. draws per cell.
         """
         self.targets = targets
         self.partition_dict = partition_dict
         self.loa = loa
         self.months = months
+        self.n_samples = n_samples
+        self.seed = seed
         self.time_idx = None
         self.entity_idx = None
-        self.last_n_months = None
+        self.hist_per_entity = None
+        self.loa_ids = None
 
     def fit(self, df: pd.DataFrame):
         """
-        Store the index names.
+        Extract and store the last `months` of history per entity before the test period.
         """
-
+        test_start, _ = self.partition_dict["test"]
         self.time_idx = df.index.names[0]
         self.entity_idx = df.index.names[1]
+
+        train_end = test_start - 1
+        history_start = train_end - (self.months - 1)
+
+        df = df.sort_index(level=[self.time_idx, self.entity_idx])
+
+        df_hist = df[
+            (df.index.get_level_values(self.time_idx) >= history_start)
+            & (df.index.get_level_values(self.time_idx) <= train_end)
+        ]
+
+        last_n_months = df_hist.groupby(level=self.entity_idx, group_keys=False).apply(
+            lambda g: g.tail(self.months)
+        )
+
+        self.loa_ids = (
+            df_hist.loc[df_hist.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
+
+        self.hist_per_entity = {}
+        for cid in self.loa_ids:
+            history = last_n_months.xs(cid, level=self.entity_idx, drop_level=False)
+            if history.empty:
+                continue
+            self.hist_per_entity[cid] = {
+                t: np.array(history[t].tolist(), dtype=np.float64) for t in self.targets
+            }
 
         return self
 
@@ -249,66 +261,220 @@ class ConflictologyModel:
     ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
 
-        # --- 1. Compute sliding history window for this sequence ---
-        # train_end is "last month with data" for this sequence
-        train_end = test_start - 1
-        history_start = train_end - (self.months - 1)
+        n_before = len(self.loa_ids)
+        loa_ids = [cid for cid in self.loa_ids if cid in self.hist_per_entity]
+        if len(loa_ids) < n_before:
+            logger.warning(f"ConflictologyModel: {n_before - len(loa_ids)} entities dropped (missing from hist_per_entity)")
 
-        time_idx = self.time_idx
-        entity_idx = self.entity_idx
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
-        df = df.sort_index(level=[time_idx, entity_idx])
+        rng = np.random.default_rng(self.seed)
 
-        # restrict to history window
-        df_hist = df[
-            (df.index.get_level_values(time_idx) >= history_start)
-            & (df.index.get_level_values(time_idx) <= train_end)
-        ]
-
-        # last `months` per entity
-        last_n_months = df_hist.groupby(level=entity_idx, group_keys=False).apply(
-            lambda g: g.tail(self.months)
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: rng.choice(
+                self.hist_per_entity[cid][t], size=self.n_samples, replace=True
+            ).tolist(),
         )
 
-        # entities present at train_end (i.e. have data at the last month with data)
-        loa_ids = (
-            df_hist.loc[df_hist.index.get_level_values(time_idx) == train_end]
-            .index.get_level_values(entity_idx)
-            .unique()
-        )
+    def predict_prediction_frame(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> dict:
+        """
+        Return predictions as Dict[str, PredictionFrame] — one PF per target.
+        Each PF has y_pred shape (N, n_samples) with resampled draws.
+        """
+        from views_pipeline_core.data.prediction_frame import PredictionFrame
 
-        # --- 2. Forecast window for this sequence ---
+        test_start, _ = self.partition_dict["test"]
         prediction_start = test_start + sequence_number
         prediction_end = prediction_start + output_length
         time_ids = list(range(prediction_start, prediction_end))
 
-        records = []
-        for cid in loa_ids:
-            # history for this entity
-            history = last_n_months.xs(cid, level=entity_idx, drop_level=False)
+        entities_with_history = [
+            cid for cid in self.loa_ids if cid in self.hist_per_entity
+        ]
 
-            if history.empty:
-                # skip entities without enough history
-                continue
+        if not entities_with_history:
+            return {}
 
-            hist_lists = {}
-            for t in self.targets:
-                hist_lists[t] = history[t].tolist()
-
+        time_arr = []
+        unit_arr = []
+        for cid in entities_with_history:
             for tid in time_ids:
-                row = {time_idx: tid, entity_idx: cid}
-                for t in self.targets:
-                    row[f"pred_{t}"] = hist_lists[t]
-                records.append(row)
+                time_arr.append(tid)
+                unit_arr.append(cid)
 
-        df_preds = pd.DataFrame(records)
-        if not df_preds.empty:
-            df_preds = df_preds.set_index([time_idx, entity_idx]).sort_index()
-        else:
-            # return an empty frame with the right columns if nothing could be computed
-            df_preds = pd.DataFrame(columns=[f"pred_{t}" for t in self.targets])
-            df_preds.index = pd.MultiIndex.from_arrays(
-                [[] for _ in range(2)], names=[time_idx, entity_idx]
+        time_arr = np.array(time_arr)
+        unit_arr = np.array(unit_arr)
+        n_rows = len(time_arr)
+
+        rng = np.random.default_rng(self.seed)
+
+        result = {}
+        for t in self.targets:
+            y_pred = np.empty((n_rows, self.n_samples), dtype=np.float64)
+            idx = 0
+            for cid in entities_with_history:
+                hist = self.hist_per_entity[cid][t]
+                for _ in time_ids:
+                    y_pred[idx] = rng.choice(hist, size=self.n_samples, replace=True)
+                    idx += 1
+
+            result[t] = PredictionFrame(
+                y_pred=y_pred,
+                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
             )
 
-        return df_preds
+        return result
+
+
+class MixtureBaseline:
+    def __init__(
+        self,
+        targets: List[str],
+        window_months: int,
+        lambda_mix: float,
+        n_samples: int,
+        partition_dict: dict,
+        loa: str,
+        seed: int = 42,
+    ):
+        """
+        Mixture empirical baseline that combines local history with a global
+        positive pool to avoid the zero-probability trap.
+        """
+        self.targets = targets
+        self.window_months = window_months
+        self.lambda_mix = lambda_mix
+        self.n_samples = n_samples
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.seed = seed
+        self.time_idx = None
+        self.entity_idx = None
+        self.local_pool = None
+        self.global_pool = None
+        self.loa_ids = None
+
+    def fit(self, df: pd.DataFrame):
+        test_start, _ = self.partition_dict["test"]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+
+        train_df = df[df.index.get_level_values(self.time_idx) < test_start]
+        train_df = train_df.sort_index(level=[self.entity_idx, self.time_idx])
+
+        train_end = test_start - 1
+        self.loa_ids = (
+            train_df.loc[train_df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
+            .unique()
+        )
+
+        # Local pool: last window_months values per entity per target
+        self.local_pool = {}
+        for cid in self.loa_ids:
+            entity_data = train_df.xs(cid, level=self.entity_idx, drop_level=False)
+            tail = entity_data.tail(self.window_months)
+            self.local_pool[cid] = {
+                t: np.array(tail[t].tolist(), dtype=np.float64) for t in self.targets
+            }
+
+        # Global pool: all positive values per target across all entities
+        self.global_pool = {}
+        for t in self.targets:
+            vals = train_df[t].values
+            self.global_pool[t] = vals[vals > 0].astype(np.float64)
+
+        return self
+
+    def _sample(self, cid, target, rng):
+        """Generate n_samples by mixing local and global pools."""
+        local = self.local_pool[cid][target]
+        glob = self.global_pool[target]
+
+        if len(glob) == 0:
+            # No positive values in training data — local only
+            return rng.choice(local, size=self.n_samples).tolist()
+
+        use_global = rng.random(self.n_samples) < self.lambda_mix
+        n_global = int(np.sum(use_global))
+        n_local = self.n_samples - n_global
+
+        samples = np.empty(self.n_samples, dtype=np.float64)
+        samples[use_global] = rng.choice(glob, size=n_global)
+        samples[~use_global] = rng.choice(local, size=n_local)
+        return samples.tolist()
+
+    def predict(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> pd.DataFrame:
+        test_start, _ = self.partition_dict["test"]
+        n_before = len(self.loa_ids)
+        loa_ids = [cid for cid in self.loa_ids if cid in self.local_pool]
+        if len(loa_ids) < n_before:
+            logger.warning(f"MixtureBaseline: {n_before - len(loa_ids)} entities dropped (missing from local_pool)")
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
+
+        rng = np.random.default_rng(self.seed)
+
+        return build_prediction_grid(
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
+            loa_ids=loa_ids,
+            time_ids=time_ids,
+            targets=self.targets,
+            value_fn=lambda cid, t: self._sample(cid, t, rng),
+        )
+
+    def predict_prediction_frame(
+        self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
+    ) -> dict:
+        from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+        test_start, _ = self.partition_dict["test"]
+        prediction_start = test_start + sequence_number
+        time_ids = list(range(prediction_start, prediction_start + output_length))
+
+        entities_with_pool = [cid for cid in self.loa_ids if cid in self.local_pool]
+
+        if not entities_with_pool:
+            return {}
+
+        time_arr = []
+        unit_arr = []
+        for cid in entities_with_pool:
+            for tid in time_ids:
+                time_arr.append(tid)
+                unit_arr.append(cid)
+
+        time_arr = np.array(time_arr)
+        unit_arr = np.array(unit_arr)
+        n_rows = len(time_arr)
+
+        rng = np.random.default_rng(self.seed)
+
+        # Iterate entity→time→target to match predict()/build_prediction_grid order
+        y_preds = {t: np.empty((n_rows, self.n_samples), dtype=np.float64) for t in self.targets}
+        idx = 0
+        for cid in entities_with_pool:
+            for _ in time_ids:
+                for t in self.targets:
+                    y_preds[t][idx] = self._sample(cid, t, rng)
+                idx += 1
+
+        result = {}
+        for t in self.targets:
+            result[t] = PredictionFrame(
+                y_pred=y_preds[t],
+                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
+            )
+
+        return result

@@ -1,12 +1,12 @@
 from views_pipeline_core.managers.model import ModelPathManager, ForecastingModelManager
-from views_pipeline_core.files.utils import read_dataframe
+from views_pipeline_core.files.utils import read_dataframe, generate_model_file_name
 from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
-from views_baseline.model.baseline import ZeroModel
-from views_baseline.model.baseline import LocfModel
+import pickle
 import pandas as pd
 from datetime import datetime
 from views_baseline.model.catalog import BaselineModelCatalog
+from views_baseline.model.protocol import DistributionalBaselineModel
 
 
 logger = logging.getLogger(__name__)
@@ -29,19 +29,44 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         """
         super().__init__(model_path, wandb_notifications, use_prediction_store)
 
-        # Add your custom initialization below
         logger.info("Initializing BaselineModelManager")
 
-        # YOUR CODE HERE
-
-    def _train_model_artifact(self) -> any:
+    def _train_model_artifact(self):
         """
-        Train and save your model artifact.
+        Fit the baseline model and save it as a pickle artifact.
 
+        Although baselines are stateless and deterministic, the downstream
+        ensemble manager requires an artifact file to exist so it can
+        resolve timestamps via get_latest_model_artifact_path().
         """
+        self.model, _ = self._setup_model_and_data()
+        path_artifacts = self._model_path.artifacts
+        run_type = self.config["run_type"]
+        model_filename = generate_model_file_name(run_type, file_extension=".pkl")
+        with open(path_artifacts / model_filename, "wb") as f:
+            pickle.dump(self.model, f)
+        logger.info(f"Saved baseline artifact: {model_filename}")
+        return self.model
 
-        # 2. Model initialization
-        logger.warning(f"Baseline Models does not require training - skipping training")
+    def _setup_model_and_data(self):
+        """
+        Instantiate the baseline model via the catalog, load data, fit, and return both.
+        """
+        path_raw = self._model_path.data_raw
+        run_type = self.config["run_type"]
+        loa = self.config["level"]
+        partition_dict = self._data_loader.partition_dict
+        catalog = BaselineModelCatalog(
+            config=self.config, partition_dict=partition_dict, loa=loa
+        )
+        model = catalog.get_model(self.config["algorithm"])
+        logger.info(f"Model type is {self.config['algorithm']}")
+        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        df = read_dataframe(
+            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
+        )
+        model.fit(df)
+        return model, df
 
     def _evaluate_model_artifact(
         self, eval_type: str, artifact_name: str = None
@@ -51,37 +76,25 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         """
         logger.info("Evaluating baseline model artifact")
-        # Common setup (provided)
-        path_raw = self._model_path.data_raw
-        path_artifacts = self._model_path.artifacts
-        run_type = self.config["run_type"]
-        loa = self.config["level"]
-        partition_dict = self._data_loader.partition_dict
-        catalog = BaselineModelCatalog(
-            config=self.config, partition_dict=partition_dict, loa=loa
-        )
-        model_name = self.config["algorithm"]
-        self.model = catalog.get_model(model_name)
 
-        logger.info(f"Model type is {model_name}")
-
-        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df_viewser = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
-
-        self.model.fit(df_viewser)
+        self.model, df_viewser = self._setup_model_and_data()
 
         logger.info(f"Generating predictions for {eval_type} evaluation")
-        predictions = []
 
-        # Determine evaluation length
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+
+        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
+            predictions = {}
+            for seq_num in range(sequence_numbers):
+                pf_dict = self.model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
+                for target, pf in pf_dict.items():
+                    predictions.setdefault(target, []).append(pf)
+            return predictions
+
+        predictions = []
         for seq_num in range(sequence_numbers):
-            # YOUR PREDICTION CODE HERE
             preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
-            # preds = preds.clip(lower=1e-4)
-            predictions.append(preds)  # Append predictions for each sequence
+            predictions.append(preds)
 
         return predictions
 
@@ -90,76 +103,40 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Generate forecasts using trained model artifact.
 
         """
-        # Common setup (provided)
-        path_raw = self._model_path.data_raw
-        path_artifacts = self._model_path.artifacts
-        run_type = self.config["run_type"]
-        loa = self.config["level"]
-        partition_dict = self._data_loader.partition_dict
-        catalog = BaselineModelCatalog(
-            config=self.config, partition_dict=partition_dict, loa=loa
-        )
-        model_name = self.config["algorithm"]  # e.g., "ZeroModel" or "LocfModel"
-        self.model = catalog.get_model(model_name)
-        logger.info(f"Model type is {model_name}")
+        logger.info("Generating forecasts")
 
-        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.model, df_viewser = self._setup_model_and_data()
+
+        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
+            return self.model.predict_prediction_frame(df=df_viewser, sequence_number=0)
+
+        return self.model.predict(sequence_number=0, df=df_viewser)
+
+    def _evaluate_sweep(self, eval_type: str, model) -> list:
+        """
+        Evaluate a baseline model during a WandB sweep iteration.
+
+        The model has already been fitted by _train_model_artifact().
+        We load the data and generate predictions using it.
+        """
+        path_raw = self._model_path.data_raw
+        run_type = self.config["run_type"]
         df_viewser = read_dataframe(
             path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
         )
 
-        logger.info("Generating forecasts")
+        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
 
-        self.model.fit(df_viewser)
+        if self._prediction_format == "prediction_frame" and isinstance(model, DistributionalBaselineModel):
+            predictions = {}
+            for seq_num in range(sequence_numbers):
+                pf_dict = model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
+                for target, pf in pf_dict.items():
+                    predictions.setdefault(target, []).append(pf)
+            return predictions
 
-        forecasts = self.model.predict(sequence_number=0, df=df_viewser)
-
-        return forecasts
-
-    def _evaluate_sweep(self, eval_type: str, model: any) -> list:
-
-        logger.info(
-            f"Baseline Models does not support sweep evaluation - skipping evaluation"
-        )
-        raise NotImplementedError(
-            "Baseline Models does not support sweep evaluation - skipping evaluation"
-        )
-
-
-    def _evaluate_prediction_dataframe(
-        self, df_predictions, eval_type, ensemble=False
-    ) -> None:
-
-        import pandas as pd
-        from views_evaluation.evaluation.evaluation_manager import EvaluationManager
-        from views_pipeline_core.files.utils import read_dataframe
-
-        evaluation_manager = EvaluationManager(self.config["metrics"])
-
-        df_path = self._model_path._get_raw_data_file_paths(
-            run_type=self.args.run_type
-        )[0]
-
-        df_viewser = read_dataframe(df_path)
-        df_actual = df_viewser[self.config["targets"]]
-
-        for target in self.config["targets"]:
-            logger.info(f"Calculating evaluation metrics for {target}")
-
-            eval_result_dict = evaluation_manager.evaluate(
-                df_actual,
-                df_predictions,
-                target,
-                self.config,
-            )
-
-            step_eval, df_step = eval_result_dict["step"]
-            ts_eval, df_ts = eval_result_dict["time_series"]
-            month_eval, df_month = eval_result_dict["month"]
-
-            self._wandb_module.log_evaluation_results(
-                step_eval,
-                month_eval,
-                ts_eval,
-                "",   
-            )
+        predictions = []
+        for seq_num in range(sequence_numbers):
+            preds = model.predict(df=df_viewser, sequence_number=seq_num)
+            predictions.append(preds)
+        return predictions
