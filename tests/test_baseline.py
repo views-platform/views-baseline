@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from itertools import product
 
 import pytest
 
@@ -11,54 +10,12 @@ from views_baseline.model.baseline import (
     ConflictologyModel,
     MixtureBaseline,
 )
-
-
-def make_dummy_df(entity_id="pg_id"):
-    """
-    Create a simple MultiIndex dataframe with 2 entities and a range of months.
-    Index names matter because the models read them from df.index.names[0/1].
-    """
-    time_idx_name = "month_id"
-    entity_idx_name = entity_id
-
-    times = list(range(440, 540))
-    entities = [1, 2]
-
-    tuples = list(product(times, entities))
-    index = pd.MultiIndex.from_tuples(
-        tuples,
-        names=[time_idx_name, entity_idx_name],
-    )
-
-    df = pd.DataFrame(index=index)
-
-    # Simple deterministic targets
-    # Example: y1 = time * 10 + entity, y2 = time * 100 + entity
-    df["y1"] = [
-        t * 10 + e
-        for t, e in zip(
-            df.index.get_level_values(time_idx_name),
-            df.index.get_level_values(entity_idx_name),
-        )
-    ]
-    df["y2"] = [
-        t * 100 + e
-        for t, e in zip(
-            df.index.get_level_values(time_idx_name),
-            df.index.get_level_values(entity_idx_name),
-        )
-    ]
-    return df
+from conftest import make_dummy_df
 
 
 @pytest.fixture
 def partition_dict():
     return {"test": (493, 540)}
-
-
-@pytest.fixture
-def targets():
-    return ["y1", "y2"]
 
 
 @pytest.fixture
@@ -312,13 +269,16 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
 # -----------------------------------------------------------------------
 
 
-def test_conflictology_model_returns_history_lists(base_df_pgm, partition_dict, targets):
+def test_conflictology_model_resamples_from_history(base_df_pgm, partition_dict, targets):
     months = 4
+    n_samples = 64
     model = ConflictologyModel(
         targets=targets,
         months=months,
         partition_dict=partition_dict,
         loa="pg_id",
+        n_samples=n_samples,
+        seed=42,
     )
     model.fit(base_df_pgm)
 
@@ -336,41 +296,38 @@ def test_conflictology_model_returns_history_lists(base_df_pgm, partition_dict, 
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
 
-    # For each entity, expected history is the last `months` scalar values before test_start
     for ent in train_df.index.get_level_values(entity_idx).unique():
         ent_history = train_df.xs(ent, level=entity_idx).tail(months)
 
         for target in targets:
-            expected_list = ent_history[target].tolist()
+            history_values = set(ent_history[target].tolist())
 
-            # check first prediction time
             first_time = test_start
             cell_value = preds.loc[(first_time, ent), f"pred_{target}"]
 
-            # 1) each prediction is a list (distribution forecast)
+            # 1) each prediction is a list (resampled distribution)
             assert isinstance(cell_value, list)
 
-            # 2) list has the right length
-            assert len(cell_value) == months
+            # 2) list has n_samples entries (not months)
+            assert len(cell_value) == n_samples
 
-            # 3) content is exactly the last n months (order preserved)
-            assert cell_value == expected_list
+            # 3) all sampled values come from the history window
+            assert set(cell_value).issubset(history_values)
 
-            # 4) all entries are numeric (no nested lists, etc.)
+            # 4) all entries are numeric
             assert all(isinstance(x, (int, float, np.integer, np.floating)) for x in cell_value)
-
-            # 5) for all other forecast times we get the same list
-            for t in range(test_start, test_start + output_length):
-                assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
 
 
 def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
     months = 3
+    n_samples = 32
     model = ConflictologyModel(
         targets=targets,
         months=months,
         partition_dict=partition_dict,
         loa="pg_id",
+        n_samples=n_samples,
+        seed=42,
     )
     model.fit(base_df_pgm)
 
@@ -387,14 +344,13 @@ def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dic
     )
 
     # --- prediction window checks ---
-    # sequence_number only shifts the prediction window, NOT the history window
     prediction_start = test_start + seq_num
     prediction_end = prediction_start + output_length - 1
 
     assert preds.index.get_level_values(time_idx).min() == prediction_start
     assert preds.index.get_level_values(time_idx).max() == prediction_end
 
-    # --- history window checks (fixed, does not depend on seq_num) ---
+    # --- history window checks (samples come from history, not shifted) ---
     train_end = test_start - 1
     history_start = train_end - (months - 1)
 
@@ -406,28 +362,28 @@ def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dic
     for ent in df_hist.index.get_level_values(entity_idx).unique():
         ent_hist = df_hist.xs(ent, level=entity_idx)
         for target in targets:
-            expected_list = ent_hist[target].tolist()
+            history_values = set(ent_hist[target].tolist())
 
             first_time = prediction_start
             cell_value = preds.loc[(first_time, ent), f"pred_{target}"]
 
             assert isinstance(cell_value, list)
-            assert len(cell_value) == months
-            assert cell_value == expected_list
-
-            for t in range(prediction_start, prediction_end + 1):
-                assert preds.loc[(t, ent), f"pred_{target}"] == expected_list
+            assert len(cell_value) == n_samples
+            assert set(cell_value).issubset(history_values)
 
 
 def test_conflictology_model_predict_prediction_frame(base_df_pgm, partition_dict, targets):
     from views_pipeline_core.data.prediction_frame import PredictionFrame
 
     months = 4
+    n_samples = 64
     model = ConflictologyModel(
         targets=targets,
         months=months,
         partition_dict=partition_dict,
         loa="pg_id",
+        n_samples=n_samples,
+        seed=42,
     )
     model.fit(base_df_pgm)
 
@@ -448,7 +404,7 @@ def test_conflictology_model_predict_prediction_frame(base_df_pgm, partition_dic
     for target in targets:
         pf = result[target]
         assert isinstance(pf, PredictionFrame)
-        assert pf.y_pred.shape == (n_entities * output_length, months)
+        assert pf.y_pred.shape == (n_entities * output_length, n_samples)
         assert len(pf.identifiers["time"]) == n_entities * output_length
         assert len(pf.identifiers["unit"]) == n_entities * output_length
 
@@ -461,6 +417,53 @@ def test_conflictology_model_predict_prediction_frame(base_df_pgm, partition_dic
             uid = pf.identifiers["unit"][i]
             expected = df_preds.loc[(tid, uid), f"pred_{target}"]
             assert list(pf.y_pred[i]) == pytest.approx(expected)
+
+
+def test_conflictology_matches_mixture_lambda_zero(base_df_pgm, partition_dict, targets):
+    """
+    ConflictologyModel and MixtureBaseline(lambda_mix=0) should draw from
+    the same local history pool per entity/target.
+    """
+    window = 4
+    n_samples = 128
+
+    conf = ConflictologyModel(
+        targets=targets, months=window, partition_dict=partition_dict,
+        loa="pg_id", n_samples=n_samples, seed=42,
+    )
+    conf.fit(base_df_pgm)
+
+    mix = MixtureBaseline(
+        targets=targets, window_months=window, lambda_mix=0.0,
+        n_samples=n_samples, partition_dict=partition_dict,
+        loa="pg_id", seed=99,  # different seed — we test pools, not samples
+    )
+    mix.fit(base_df_pgm)
+
+    # 1) Same entities
+    assert set(conf.hist_per_entity.keys()) == set(mix.local_pool.keys())
+
+    # 2) Same source pool values per entity per target
+    for cid in conf.hist_per_entity:
+        for t in targets:
+            np.testing.assert_array_equal(
+                np.sort(conf.hist_per_entity[cid][t]),
+                np.sort(mix.local_pool[cid][t]),
+            )
+
+    # 3) Predictions have same shape and all values come from the pool
+    output_length = 5
+    conf_preds = conf.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    mix_preds = mix.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+
+    assert conf_preds.shape == mix_preds.shape
+
+    for col in conf_preds.columns:
+        for idx in conf_preds.index:
+            conf_cell = conf_preds.loc[idx, col]
+            mix_cell = mix_preds.loc[idx, col]
+            assert len(conf_cell) == n_samples
+            assert len(mix_cell) == n_samples
 
 
 # -----------------------------------------------------------------------

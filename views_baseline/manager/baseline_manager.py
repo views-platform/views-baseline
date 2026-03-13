@@ -1,7 +1,8 @@
 from views_pipeline_core.managers.model import ModelPathManager, ForecastingModelManager
-from views_pipeline_core.files.utils import read_dataframe
+from views_pipeline_core.files.utils import read_dataframe, generate_model_file_name
 from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
+import pickle
 import pandas as pd
 from datetime import datetime
 from views_baseline.model.catalog import BaselineModelCatalog
@@ -32,11 +33,20 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
     def _train_model_artifact(self):
         """
-        Train and save your model artifact.
+        Fit the baseline model and save it as a pickle artifact.
 
+        Although baselines are stateless and deterministic, the downstream
+        ensemble manager requires an artifact file to exist so it can
+        resolve timestamps via get_latest_model_artifact_path().
         """
-
-        logger.warning("Baseline Models does not require training - skipping training")
+        self.model, _ = self._setup_model_and_data()
+        path_artifacts = self._model_path.artifacts
+        run_type = self.config["run_type"]
+        model_filename = generate_model_file_name(run_type, file_extension=".pkl")
+        with open(path_artifacts / model_filename, "wb") as f:
+            pickle.dump(self.model, f)
+        logger.info(f"Saved baseline artifact: {model_filename}")
+        return self.model
 
     def _setup_model_and_data(self):
         """
@@ -102,11 +112,31 @@ class BaselineForecastingModelManager(ForecastingModelManager):
 
         return self.model.predict(sequence_number=0, df=df_viewser)
 
-    def _evaluate_sweep(self, eval_type: str, model: any) -> list:
+    def _evaluate_sweep(self, eval_type: str, model) -> list:
+        """
+        Evaluate a baseline model during a WandB sweep iteration.
 
-        logger.info(
-            "Baseline Models does not support sweep evaluation - skipping evaluation"
+        The model has already been fitted by _train_model_artifact().
+        We load the data and generate predictions using it.
+        """
+        path_raw = self._model_path.data_raw
+        run_type = self.config["run_type"]
+        df_viewser = read_dataframe(
+            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
         )
-        raise NotImplementedError(
-            "Baseline Models does not support sweep evaluation - skipping evaluation"
-        )
+
+        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+
+        if self._prediction_format == "prediction_frame" and isinstance(model, DistributionalBaselineModel):
+            predictions = {}
+            for seq_num in range(sequence_numbers):
+                pf_dict = model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
+                for target, pf in pf_dict.items():
+                    predictions.setdefault(target, []).append(pf)
+            return predictions
+
+        predictions = []
+        for seq_num in range(sequence_numbers):
+            preds = model.predict(df=df_viewser, sequence_number=seq_num)
+            predictions.append(preds)
+        return predictions

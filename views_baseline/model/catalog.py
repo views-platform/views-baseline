@@ -56,7 +56,8 @@ class BaselineModelCatalog:
             targets=self.config["targets"],
             months=self.config["months"],
             partition_dict=self.partition_dict,
-            loa=self.loa
+            loa=self.loa,
+            n_samples=self.config.get("n_samples", 256),
         )
 
     def _get_mixture_model(self):

@@ -17,9 +17,12 @@ class ZeroModel:
         self.targets = targets
         self.partition_dict = partition_dict
         self.loa = loa
+        self.time_idx = None
+        self.entity_idx = None
 
     def fit(self, df: pd.DataFrame):
-        # No training needed
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
         return self
 
     def predict(
@@ -33,23 +36,21 @@ class ZeroModel:
         starting from test_start + sequence_number.
         """
         test_start, _ = self.partition_dict["test"]
-        time_idx = df.index.names[0]
-        entity_idx = df.index.names[1]
         train_end = test_start - 1
 
-        logger.info(f"Currently running a {entity_idx} model")
+        logger.info(f"Currently running a {self.entity_idx} model")
 
         loa_ids = (
-            df.loc[df.index.get_level_values(time_idx) == train_end]
-            .index.get_level_values(entity_idx)
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
+            .index.get_level_values(self.entity_idx)
             .unique()
         )
         prediction_start = test_start + sequence_number
         time_ids = list(range(prediction_start, prediction_start + output_length))
 
         return build_prediction_grid(
-            time_idx=time_idx,
-            entity_idx=entity_idx,
+            time_idx=self.time_idx,
+            entity_idx=self.entity_idx,
             loa_ids=loa_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -103,7 +104,10 @@ class LocfModel:
             .unique()
         )
         # Filter to entities that have stored observations
+        n_before = len(loa_ids)
         loa_ids = [cid for cid in loa_ids if cid in self.last_observations.index]
+        if len(loa_ids) < n_before:
+            logger.warning(f"LocfModel: {n_before - len(loa_ids)} entities dropped (missing from last_observations)")
 
         prediction_start = test_start + sequence_number
         time_ids = list(range(prediction_start, prediction_start + output_length))
@@ -170,7 +174,10 @@ class AverageModel:
             .index.get_level_values(self.entity_idx)
             .unique()
         )
+        n_before = len(loa_ids)
         loa_ids = [cid for cid in loa_ids if cid in self.mean.index]
+        if len(loa_ids) < n_before:
+            logger.warning(f"AverageModel: {n_before - len(loa_ids)} entities dropped (missing from mean)")
 
         prediction_start = test_start + sequence_number
         time_ids = list(range(prediction_start, prediction_start + output_length))
@@ -186,15 +193,25 @@ class AverageModel:
 
 
 class ConflictologyModel:
-    def __init__(self, targets: List[str], months: int, partition_dict: dict, loa: str):
+    def __init__(
+        self,
+        targets: List[str],
+        months: int,
+        partition_dict: dict,
+        loa: str,
+        n_samples: int = 256,
+        seed: int = 42,
+    ):
         """
-        Baseline model that takes the set of the last w=12 months of data for a given cm/pgm (so for a sequence
-        starting at month m, the 12 months from m-12 to m-1).
+        Climatology baseline that resamples with replacement from the last w months
+        of data for a given cm/pgm, producing n_samples i.i.d. draws per cell.
         """
         self.targets = targets
         self.partition_dict = partition_dict
         self.loa = loa
         self.months = months
+        self.n_samples = n_samples
+        self.seed = seed
         self.time_idx = None
         self.entity_idx = None
         self.hist_per_entity = None
@@ -234,7 +251,7 @@ class ConflictologyModel:
             if history.empty:
                 continue
             self.hist_per_entity[cid] = {
-                t: history[t].tolist() for t in self.targets
+                t: np.array(history[t].tolist(), dtype=np.float64) for t in self.targets
             }
 
         return self
@@ -244,10 +261,15 @@ class ConflictologyModel:
     ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
 
+        n_before = len(self.loa_ids)
         loa_ids = [cid for cid in self.loa_ids if cid in self.hist_per_entity]
+        if len(loa_ids) < n_before:
+            logger.warning(f"ConflictologyModel: {n_before - len(loa_ids)} entities dropped (missing from hist_per_entity)")
 
         prediction_start = test_start + sequence_number
         time_ids = list(range(prediction_start, prediction_start + output_length))
+
+        rng = np.random.default_rng(self.seed)
 
         return build_prediction_grid(
             time_idx=self.time_idx,
@@ -255,7 +277,9 @@ class ConflictologyModel:
             loa_ids=loa_ids,
             time_ids=time_ids,
             targets=self.targets,
-            value_fn=lambda cid, t: self.hist_per_entity[cid][t],
+            value_fn=lambda cid, t: rng.choice(
+                self.hist_per_entity[cid][t], size=self.n_samples, replace=True
+            ).tolist(),
         )
 
     def predict_prediction_frame(
@@ -263,7 +287,7 @@ class ConflictologyModel:
     ) -> dict:
         """
         Return predictions as Dict[str, PredictionFrame] — one PF per target.
-        Each PF has y_pred shape (N, S) where S = self.months.
+        Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
         from views_pipeline_core.data.prediction_frame import PredictionFrame
 
@@ -290,14 +314,16 @@ class ConflictologyModel:
         unit_arr = np.array(unit_arr)
         n_rows = len(time_arr)
 
+        rng = np.random.default_rng(self.seed)
+
         result = {}
         for t in self.targets:
-            y_pred = np.empty((n_rows, self.months), dtype=np.float32)
+            y_pred = np.empty((n_rows, self.n_samples), dtype=np.float64)
             idx = 0
             for cid in entities_with_history:
                 hist = self.hist_per_entity[cid][t]
                 for _ in time_ids:
-                    y_pred[idx] = hist
+                    y_pred[idx] = rng.choice(hist, size=self.n_samples, replace=True)
                     idx += 1
 
             result[t] = PredictionFrame(
@@ -390,7 +416,10 @@ class MixtureBaseline:
         self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
     ) -> pd.DataFrame:
         test_start, _ = self.partition_dict["test"]
+        n_before = len(self.loa_ids)
         loa_ids = [cid for cid in self.loa_ids if cid in self.local_pool]
+        if len(loa_ids) < n_before:
+            logger.warning(f"MixtureBaseline: {n_before - len(loa_ids)} entities dropped (missing from local_pool)")
         prediction_start = test_start + sequence_number
         time_ids = list(range(prediction_start, prediction_start + output_length))
 
