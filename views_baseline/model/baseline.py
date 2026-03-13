@@ -235,21 +235,16 @@ class ConflictologyModel:
         self.entity_idx = df.index.names[1]
 
         train_end = test_start - 1
-        history_start = train_end - (self.window_months - 1)
 
-        df = df.sort_index(level=[self.time_idx, self.entity_idx])
+        df = df[df.index.get_level_values(self.time_idx) <= train_end]
+        df = df.sort_index(level=[self.entity_idx, self.time_idx])
 
-        df_hist = df[
-            (df.index.get_level_values(self.time_idx) >= history_start)
-            & (df.index.get_level_values(self.time_idx) <= train_end)
-        ]
-
-        last_n_months = df_hist.groupby(level=self.entity_idx, group_keys=False).apply(
+        last_n_months = df.groupby(level=self.entity_idx, group_keys=False).apply(
             lambda g: g.tail(self.window_months)
         )
 
         self.loa_ids = (
-            df_hist.loc[df_hist.index.get_level_values(self.time_idx) == train_end]
+            df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
@@ -276,10 +271,14 @@ class ConflictologyModel:
 
         test_start = self.partition_dict["test"][0]
         prediction_start = test_start + sequence_number
-        prediction_end = prediction_start + output_length
-        time_ids = list(range(prediction_start, prediction_end))
+        time_ids = list(range(prediction_start, prediction_start + output_length))
 
         entities_with_history = [cid for cid in self.loa_ids if cid in self.hist_per_entity]
+        if len(entities_with_history) < len(self.loa_ids):
+            logger.warning(
+                f"ConflictologyModel: {len(self.loa_ids) - len(entities_with_history)} "
+                "entities dropped (missing from hist_per_entity)"
+            )
 
         if not entities_with_history:
             return {}
@@ -387,7 +386,7 @@ class MixtureBaseline:
 
         if len(glob) == 0:
             # No positive values in training data — local only
-            return rng.choice(local, size=self.n_samples).tolist()
+            return rng.choice(local, size=self.n_samples)
 
         use_global = rng.random(self.n_samples) < self.lambda_mix
         n_global = int(np.sum(use_global))
@@ -396,7 +395,7 @@ class MixtureBaseline:
         samples = np.empty(self.n_samples, dtype=np.float64)
         samples[use_global] = rng.choice(glob, size=n_global)
         samples[~use_global] = rng.choice(local, size=n_local)
-        return samples.tolist()
+        return samples
 
     def predict(
         self, df: pd.DataFrame, sequence_number: int, output_length: int = 36
@@ -408,6 +407,11 @@ class MixtureBaseline:
         time_ids = list(range(prediction_start, prediction_start + output_length))
 
         entities_with_pool = [cid for cid in self.loa_ids if cid in self.local_pool]
+        if len(entities_with_pool) < len(self.loa_ids):
+            logger.warning(
+                f"MixtureBaseline: {len(self.loa_ids) - len(entities_with_pool)} "
+                "entities dropped (missing from local_pool)"
+            )
 
         if not entities_with_pool:
             return {}
