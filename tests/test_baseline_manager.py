@@ -1,16 +1,15 @@
-import pandas as pd
 import pickle
 import re
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
+import pandas as pd
 import pytest
-
-from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
-from views_baseline.model.baseline import ZeroModel, LocfModel
-import views_baseline.manager.baseline_manager as bm
 from conftest import make_dummy_df
 
+import views_baseline.manager.baseline_manager as bm
+from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
+from views_baseline.model.baseline import LocfModel, ZeroModel
 
 # ---------------------------------------------------------------------
 # Shared helpers / fixtures
@@ -77,32 +76,28 @@ def test_manager_evaluate_uses_zero_model(monkeypatch, base_df, partition_dict, 
     - Call .predict() for each sequence_number
     - Return a list of prediction DataFrames
     """
-    # Make manager configuration
     config = {
         "run_type": "eval",
         "level": "pg_id",
         "algorithm": "ZeroModel",
         "targets": targets,
-        "sequence_numbers": 2,  # we want two sequences
+        "time_steps": 36,
+        "sequence_numbers": 2,
     }
 
     manager = make_manager(config, partition_dict)
-
-    # read_dataframe should just return our in-memory df, no files
     monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
 
-    # Run evaluation
     preds_list = manager._evaluate_model_artifact(eval_type="temporal")
 
     assert isinstance(preds_list, list)
     assert len(preds_list) == 2
 
-    # Expected: what ZeroModel would produce directly
     zero_model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     zero_model.fit(base_df)
 
-    expected0 = zero_model.predict(df=base_df, sequence_number=0)
-    expected1 = zero_model.predict(df=base_df, sequence_number=1)
+    expected0 = zero_model.predict(df=base_df, sequence_number=0, output_length=36)
+    expected1 = zero_model.predict(df=base_df, sequence_number=1, output_length=36)
 
     pd.testing.assert_frame_equal(preds_list[0], expected0)
     pd.testing.assert_frame_equal(preds_list[1], expected1)
@@ -118,11 +113,11 @@ def test_manager_evaluate_uses_locf_model(monkeypatch, base_df, partition_dict, 
         "level": "pg_id",
         "algorithm": "LocfModel",
         "targets": targets,
+        "time_steps": 36,
         "sequence_numbers": 1,
     }
 
     manager = make_manager(config, partition_dict)
-
     monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
 
     preds_list = manager._evaluate_model_artifact(eval_type="temporal")
@@ -132,7 +127,7 @@ def test_manager_evaluate_uses_locf_model(monkeypatch, base_df, partition_dict, 
 
     locf = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     locf.fit(base_df)
-    expected = locf.predict(df=base_df, sequence_number=0)
+    expected = locf.predict(df=base_df, sequence_number=0, output_length=36)
 
     pd.testing.assert_frame_equal(preds_list[0], expected)
 
@@ -155,19 +150,17 @@ def test_manager_forecast_uses_baseline_model(monkeypatch, base_df, partition_di
         "level": "pg_id",
         "algorithm": "LocfModel",
         "targets": targets,
-        # 'months' would be needed for Average/Conflictology, not Locf/Zero
+        "time_steps": 36,
     }
 
     manager = make_manager(config, partition_dict)
-
-    # Monkeypatch read_dataframe to avoid any disk IO
     monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
 
     forecasts = manager._forecast_model_artifact()
 
     locf = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     locf.fit(base_df)
-    expected = locf.predict(df=base_df, sequence_number=0)
+    expected = locf.predict(df=base_df, sequence_number=0, output_length=36)
 
     pd.testing.assert_frame_equal(forecasts, expected)
 
@@ -177,32 +170,28 @@ def test_manager_forecast_respects_algorithm_choice(monkeypatch, base_df, partit
     Smoke test: switching algorithm in config should change the forecast
     (ZeroModel vs LocfModel should not match unless the data are degenerate).
     """
-    # ZeroModel config
     config_zero = {
         "run_type": "forecast",
         "level": "pg_id",
         "algorithm": "ZeroModel",
         "targets": targets,
+        "time_steps": 36,
     }
     manager_zero = make_manager(config_zero, partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
     forecasts_zero = manager_zero._forecast_model_artifact()
 
-    # LocfModel config
     config_locf = {
         "run_type": "forecast",
         "level": "pg_id",
         "algorithm": "LocfModel",
         "targets": targets,
+        "time_steps": 36,
     }
     manager_locf = make_manager(config_locf, partition_dict)
-    # Same monkeypatch, same df
     forecasts_locf = manager_locf._forecast_model_artifact()
 
-    # Shapes should be same
     assert forecasts_zero.shape == forecasts_locf.shape
-
-    # But at least one value should differ (for our deterministic dummy data)
     assert (forecasts_zero.values != forecasts_locf.values).any()
 
 
@@ -260,11 +249,70 @@ def test_manager_train_saves_artifact(monkeypatch, base_df, partition_dict, targ
     pkl_files = list(tmp_path.glob("calibration_model_*.pkl"))
     assert len(pkl_files) == 1
 
-    # Filename matches expected pattern
     assert re.match(r"calibration_model_\d{8}_\d{6}\.pkl", pkl_files[0].name)
 
-    # Unpickle and verify it's a valid model
     with open(pkl_files[0], "rb") as f:
         loaded = pickle.load(f)
     assert isinstance(loaded, ZeroModel)
     assert loaded.targets == targets
+
+
+# ---------------------------------------------------------------------
+# Tests: distributional model paths
+# ---------------------------------------------------------------------
+
+
+def test_manager_evaluate_distributional_model(monkeypatch, base_df, partition_dict, targets):
+    """
+    _evaluate_model_artifact for a distributional model (ConflictologyModel)
+    should return dict[str, list] where each value is a list of PredictionFrames.
+    """
+    config = {
+        "run_type": "eval",
+        "level": "pg_id",
+        "algorithm": "ConflictologyModel",
+        "targets": targets,
+        "window_months": 6,
+        "n_samples": 64,
+        "time_steps": 36,
+        "sequence_numbers": 2,
+    }
+
+    manager = make_manager(config, partition_dict)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
+
+    result = manager._evaluate_model_artifact(eval_type="temporal")
+
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], list)
+        assert len(result[target_key]) == 2
+
+
+def test_manager_forecast_distributional_model(monkeypatch, base_df, partition_dict, targets):
+    """
+    _forecast_model_artifact for a distributional model (ConflictologyModel)
+    should return dict[str, PredictionFrame].
+    """
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+    config = {
+        "run_type": "forecast",
+        "level": "pg_id",
+        "algorithm": "ConflictologyModel",
+        "targets": targets,
+        "window_months": 6,
+        "n_samples": 64,
+        "time_steps": 36,
+    }
+
+    manager = make_manager(config, partition_dict)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
+
+    result = manager._forecast_model_artifact()
+
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], PredictionFrame)
