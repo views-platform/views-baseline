@@ -76,18 +76,23 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         point models return list[DataFrame].
         """
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+        output_length = self.config["time_steps"]
 
         if isinstance(model, DistributionalBaselineModel):
             predictions = {}
             for seq_num in range(sequence_numbers):
-                pf_dict = model.predict(df=df, sequence_number=seq_num)
+                pf_dict = model.predict(
+                    df=df, sequence_number=seq_num, output_length=output_length
+                )
                 for target, pf in pf_dict.items():
                     predictions.setdefault(target, []).append(pf)
             return predictions
 
         predictions = []
         for seq_num in range(sequence_numbers):
-            preds = model.predict(df=df, sequence_number=seq_num)
+            preds = model.predict(
+                df=df, sequence_number=seq_num, output_length=output_length
+            )
             predictions.append(preds)
         return predictions
 
@@ -106,11 +111,16 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         """
         logger.info("Generating forecasts")
         self.model, df_viewser = self._setup_model_and_data()
+        output_length = self.config["time_steps"]
 
         if isinstance(self.model, DistributionalBaselineModel):
-            return self.model.predict(df=df_viewser, sequence_number=0)
+            return self.model.predict(
+                df=df_viewser, sequence_number=0, output_length=output_length
+            )
 
-        return self.model.predict(sequence_number=0, df=df_viewser)
+        return self.model.predict(
+            df=df_viewser, sequence_number=0, output_length=output_length
+        )
 
     def _evaluate_sweep(self, eval_type: str, model):
         """

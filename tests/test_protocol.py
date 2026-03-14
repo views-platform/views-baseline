@@ -29,6 +29,7 @@ from views_baseline.model.protocol import BaselineModel, DistributionalBaselineM
             {
                 "targets": ["y"],
                 "window_months": 3,
+                "n_samples": 10,
                 "partition_dict": {"test": (493, 540)},
                 "loa": "pg_id",
             },
@@ -53,7 +54,11 @@ def test_model_satisfies_baseline_protocol(Model, kwargs):
 
 def test_conflictology_satisfies_distributional_protocol():
     m = ConflictologyModel(
-        targets=["y"], window_months=3, partition_dict={"test": (493, 540)}, loa="pg_id"
+        targets=["y"],
+        window_months=3,
+        n_samples=10,
+        partition_dict={"test": (493, 540)},
+        loa="pg_id",
     )
     assert isinstance(m, DistributionalBaselineModel)
 

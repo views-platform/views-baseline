@@ -684,7 +684,7 @@ def test_catalog_get_zero_model(partition_dict, targets):
 def test_catalog_get_average_model(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets, "months": 6}
+    config = {"targets": targets, "window_months": 6}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
     model = catalog.get_model("AverageModel")
     assert isinstance(model, AverageModel)
@@ -703,9 +703,9 @@ def test_catalog_unknown_model_raises(partition_dict, targets):
 def test_catalog_missing_required_key_raises(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets}  # missing "months" required by AverageModel
+    config = {"targets": targets}  # missing "window_months" required by AverageModel
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
-    with pytest.raises(ValueError, match="months"):
+    with pytest.raises(ValueError, match="window_months"):
         catalog.get_model("AverageModel")
 
 
@@ -717,3 +717,139 @@ def test_catalog_list_models(partition_dict, targets):
     names = catalog.list_models()
     expected = {"ZeroModel", "LocfModel", "AverageModel", "ConflictologyModel", "MixtureBaseline"}
     assert set(names) == expected
+
+
+# -----------------------------------------------------------------------
+# Red team: degenerate parameter tests
+# -----------------------------------------------------------------------
+
+
+def test_average_model_window_months_zero_produces_nan(base_df_pgm, partition_dict, targets):
+    """window_months=0 → tail(0) is empty → mean is NaN → all predictions NaN."""
+    model = AverageModel(
+        targets=targets, window_months=0, partition_dict=partition_dict, loa="pg_id"
+    )
+    model.fit(base_df_pgm)
+    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
+    assert preds.isna().all().all()
+
+
+def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, targets):
+    """window_months=0 → tail(0) empty → xs() raises KeyError during fit."""
+    model = ConflictologyModel(
+        targets=targets, window_months=0, partition_dict=partition_dict,
+        loa="pg_id", n_samples=10,
+    )
+    with pytest.raises(KeyError):
+        model.fit(base_df_pgm)
+
+
+def test_mixture_window_months_zero_raises(partition_dict, targets):
+    """window_months=0 → empty local pool → rng.choice raises ValueError."""
+    df = make_mixture_df()
+    model = MixtureBaseline(
+        targets=targets, window_months=0, lambda_mix=0.0,
+        n_samples=10, partition_dict=partition_dict, loa="pg_id",
+    )
+    model.fit(df)
+    with pytest.raises(ValueError):
+        model.predict(df=df, sequence_number=0, output_length=5)
+
+
+def test_conflictology_n_samples_zero_raises(base_df_pgm, partition_dict, targets):
+    """n_samples=0 → PredictionFrame rejects y_pred with 0 sample columns."""
+    model = ConflictologyModel(
+        targets=targets, window_months=4, partition_dict=partition_dict,
+        loa="pg_id", n_samples=0,
+    )
+    model.fit(base_df_pgm)
+    with pytest.raises(ValueError, match="at least one sample column"):
+        model.predict(df=base_df_pgm, sequence_number=0, output_length=2)
+
+
+def test_predict_before_fit_raises(base_df_pgm, partition_dict, targets):
+    """predict() before fit() → self.time_idx is None → crash."""
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    with pytest.raises((AttributeError, TypeError, KeyError)):
+        model.predict(df=base_df_pgm, sequence_number=0, output_length=36)
+
+
+# -----------------------------------------------------------------------
+# Beige team: entity-drop warning tests
+# -----------------------------------------------------------------------
+
+
+def test_locf_entity_drop_warning(caplog, base_df_pgm, partition_dict, targets):
+    """Entities in predict df but not in fitted state trigger a WARNING."""
+    import logging
+
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(base_df_pgm)
+
+    # Add entity 3 at train_end — it won't be in last_observations
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    extra = pd.DataFrame(
+        {"y1": [99.0], "y2": [99.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end, 3)], names=["month_id", "pg_id"]
+        ),
+    )
+    df_predict = pd.concat([base_df_pgm, extra]).sort_index()
+
+    with caplog.at_level(logging.WARNING):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+    assert "LocfModel: 1 entities dropped" in caplog.text
+
+
+def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, targets):
+    """Entities in predict df but not in fitted state trigger a WARNING."""
+    import logging
+
+    model = AverageModel(
+        targets=targets, window_months=3, partition_dict=partition_dict, loa="pg_id"
+    )
+    model.fit(base_df_pgm)
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    extra = pd.DataFrame(
+        {"y1": [99.0], "y2": [99.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end, 3)], names=["month_id", "pg_id"]
+        ),
+    )
+    df_predict = pd.concat([base_df_pgm, extra]).sort_index()
+
+    with caplog.at_level(logging.WARNING):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+    assert "AverageModel: 1 entities dropped" in caplog.text
+
+
+# -----------------------------------------------------------------------
+# Green team: ConflictologyModel reproducibility
+# -----------------------------------------------------------------------
+
+
+def test_conflictology_predict_reproducible(base_df_pgm, partition_dict, targets):
+    """Same seed produces identical predictions."""
+    kwargs = dict(
+        targets=targets,
+        window_months=4,
+        partition_dict=partition_dict,
+        loa="pg_id",
+        n_samples=50,
+        seed=123,
+    )
+    m1 = ConflictologyModel(**kwargs)
+    m1.fit(base_df_pgm)
+    r1 = m1.predict(df=base_df_pgm, sequence_number=0, output_length=2)
+
+    m2 = ConflictologyModel(**kwargs)
+    m2.fit(base_df_pgm)
+    r2 = m2.predict(df=base_df_pgm, sequence_number=0, output_length=2)
+
+    for target in targets:
+        np.testing.assert_array_equal(r1[target].y_pred, r2[target].y_pred)

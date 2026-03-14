@@ -9,13 +9,13 @@ from views_baseline.model.baseline import (
 
 class BaselineModelCatalog:
     # Required config keys per model (beyond the universal "targets").
-    # Keys with .get() defaults in _get_* methods are optional and not listed here.
+    # All keys must be explicitly declared in the model's config_hyperparameters.py.
     MODEL_GENOMES = {
         "ZeroModel": [],
         "LocfModel": [],
-        "AverageModel": ["months"],
-        "ConflictologyModel": ["months"],
-        "MixtureBaseline": [],
+        "AverageModel": ["window_months"],
+        "ConflictologyModel": ["window_months", "n_samples"],
+        "MixtureBaseline": ["window_months", "lambda_mix", "n_samples"],
     }
 
     def __init__(self, config: dict, partition_dict: dict, loa: str):
@@ -68,7 +68,7 @@ class BaselineModelCatalog:
     def _get_average_model(self):
         return AverageModel(
             targets=self.config["targets"],
-            window_months=self.config["months"],
+            window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
         )
@@ -76,18 +76,18 @@ class BaselineModelCatalog:
     def _get_conflictology_model(self):
         return ConflictologyModel(
             targets=self.config["targets"],
-            window_months=self.config["months"],
+            window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
-            n_samples=self.config.get("n_samples", 256),
+            n_samples=self.config["n_samples"],
         )
 
     def _get_mixture_model(self):
         return MixtureBaseline(
             targets=self.config["targets"],
-            window_months=self.config.get("window_months", 18),
-            lambda_mix=self.config.get("lambda_mix", 0.05),
-            n_samples=self.config.get("n_samples", 256),
+            window_months=self.config["window_months"],
+            lambda_mix=self.config["lambda_mix"],
+            n_samples=self.config["n_samples"],
             partition_dict=self.partition_dict,
             loa=self.loa,
         )
