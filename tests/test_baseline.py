@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import make_dummy_df
+from conftest import assert_prediction_structure, make_dummy_df
 
 from views_baseline.model.baseline import (
     AverageModel,
@@ -38,31 +38,8 @@ def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     output_length = 36
     preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    time_idx, entity_idx = base_df_pgm.index.names
-    test_start = partition_dict["test"][0]
-    train_end = test_start - 1
-    train_times = base_df_pgm.index.get_level_values(time_idx)[
-        base_df_pgm.index.get_level_values(time_idx) < test_start
-    ]
-    assert train_times.max() == train_end
-
-    prediction_start = test_start  # sequence_number = 0
-    prediction_end = prediction_start + output_length - 1
-
-    # Check columns
-    assert list(preds.columns) == [f"pred_{t}" for t in targets]
-
-    # Check index names and time range
-    assert preds.index.names == [time_idx, entity_idx]
-    assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
-    # ----- assert time ids in preds -----
-    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
-    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
-
+    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
     assert base_df_pgm.index.names[1] == "pg_id"
-
-    # All zeros
     assert (preds.values == 0.0).all()
 
 
@@ -72,29 +49,8 @@ def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     output_length = 36
     preds = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
 
-    time_idx, entity_idx = base_df_cm.index.names
-    test_start = partition_dict["test"][0]
-    train_end = test_start - 1
-    train_times = base_df_cm.index.get_level_values(time_idx)[
-        base_df_cm.index.get_level_values(time_idx) < test_start
-    ]
-    assert train_times.max() == train_end
-
-    prediction_start = test_start  # sequence_number = 0
-    prediction_end = prediction_start + output_length - 1
-
-    # Check columns
-    assert list(preds.columns) == [f"pred_{t}" for t in targets]
-
-    # Check index names and time range
-    assert preds.index.names == [time_idx, entity_idx]
-    assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
-    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
-    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
+    assert_prediction_structure(preds, base_df_cm, targets, partition_dict, 0, output_length)
     assert base_df_cm.index.names[1] == "country_id"
-
-    # All zeros
     assert (preds.values == 0.0).all()
 
 
@@ -125,14 +81,6 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
 
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
-    train_end = test_start - 1
-    train_times = base_df_pgm.index.get_level_values(time_idx)[
-        base_df_pgm.index.get_level_values(time_idx) < test_start
-    ]
-    assert train_times.max() == train_end
-
-    prediction_start = test_start  # sequence_number = 0
-    prediction_end = prediction_start + output_length - 1
 
     preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
@@ -147,11 +95,7 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
             for target in targets:
                 assert row[f"pred_{target}"] == expected_last.loc[ent, target]
 
-    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
-    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
-    assert preds.index.names == [time_idx, entity_idx]
-    assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -207,14 +151,6 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
 
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
-    train_end = test_start - 1
-    train_times = base_df_pgm.index.get_level_values(time_idx)[
-        base_df_pgm.index.get_level_values(time_idx) < test_start
-    ]
-    assert train_times.max() == train_end
-
-    prediction_start = test_start  # sequence_number = 0
-    prediction_end = prediction_start + output_length - 1
 
     preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
@@ -232,11 +168,7 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
             for target in targets:
                 assert row[f"pred_{target}"] == pytest.approx(expected_means.loc[ent, target])
 
-    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
-    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
-    assert preds.index.names == [time_idx, entity_idx]
-    assert preds.index.get_level_values(time_idx).min() == test_start
-    assert preds.index.get_level_values(time_idx).max() == test_start + output_length - 1
+    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
 
 
 def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -395,7 +327,7 @@ def test_build_prediction_grid_shape_and_values():
     df = build_prediction_grid(
         time_idx="month_id",
         entity_idx="pg_id",
-        loa_ids=[1, 2],
+        entity_ids=[1, 2],
         time_ids=[100, 101],
         targets=["y1"],
         value_fn=lambda cid, target: float(cid),
@@ -412,7 +344,7 @@ def test_build_prediction_grid_empty():
     df = build_prediction_grid(
         time_idx="month_id",
         entity_idx="pg_id",
-        loa_ids=[],
+        entity_ids=[],
         time_ids=[100, 101],
         targets=["y1"],
         value_fn=lambda cid, target: 0.0,

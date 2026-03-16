@@ -40,3 +40,20 @@ def make_dummy_df(entity_id="pg_id", time_range=range(440, 540)):
 @pytest.fixture
 def targets():
     return ["y1", "y2"]
+
+
+def assert_prediction_structure(
+    preds, df, targets, partition_dict, sequence_number, output_length
+):
+    """Assert common structural properties of point-model prediction DataFrames."""
+    time_idx, entity_idx = df.index.names
+    test_start = partition_dict["test"][0]
+    prediction_start = test_start + sequence_number
+    prediction_end = prediction_start + output_length - 1
+
+    assert list(preds.columns) == [f"pred_{t}" for t in targets]
+    assert preds.index.names == [time_idx, entity_idx]
+    assert preds.index.get_level_values(time_idx).min() == prediction_start
+    assert preds.index.get_level_values(time_idx).max() == prediction_end
+    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
+    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
