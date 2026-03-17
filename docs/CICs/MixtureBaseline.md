@@ -1,6 +1,6 @@
 # Class Intent Contract: MixtureBaseline
 
-**Date:** 2026-03-13
+**Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
 **Related ADRs:** ADR-001, ADR-003, ADR-005, ADR-006, ADR-008, ADR-009
@@ -27,7 +27,7 @@ The class attribute `distributional = True` routes the output through the distri
 ## Responsibilities and Guarantees
 
 **`fit(df)`**:
-- Filters `df` to `time_idx < test_start` (strict), sorts, and derives `loa_ids` from the single row at `train_end`.
+- Filters `df` to `time_idx < test_start` (strict), sorts, and derives `entity_ids` from the single row at `train_end`.
 - Builds `self.local_pool`: `dict[entity_id, dict[target, np.ndarray]]` — for each entity, the last `window_months` training values per target.
 - Builds `self.global_pool`: `dict[target, np.ndarray]` — for each target, all training values across all entities and all training timesteps that are strictly positive (`> 0`). The causal bound is `time_idx < test_start`, so `train_end` is the last included timestep.
 - Returns `self`.
@@ -38,7 +38,7 @@ The class attribute `distributional = True` routes the output through the distri
 - Uses `rng.random(n_samples) < lambda_mix` to determine which samples come from the global pool (vectorised Bernoulli draw).
 
 **`predict(df, sequence_number, output_length)`**:
-- Constructs entity list from `loa_ids` filtered to those in `local_pool`.
+- Constructs entity list from `entity_ids` filtered to those in `local_pool`.
 - Logs `WARNING` on entity drops.
 - Returns `{}` if no entities have pools.
 - Returns `dict[str, PredictionFrame]` — one PF per target. Shape `(N, n_samples)` where `N = len(entities_with_pool) * output_length`.
@@ -65,7 +65,7 @@ The class attribute `distributional = True` routes the output through the distri
 
 ## Outputs and Side Effects
 
-- **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.loa_ids`, `self.local_pool`, `self.global_pool`. No external side effects.
+- **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.entity_ids`, `self.local_pool`, `self.global_pool`. No external side effects.
 - **`predict()`**: Returns `dict[str, PredictionFrame]` (empty dict if no entities). Emits `WARNING` on entity drops. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame`. No other external side effects.
 
 ---
@@ -163,10 +163,10 @@ model = MixtureBaseline(..., lambda_mix=1.5, ...)
 # window_months=0: empty local pool, numpy ValueError at predict time
 model = MixtureBaseline(..., window_months=0, ...)
 model.fit(df)
-model.predict(df=df, sequence_number=0)   # ValueError from rng.choice on empty array
+model.predict(df=df, sequence_number=0, output_length=5)   # ValueError from rng.choice on empty array
 
 # Expecting DataFrame instead of dict
-result = model.predict(df=df, sequence_number=0)
+result = model.predict(df=df, sequence_number=0, output_length=5)
 result.values   # AttributeError: dict has no .values
 
 # Calling _sample() with an entity not in local_pool

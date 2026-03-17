@@ -1,6 +1,6 @@
 # Class Intent Contract: LocfModel
 
-**Date:** 2026-03-13
+**Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
 **Related ADRs:** ADR-001, ADR-005, ADR-006, ADR-008
@@ -24,8 +24,8 @@
 ## Responsibilities and Guarantees
 
 - `fit(df)` filters `df` to rows where `time_idx < test_start`, sorts by `[entity_idx, time_idx]`, then computes `groupby(entity_idx)[targets].last()`. The result is stored as `self.last_observations` (a DataFrame indexed by entity, columns = targets). Returns `self`.
-- `predict(df, sequence_number, output_length)` determines `loa_ids` from rows at `train_end`, filters to those present in `last_observations`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `last_observations.loc[cid, t]`.
-- If any entities in `loa_ids` are absent from `last_observations`, a `WARNING` is logged with the count of dropped entities.
+- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `last_observations`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `last_observations.loc[cid, t]`.
+- If any entities in `entity_ids` are absent from `last_observations`, a `WARNING` is logged with the count of dropped entities.
 - The returned DataFrame has the same structure contract as `ZeroModel`: MultiIndex `(time_idx, entity_idx)`, columns `pred_{target}`, sorted index.
 - `self.time_idx` is `None` before `fit()` is called — callers can use this as a pre-fit sentinel.
 
@@ -61,7 +61,7 @@ The model handles unsorted input data correctly because `fit()` explicitly calls
 | `targets` column missing from `df` | `KeyError` (crash) | No validation that targets exist in `df`. |
 | `df` missing 2-level MultiIndex | `IndexError` (crash) | No structural validation. |
 | `partition_dict` missing `"test"` key | `KeyError` (crash) | No validation. |
-| Entities in `loa_ids` absent from `last_observations` | `WARNING` log | Entity is silently dropped from predictions. |
+| Entities in `entity_ids` absent from `last_observations` | `WARNING` log | Entity is silently dropped from predictions. |
 | All entities dropped | Silent empty DataFrame | `build_prediction_grid` returns valid empty result. |
 | `predict()` called before `fit()` | `AttributeError` | `self.last_observations` is `None`; `cid in None` raises. |
 

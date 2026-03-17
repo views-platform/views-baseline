@@ -46,7 +46,7 @@ class ZeroModel:
 
         logger.info(f"Generating ZeroModel predictions on level: {self.entity_idx}")
 
-        loa_ids = (
+        entity_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
@@ -56,7 +56,7 @@ class ZeroModel:
         return build_prediction_grid(
             time_idx=self.time_idx,
             entity_idx=self.entity_idx,
-            loa_ids=loa_ids,
+            entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: 0.0,
@@ -103,18 +103,18 @@ class LocfModel:
 
         logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
 
-        loa_ids = (
+        entity_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
-        loa_ids = filter_entities(loa_ids, self.last_observations.index, "LocfModel")
+        entity_ids = filter_entities(entity_ids, self.last_observations.index, "LocfModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         return build_prediction_grid(
             time_idx=self.time_idx,
             entity_idx=self.entity_idx,
-            loa_ids=loa_ids,
+            entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: self.last_observations.loc[cid, target],
@@ -170,18 +170,18 @@ class AverageModel:
 
         logger.info(f"Generating average predictions on level: {self.entity_idx}")
 
-        loa_ids = (
+        entity_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
-        loa_ids = filter_entities(loa_ids, self.mean.index, "AverageModel")
+        entity_ids = filter_entities(entity_ids, self.mean.index, "AverageModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         return build_prediction_grid(
             time_idx=self.time_idx,
             entity_idx=self.entity_idx,
-            loa_ids=loa_ids,
+            entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: self.mean.loc[cid, target],
@@ -213,7 +213,7 @@ class ConflictologyModel:
         self.time_idx = None
         self.entity_idx = None
         self.hist_per_entity = None
-        self.loa_ids = None
+        self.entity_ids = None
 
     def fit(self, df: pd.DataFrame) -> ConflictologyModel:
         """
@@ -232,14 +232,14 @@ class ConflictologyModel:
             lambda g: g.tail(self.window_months)
         )
 
-        self.loa_ids = (
+        self.entity_ids = (
             df.loc[df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
         )
 
         self.hist_per_entity = {}
-        for cid in self.loa_ids:
+        for cid in self.entity_ids:
             history = last_n_months.xs(cid, level=self.entity_idx, drop_level=False)
             if history.empty:
                 continue
@@ -262,7 +262,7 @@ class ConflictologyModel:
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         entities_with_history = filter_entities(
-            self.loa_ids, self.hist_per_entity, "ConflictologyModel"
+            self.entity_ids, self.hist_per_entity, "ConflictologyModel"
         )
 
         if not entities_with_history:
@@ -322,7 +322,7 @@ class MixtureBaseline:
         self.entity_idx = None
         self.local_pool = None
         self.global_pool = None
-        self.loa_ids = None
+        self.entity_ids = None
 
     def fit(self, df: pd.DataFrame) -> MixtureBaseline:
         test_start = self.partition_dict["test"][0]
@@ -333,7 +333,7 @@ class MixtureBaseline:
         train_df = train_df.sort_index(level=[self.entity_idx, self.time_idx])
 
         train_end = test_start - 1
-        self.loa_ids = (
+        self.entity_ids = (
             train_df.loc[train_df.index.get_level_values(self.time_idx) == train_end]
             .index.get_level_values(self.entity_idx)
             .unique()
@@ -341,7 +341,7 @@ class MixtureBaseline:
 
         # Local pool: last window_months values per entity per target
         self.local_pool = {}
-        for cid in self.loa_ids:
+        for cid in self.entity_ids:
             entity_data = train_df.xs(cid, level=self.entity_idx, drop_level=False)
             tail = entity_data.tail(self.window_months)
             self.local_pool[cid] = {
@@ -383,7 +383,7 @@ class MixtureBaseline:
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         entities_with_pool = filter_entities(
-            self.loa_ids, self.local_pool, "MixtureBaseline"
+            self.entity_ids, self.local_pool, "MixtureBaseline"
         )
 
         if not entities_with_pool:

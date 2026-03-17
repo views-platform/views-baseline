@@ -116,7 +116,7 @@ All five models assume without checking:
 1. The input `df` has a `MultiIndex` with at least two levels. `df.index.names[0]` is the time index, `df.index.names[1]` is the entity index.
 2. The time index values are integers (month IDs).
 3. `df.index.names[1]` matches `self.loa` (the level-of-analysis string). This is not checked; a mismatch would produce predictions with a misnamed entity index.
-4. `self.partition_dict["test"][0]` is a valid integer that is present in or adjacent to the time index values in `df`. If `test_start` is past the end of the data, `loa_ids` at `train_end` is empty and predictions are silently empty.
+4. `self.partition_dict["test"][0]` is a valid integer that is present in or adjacent to the time index values in `df`. If `test_start` is past the end of the data, `entity_ids` at `train_end` is empty and predictions are silently empty.
 5. The columns in `self.targets` are present in `df`. If a target is missing, the failure surface varies by model: `KeyError` at groupby time for `LocfModel` and `AverageModel`, `KeyError` during history extraction for `ConflictologyModel`, `KeyError` during pool construction for `MixtureBaseline`.
 
 **No schema validation exists.** There is no `pandera`, `pydantic`, or manual index-structure check at the entry point of any model method.

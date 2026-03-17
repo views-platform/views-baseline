@@ -151,16 +151,15 @@ The three sites where this principle is most concretely enacted:
 test_start = self.partition_dict["test"][0]
 ```
 
-**Entity-drop warning (current partial implementation)** (`model/baseline.py`, `LocfModel.predict()`):
+**Entity-drop warning (current implementation)** (`model/helpers.py`, `filter_entities()`):
 ```python
-if len(loa_ids) < n_before:
+if len(filtered) < n_before:
     logger.warning(
-        f"LocfModel: {n_before - len(loa_ids)} entities dropped"
-        " (missing from last_observations)"
+        f"{model_name}: {n_before - len(filtered)} entities dropped"
     )
 ```
 
-This warning pattern is repeated in `AverageModel.predict()`, `ConflictologyModel.predict()`, and `MixtureBaseline.predict()`. It is consistent but does not raise. Whether it should raise is an open question (see below).
+This warning is emitted by the shared `filter_entities` helper, called from `LocfModel.predict()`, `AverageModel.predict()`, `ConflictologyModel.predict()`, and `MixtureBaseline.predict()`. It is consistent but does not raise. Whether it should raise is an open question (see below).
 
 ---
 

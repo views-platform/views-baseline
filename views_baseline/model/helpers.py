@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def build_prediction_grid(
     time_idx: str,
     entity_idx: str,
-    loa_ids,
+    entity_ids,
     time_ids: list[int],
     targets: list[str],
     value_fn: Callable[[Any, str], Any],
@@ -23,7 +23,7 @@ def build_prediction_grid(
     Args:
         time_idx: Name of the time index level.
         entity_idx: Name of the entity index level.
-        loa_ids: Entity IDs to include.
+        entity_ids: Entity IDs to include.
         time_ids: Time IDs to include.
         targets: Target variable names (without 'pred_' prefix).
         value_fn: Called as value_fn(entity_id, target) to get the prediction value.
@@ -32,7 +32,7 @@ def build_prediction_grid(
         DataFrame with MultiIndex [time_idx, entity_idx] and columns pred_{target}.
     """
     records = []
-    for cid in loa_ids:
+    for cid in entity_ids:
         for tid in time_ids:
             row = {time_idx: tid, entity_idx: cid}
             row.update({f"pred_{target}": value_fn(cid, target) for target in targets})
@@ -56,10 +56,10 @@ def build_time_grid(
     return list(range(prediction_start, prediction_start + output_length))
 
 
-def filter_entities(loa_ids, valid_set, model_name: str) -> list:
+def filter_entities(entity_ids, valid_set, model_name: str) -> list:
     """Filter entity IDs to those present in valid_set, logging a warning on drops."""
-    n_before = len(loa_ids)
-    filtered = [cid for cid in loa_ids if cid in valid_set]
+    n_before = len(entity_ids)
+    filtered = [cid for cid in entity_ids if cid in valid_set]
     if len(filtered) < n_before:
         logger.warning(
             f"{model_name}: {n_before - len(filtered)} entities dropped"
