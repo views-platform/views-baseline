@@ -1,6 +1,6 @@
 # Class Intent Contract: AverageModel
 
-**Date:** 2026-03-13
+**Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
 **Related ADRs:** ADR-001, ADR-005, ADR-006, ADR-009
@@ -24,8 +24,8 @@
 ## Responsibilities and Guarantees
 
 - `fit(df)` filters to `time_idx < test_start`, sorts by `[entity_idx, time_idx]`, then applies `groupby(entity_idx).apply(lambda g: g.tail(window_months)[targets].mean())`. The result is stored as `self.mean` (a DataFrame indexed by entity, columns = targets). Returns `self`.
-- `predict(df, sequence_number, output_length)` determines `loa_ids` from rows at `train_end`, filters to those present in `self.mean`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `self.mean.loc[cid, t]`.
-- If entities in `loa_ids` are absent from `self.mean`, a `WARNING` is logged with the count of dropped entities.
+- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `self.mean`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `self.mean.loc[cid, t]`.
+- If entities in `entity_ids` are absent from `self.mean`, a `WARNING` is logged with the count of dropped entities.
 - Output DataFrame structure contract is identical to `ZeroModel` and `LocfModel`: MultiIndex `(time_idx, entity_idx)`, columns `pred_{target}`, sorted.
 
 ---

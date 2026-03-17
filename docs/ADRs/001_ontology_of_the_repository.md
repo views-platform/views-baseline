@@ -72,7 +72,7 @@ The following six ontological categories are recognised in this repository. Ever
 - **Purpose:** Shared output construction for point forecast models. Provides the canonical implementation of the (entity × time) grid expansion so that `ZeroModel`, `LocfModel`, and `AverageModel` do not each contain duplicated DataFrame assembly logic.
 - **Functions:** `build_prediction_grid`
 - **File:** `views_baseline/model/helpers.py`
-- **Implementation detail:** Takes `time_idx`, `entity_idx`, `loa_ids`, `time_ids`, `targets`, and a `value_fn` callable. Returns a `pd.DataFrame` with `MultiIndex([time_idx, entity_idx])` and columns `pred_{target}`. Handles the empty-entity edge case explicitly.
+- **Implementation detail:** Takes `time_idx`, `entity_idx`, `entity_ids`, `time_ids`, `targets`, and a `value_fn` callable. Returns a `pd.DataFrame` with `MultiIndex([time_idx, entity_idx])` and columns `pred_{target}`. Handles the empty-entity edge case explicitly.
 - **Authority:** Derived — helpers serve the point forecast models, not the other way around.
 - **Stability:** Stable. The function signature and output contract are depended on by three model classes.
 
