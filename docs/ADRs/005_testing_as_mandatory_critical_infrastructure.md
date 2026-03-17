@@ -1,7 +1,7 @@
 # ADR-005: Testing as Mandatory Critical Infrastructure
 
 - **Status:** Accepted
-- **Date:** 2026-03-13
+- **Date:** 2026-03-17
 - **Deciders:** Project maintainers
 
 ---
@@ -30,26 +30,32 @@ Green team tests verify that each model produces the output it is specified to p
 
 **What is covered:**
 
-`tests/test_baseline.py` (28 tests) covers all five model classes:
+`tests/test_baseline.py` (36 tests) covers all five model classes:
 
 - `ZeroModel`: verified to produce all-zero DataFrames at both `pg_id` and `country_id` levels of analysis; `sequence_number` offset is verified to shift the time index by the correct number of steps.
 - `LocfModel`: verified to carry the last training-period observation forward into every forecast step; explicitly tests that fit on unsorted time data still selects the temporally last value, not the positionally last value.
 - `AverageModel`: verified to compute per-entity means over the correct `window_months` window; `sequence_number` offset verified.
-- `ConflictologyModel`: verified to return a `dict[str, PredictionFrame]` with shape `(n_entities * output_length, n_samples)`; verified that every sampled value for a given entity is drawn exclusively from that entity's history window.
+- `ConflictologyModel`: verified to return a `dict[str, PredictionFrame]` with shape `(n_entities * output_length, n_samples)`; verified that every sampled value for a given entity is drawn exclusively from that entity's history window; reproducibility under identical seeds verified.
 - `MixtureBaseline`: verified local pool extraction, global pool positivity and causality, `lambda_mix=0.0` produces only local samples, `lambda_mix=1.0` causes zero-history entities to receive positive samples from the global pool, reproducibility under identical seeds.
 - `build_prediction_grid` helper: shape, column names, and empty-input edge case tested directly.
 
-`tests/test_catalog.py` (7 tests) covers `BaselineModelCatalog`:
+`tests/test_catalog.py` (9 tests) covers `BaselineModelCatalog`:
 
-- All five model names return correctly typed and correctly parameterised instances.
+- All five model names return correctly typed and correctly parameterised instances (including `MixtureBaseline` with all three required params).
 - Unknown model name raises `ValueError` with the name in the message.
-- Missing required config key raises `ValueError` naming the key.
+- Missing required config key raises `ValueError` naming the key (tested for `ConflictologyModel` and `MixtureBaseline`).
 
 `tests/test_protocol.py` (10 tests) covers protocol conformance:
 
 - All five model classes satisfy `isinstance(model, BaselineModel)`.
 - `ConflictologyModel` and `MixtureBaseline` satisfy `isinstance(model, DistributionalBaselineModel)`.
 - `ZeroModel`, `LocfModel`, and `AverageModel` do not satisfy `DistributionalBaselineModel` (negative conformance).
+
+`tests/test_helpers.py` (5 tests) covers shared helper functions:
+
+- `build_time_grid`: basic grid and offset verification.
+- `filter_entities`: no-drop and drop-with-warning cases (warning emission verified via `caplog`).
+- `build_identifier_arrays`: entity→time ordering per ADR-011.
 
 These tests form the CI backbone. A green build on this set is the minimum bar for merging any change.
 
@@ -59,7 +65,7 @@ Beige team tests exercise the code from the outside, as a downstream caller woul
 
 **What is covered:**
 
-`tests/test_baseline_manager.py` (6 tests) covers `BaselineForecastingModelManager` with monkeypatched file I/O (`read_dataframe`) and a manually constructed manager that bypasses disk and `wandb`:
+`tests/test_baseline_manager.py` (8 tests) covers `BaselineForecastingModelManager` with monkeypatched file I/O (`read_dataframe`) and a manually constructed manager that bypasses disk and `wandb`:
 
 - `_evaluate_model_artifact` with `ZeroModel`: returns a list of prediction DataFrames of the correct length, with values matching a directly instantiated ZeroModel.
 - `_evaluate_model_artifact` with `LocfModel`: same contract, verifying that `config["algorithm"]` is respected.
@@ -67,6 +73,13 @@ Beige team tests exercise the code from the outside, as a downstream caller woul
 - `_forecast_model_artifact` algorithm switching: confirms ZeroModel and LocfModel produce different results on non-degenerate data.
 - `_setup_model_and_data`: returns the correct model type and a DataFrame with the correct shape.
 - `_train_model_artifact`: writes a `.pkl` file to the artifacts directory with a name matching `calibration_model_YYYYMMDD_HHMMSS.pkl`; the unpickled object is a valid fitted `ZeroModel` with correct `targets`.
+- `_evaluate_model_artifact` with `ConflictologyModel`: returns `dict[str, list[PredictionFrame]]` with correct keys and list length.
+- `_forecast_model_artifact` with `ConflictologyModel`: returns `dict[str, PredictionFrame]` with correct keys and types.
+
+`tests/test_baseline.py` (2 beige team tests) captures entity-drop warnings:
+
+- `test_locf_entity_drop_warning`: injects an unknown entity at `train_end` and asserts `WARNING` log via `caplog`.
+- `test_average_entity_drop_warning`: same pattern for `AverageModel`.
 
 `test_conflictology_matches_mixture_lambda_zero` (in `test_baseline.py`) is a cross-model equivalence test: it verifies that `ConflictologyModel` and `MixtureBaseline(lambda_mix=0.0)` populate their respective history pools with identical values for each entity and target, confirming the two models share a common conceptual base.
 
@@ -74,31 +87,34 @@ Beige team tests exercise the code from the outside, as a downstream caller woul
 
 Red team tests probe behaviour under degenerate or hostile inputs that a caller could plausibly provide.
 
-**Current state: absent.**
+**What is covered:**
 
-No red team tests exist in the current suite. The following adversarial cases are untested:
+`tests/test_baseline.py` (5 tests) probes degenerate and hostile inputs:
 
-- `window_months=0` passed to `AverageModel` or `ConflictologyModel` — behaviour is undefined; `tail(0)` returns an empty DataFrame, producing NaN means that propagate silently into predictions.
-- `output_length=0` — `range(start, start + 0)` produces an empty time list; the model returns an empty DataFrame without error or warning.
-- A `partition_dict` with `test[0]` beyond the end of the input DataFrame — entity list at `train_end` is empty; predictions are silently empty.
-- A config with `targets` referencing columns not present in the input DataFrame — will raise a `KeyError` at fit time, but no test documents this or verifies the error message.
-- An input DataFrame with a single-level index (not a MultiIndex) — `df.index.names[1]` raises `IndexError`; untested.
+- `test_average_model_window_months_zero_produces_nan`: `window_months=0` silently produces all-NaN predictions.
+- `test_conflictology_window_months_zero_raises`: `window_months=0` raises `KeyError` during `fit()`.
+- `test_mixture_window_months_zero_raises`: `window_months=0` raises `ValueError` during `predict()`.
+- `test_conflictology_n_samples_zero_raises`: `n_samples=0` raises `ValueError` from `PredictionFrame` validation.
+- `test_predict_before_fit_raises`: `predict()` before `fit()` crashes (`AttributeError`/`TypeError`/`KeyError`).
+
+**Still untested:**
+
+- `output_length=0` — empty time list; model returns empty DataFrame without error or warning.
+- `partition_dict` with `test[0]` beyond the input DataFrame — empty entity list; silently empty predictions.
+- `targets` referencing columns not in the DataFrame — `KeyError` at fit time; no test verifies the error.
+- Single-level (non-MultiIndex) DataFrame — `IndexError`; untested.
 
 ---
 
 ## Coverage Gaps (Known and Documented)
 
-The following areas have no test coverage as of 2026-03-13:
+The following areas have no test coverage as of 2026-03-17:
 
-1. **Manager distributional path:** `_evaluate_model_artifact` and `_forecast_model_artifact` with a distributional model (`ConflictologyModel` or `MixtureBaseline`) are untested. The dispatch branch `isinstance(model, DistributionalBaselineModel)` in `_generate_predictions` has never been exercised by a test.
+1. **`_evaluate_sweep`:** The method that loads data and calls `_generate_predictions` for a WandB sweep iteration has no test coverage at all.
 
-2. **`_evaluate_sweep`:** The method that loads data and calls `_generate_predictions` for a WandB sweep iteration has no test coverage at all.
+2. **`output_length` variety:** Most tests use `output_length=36` or a small explicit value in the 4–5 range. No test checks behaviour at a semantically different value (e.g., `output_length=1`, `output_length=72`).
 
-3. **Entity-drop warning emission:** `LocfModel`, `AverageModel`, `ConflictologyModel`, and `MixtureBaseline` all emit `logger.warning()` when entities present at `train_end` are missing from the fitted state. No test captures a log record and asserts that the warning was emitted. The warning paths are exercised only incidentally.
-
-4. **`output_length != 36`:** Most tests use the default `output_length=36` or a small explicit value in the 4–5 range. No test checks behaviour at a non-default value that differs from the default in a semantically meaningful way (e.g., `output_length=1`, `output_length=72`).
-
-5. **Multiple targets:** Most tests use the `targets` fixture which provides two targets (`["y1", "y2"]`). No test exercises the single-target case for distributional models to verify `dict` key cardinality.
+3. **Single-target distributional models:** Most tests use the `targets` fixture which provides two targets (`["y1", "y2"]`). No test exercises the single-target case for distributional models to verify `dict` key cardinality.
 
 ---
 
@@ -113,9 +129,7 @@ The following areas have no test coverage as of 2026-03-13:
 
 **Negative / Risks:**
 
-- The distributional manager path is unverified. A silent breakage in `_generate_predictions` for `ConflictologyModel` or `MixtureBaseline` would not be caught by CI.
-- Red team gaps mean degenerate parameter combinations silently produce empty or NaN-filled output with no error. Users who pass `window_months=0` will receive incorrect predictions without any indication.
-- No logging assertion tests means the entity-drop warning could be removed or miscoded without CI failing.
+- Remaining red team gaps mean untested edge cases (empty `output_length`, out-of-range partition, wrong index levels) could still produce empty or NaN output silently.
 
 **Accepted debt:**
 

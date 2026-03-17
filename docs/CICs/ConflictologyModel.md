@@ -1,6 +1,6 @@
 # Class Intent Contract: ConflictologyModel
 
-**Date:** 2026-03-13
+**Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
 **Related ADRs:** ADR-001, ADR-003, ADR-005, ADR-006, ADR-008, ADR-009
@@ -26,7 +26,7 @@ The class attribute `distributional = True` is used by `BaselineForecastingModel
 
 ## Responsibilities and Guarantees
 
-- `fit(df)` extracts the last `window_months` rows per entity from the training period (`time_idx <= train_end`), sorts by `[entity_idx, time_idx]`, and stores the result as `self.hist_per_entity`: a `dict[entity_id, dict[target, np.ndarray]]`. Also stores `self.loa_ids` (entities present at `train_end`). Returns `self`.
+- `fit(df)` extracts the last `window_months` rows per entity from the training period (`time_idx <= train_end`), sorts by `[entity_idx, time_idx]`, and stores the result as `self.hist_per_entity`: a `dict[entity_id, dict[target, np.ndarray]]`. Also stores `self.entity_ids` (entities present at `train_end`). Returns `self`.
 - `predict(df, sequence_number, output_length)` returns `dict[str, PredictionFrame]` — one `PredictionFrame` per target. Each PF has:
   - `y_pred` of shape `(N, n_samples)` where `N = len(entities_with_history) * output_length`.
   - `identifiers` dict with `"time"` and `"unit"` arrays of length `N`.
@@ -56,7 +56,7 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 
 ## Outputs and Side Effects
 
-- **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.hist_per_entity`, `self.loa_ids`. No external side effects.
+- **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.hist_per_entity`, `self.entity_ids`. No external side effects.
 - **`predict()`**: Returns `dict[str, PredictionFrame]` (empty dict if no entities). Emits `WARNING` on entity drops. No external side effects. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame` at call time.
 
 ---
@@ -124,15 +124,15 @@ for i in range(pf.y_pred.shape[0]):
 # window_months=0: empty history arrays lead to numpy ValueError during predict
 model = ConflictologyModel(targets=["y1"], window_months=0, partition_dict=partition_dict, loa="pg_id")
 model.fit(df)
-model.predict(df=df, sequence_number=0)   # ValueError from rng.choice on empty array
+model.predict(df=df, sequence_number=0, output_length=5)   # ValueError from rng.choice on empty array
 
 # Expecting a DataFrame instead of dict
-result = model.predict(df=df, sequence_number=0)
+result = model.predict(df=df, sequence_number=0, output_length=5)
 result.values   # AttributeError: dict has no .values
 
 # Assuming RNG state carries over between predict calls
-r1 = model.predict(df=df, sequence_number=0)
-r2 = model.predict(df=df, sequence_number=0)
+r1 = model.predict(df=df, sequence_number=0, output_length=5)
+r2 = model.predict(df=df, sequence_number=0, output_length=5)
 # r1 and r2 ARE identical (RNG re-seeded each call) — but this is a feature, not a bug.
 # Do NOT assume r1 != r2 for different sequence_numbers; they can coincidentally match
 # if the drawn samples happen to be the same from the same history.
