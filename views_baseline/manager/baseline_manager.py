@@ -201,7 +201,7 @@ class BaselineImpactModelManager(ImpactModelManager, BaselineForecastingModelMan
         predictions = []
 
         # Determine evaluation length
-        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+        sequence_numbers = 3
         output_length = self.config["output_chunk_length"]
         for seq_num in range(sequence_numbers):
             # YOUR PREDICTION CODE HERE
@@ -236,6 +236,7 @@ class BaselineImpactModelManager(ImpactModelManager, BaselineForecastingModelMan
 
         self.model.fit(df_viewser)
 
-        forecasts = self.model.predict(sequence_number=0, df=df_viewser)
+        output_length = self.config["output_chunk_length"]
+        forecasts = self.model.predict(sequence_number=0, df=df_viewser, output_length=output_length)
 
         return forecasts
