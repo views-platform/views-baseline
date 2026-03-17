@@ -1,6 +1,7 @@
 import logging
 import pickle
 from datetime import datetime
+import pandas as pd
 
 from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
@@ -8,6 +9,7 @@ from views_pipeline_core.managers.model import ForecastingModelManager, ModelPat
 
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.protocol import DistributionalBaselineModel
+from views_impact.manager.model import ImpactModelManager
 
 logger = logging.getLogger(__name__)
 
@@ -134,4 +136,106 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         df_viewser = read_dataframe(
             path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
         )
-        return self._generate_predictions(model, df_viewser, eval_type)
+
+        logger.info("Generating forecasts")
+
+        self.model.fit(df_viewser)
+
+        forecasts = self.model.predict(sequence_number=0, df=df_viewser)
+
+        return forecasts
+
+    def _evaluate_sweep(self, eval_type: str, model: any) -> list:
+
+        logger.info(
+            f"Baseline Models does not support sweep evaluation - skipping evaluation"
+        )
+        raise NotImplementedError(
+            "Baseline Models does not support sweep evaluation - skipping evaluation"
+        )
+
+
+    
+
+class BaselineImpactModelManager(ImpactModelManager, BaselineForecastingModelManager):
+    """
+    Baseline Impact Model Manager
+
+    """
+
+    def __init__(self, model_path: ModelPathManager, wandb_notifications: bool = False, use_prediction_store: bool = False) -> None:
+        super().__init__(model_path, wandb_notifications, use_prediction_store)
+        self._pred_store_name = "impact_modeling" if self._use_prediction_store else None
+    
+    def _train_model_artifact(self) -> any:
+        self._process_data()
+    
+    def _evaluate_model_artifact(
+        self, eval_type: str, artifact_name: str = None
+    ) -> list:
+        """
+        Evaluate trained model artifact.
+
+        """
+        logger.info("Evaluating baseline model artifact")
+        path_processed = self._model_path.data_processed
+        run_type = self.config["run_type"]
+        loa = self.config["level"]
+        partition_dict = self._data_loader.partition_dict
+        catalog = BaselineModelCatalog(
+            config=self.config, partition_dict=partition_dict, loa=loa
+        )
+        model_name = self.config["algorithm"]
+        self.model = catalog.get_model(model_name)
+
+        logger.info(f"Model type is {model_name}")
+
+        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        df_viewser = read_dataframe(
+            path_processed / f"{run_type}_viewser_df_tempdisagg{PipelineConfig.dataframe_format}"
+        )
+
+        self.model.fit(df_viewser)
+
+        logger.info(f"Generating predictions for {eval_type} evaluation")
+        predictions = []
+
+        # Determine evaluation length
+        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+        output_length = self.config["output_chunk_length"]
+        for seq_num in range(sequence_numbers):
+            # YOUR PREDICTION CODE HERE
+            preds = self.model.predict(df=df_viewser, sequence_number=seq_num, output_length=output_length)
+            # preds = preds.clip(lower=1e-4)
+            predictions.append(preds)  # Append predictions for each sequence
+
+        return predictions
+
+    def _forecast_model_artifact(self, artifact_name: str = None) -> pd.DataFrame:
+        """
+        Generate forecasts using trained model artifact.
+
+        """
+        path_processed = self._model_path.data_processed
+        run_type = self.config["run_type"]
+        loa = self.config["level"]
+        partition_dict = self._data_loader.partition_dict
+        catalog = BaselineModelCatalog(
+            config=self.config, partition_dict=partition_dict, loa=loa
+        )
+        model_name = self.config["algorithm"]  # e.g., "ZeroModel" or "LocfModel"
+        self.model = catalog.get_model(model_name)
+        logger.info(f"Model type is {model_name}")
+
+        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
+        df_viewser = read_dataframe(
+            path_processed / f"{run_type}_viewser_df_tempdisagg{PipelineConfig.dataframe_format}"
+        )
+
+        logger.info("Generating forecasts")
+
+        self.model.fit(df_viewser)
+
+        forecasts = self.model.predict(sequence_number=0, df=df_viewser)
+
+        return forecasts
