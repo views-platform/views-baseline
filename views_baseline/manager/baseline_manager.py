@@ -6,6 +6,7 @@ from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 
+from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.protocol import DistributionalBaselineModel
 
@@ -51,6 +52,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         """
         Instantiate the baseline model via the catalog, load data, fit, and return both.
         """
+        ReproducibilityGate.Config.audit_manifest(self.config)
         path_raw = self._model_path.data_raw
         run_type = self.config["run_type"]
         loa = self.config["level"]

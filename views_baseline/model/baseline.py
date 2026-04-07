@@ -359,9 +359,9 @@ class MixtureBaseline:
     def _sample(self, cid: int, target: str, rng: np.random.Generator) -> np.ndarray:
         """Generate n_samples by mixing local and global pools."""
         local = self.local_pool[cid][target]
-        glob = self.global_pool[target]
+        gpool = self.global_pool[target]
 
-        if len(glob) == 0:
+        if len(gpool) == 0:
             # No positive values in training data — local only
             return rng.choice(local, size=self.n_samples)
 
@@ -370,7 +370,7 @@ class MixtureBaseline:
         n_local = self.n_samples - n_global
 
         samples = np.empty(self.n_samples, dtype=np.float64)
-        samples[use_global] = rng.choice(glob, size=n_global)
+        samples[use_global] = rng.choice(gpool, size=n_global)
         samples[~use_global] = rng.choice(local, size=n_local)
         return samples
 

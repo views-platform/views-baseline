@@ -57,6 +57,12 @@ Green team tests verify that each model produces the output it is specified to p
 - `filter_entities`: no-drop and drop-with-warning cases (warning emission verified via `caplog`).
 - `build_identifier_arrays`: entity→time ordering per ADR-011.
 
+`tests/test_reproducibility_gate.py` (7 green team tests) covers `ReproducibilityGate`:
+
+- `CORE_GENOME` and `ALGORITHM_GENOMES` structural sanity (non-empty, all strings, all 5 models registered).
+- `audit_manifest()` accepts valid configs for both minimal (ZeroModel) and maximal (MixtureBaseline) cases.
+- `audit_manifest()` rejects missing core keys, missing algorithm-specific keys, and unknown algorithm names.
+
 These tests form the CI backbone. A green build on this set is the minimum bar for merging any change.
 
 ### Beige Team — Realistic Misuse
@@ -83,6 +89,12 @@ Beige team tests exercise the code from the outside, as a downstream caller woul
 
 `test_conflictology_matches_mixture_lambda_zero` (in `test_baseline.py`) is a cross-model equivalence test: it verifies that `ConflictologyModel` and `MixtureBaseline(lambda_mix=0.0)` populate their respective history pools with identical values for each entity and target, confirming the two models share a common conceptual base.
 
+`tests/test_reproducibility_gate.py` (3 beige team tests) covers cross-module integration:
+
+- `test_gate_genomes_match_catalog_genomes`: identity check that `BaselineModelCatalog.MODEL_GENOMES` is the same object as `ReproducibilityGate.Config.ALGORITHM_GENOMES`.
+- `test_manager_gate_rejects_incomplete_config`: end-to-end — the manager raises `MissingHyperparameterError` when core keys are missing from config.
+- `test_downstream_import_contract`: the gate is importable and exposes `Config`, `CORE_GENOME`, `ALGORITHM_GENOMES`, and `audit_manifest`.
+
 ### Red Team — Adversarial Inputs
 
 Red team tests probe behaviour under degenerate or hostile inputs that a caller could plausibly provide.
@@ -96,6 +108,12 @@ Red team tests probe behaviour under degenerate or hostile inputs that a caller 
 - `test_mixture_window_months_zero_raises`: `window_months=0` raises `ValueError` during `predict()`.
 - `test_conflictology_n_samples_zero_raises`: `n_samples=0` raises `ValueError` from `PredictionFrame` validation.
 - `test_predict_before_fit_raises`: `predict()` before `fit()` crashes (`AttributeError`/`TypeError`/`KeyError`).
+
+`tests/test_reproducibility_gate.py` (3 red team tests) probes adversarial config inputs:
+
+- `test_none_value_injection`: required key present but set to `None` raises `MissingHyperparameterError`.
+- `test_empty_string_algorithm`: empty-string algorithm raises `MissingHyperparameterError`.
+- `test_extra_keys_ignored`: surplus keys in config do not cause errors.
 
 **Still untested:**
 

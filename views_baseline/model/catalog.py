@@ -1,3 +1,4 @@
+from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.baseline import (
     AverageModel,
     ConflictologyModel,
@@ -8,15 +9,9 @@ from views_baseline.model.baseline import (
 
 
 class BaselineModelCatalog:
-    # Required config keys per model (beyond the universal "targets").
-    # All keys must be explicitly declared in the model's config_hyperparameters.py.
-    MODEL_GENOMES = {
-        "ZeroModel": [],
-        "LocfModel": [],
-        "AverageModel": ["window_months"],
-        "ConflictologyModel": ["window_months", "n_samples"],
-        "MixtureBaseline": ["window_months", "lambda_mix", "n_samples"],
-    }
+    # Single source of truth lives in ReproducibilityGate.Config.ALGORITHM_GENOMES.
+    # This alias keeps the catalog's get_model() validation unchanged.
+    MODEL_GENOMES = ReproducibilityGate.Config.ALGORITHM_GENOMES
 
     def __init__(self, config: dict, partition_dict: dict, loa: str):
         """
