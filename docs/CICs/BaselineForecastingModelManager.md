@@ -95,7 +95,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | Required config key missing for the algorithm | `ValueError` from catalog | Lists missing keys. |
 | Data file not found on disk | `FileNotFoundError` from `read_dataframe` | No explicit error handling in manager. |
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
-| `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate as "unknown algorithm `None`"). |
+| `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 

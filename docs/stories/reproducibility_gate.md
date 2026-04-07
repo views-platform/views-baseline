@@ -51,8 +51,8 @@ The gate must be importable by views-models tests:
 ```python
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 
-CORE_PARAMS = set(ReproducibilityGate.CORE_GENOME)
-ALGO_PARAMS = ReproducibilityGate.ALGORITHM_GENOMES
+CORE_PARAMS = set(ReproducibilityGate.Config.CORE_GENOME)
+ALGO_PARAMS = ReproducibilityGate.Config.ALGORITHM_GENOMES
 ```
 
 ---

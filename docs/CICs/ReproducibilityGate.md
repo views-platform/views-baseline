@@ -142,6 +142,7 @@ File: `tests/test_reproducibility_gate.py`
 | `test_downstream_import_contract` | Gate is importable and exposes expected attributes. |
 | `test_none_value_injection` | Required key set to `None` raises. |
 | `test_empty_string_algorithm` | Empty-string algorithm raises. |
+| `test_missing_algorithm_key` | Missing `"algorithm"` key raises with explicit message. |
 | `test_extra_keys_ignored` | Surplus keys do not cause errors. |
 
 ---
