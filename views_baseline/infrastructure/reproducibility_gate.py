@@ -60,7 +60,15 @@ class ReproducibilityGate:
                 raise MissingHyperparameterError(msg)
 
             # 2. Identify algorithm and check it is registered
-            algo = config.get("algorithm")
+            if "algorithm" not in config:
+                msg = (
+                    "REPRODUCIBILITY CONTRACT VIOLATED: "
+                    "Missing required key: 'algorithm'"
+                )
+                logger.error(msg)
+                raise MissingHyperparameterError(msg)
+
+            algo = config["algorithm"]
             algo_genomes = ReproducibilityGate.Config.ALGORITHM_GENOMES
             if algo not in algo_genomes:
                 available = list(algo_genomes.keys())

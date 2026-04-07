@@ -157,6 +157,17 @@ def test_empty_string_algorithm():
         ReproducibilityGate.Config.audit_manifest(config)
 
 
+def test_missing_algorithm_key():
+    """Config with no 'algorithm' key at all must be rejected explicitly."""
+    config = {
+        "targets": ["y1"],
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+    }
+    with pytest.raises(MissingHyperparameterError, match="algorithm"):
+        ReproducibilityGate.Config.audit_manifest(config)
+
+
 def test_extra_keys_ignored():
     """Surplus keys in the config must not cause errors."""
     config = {

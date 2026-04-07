@@ -61,7 +61,7 @@ If any check fails, raises `MissingHyperparameterError` with a message identifyi
 | Unknown algorithm | `MissingHyperparameterError` (crash) | Names the unknown algorithm and lists available ones. |
 | Missing algorithm-specific key | `MissingHyperparameterError` (crash) | Lists missing keys for the declared algorithm. |
 | Required key set to `None` | `MissingHyperparameterError` (crash) | Lists all `None`-valued required keys. |
-| `config` missing `"algorithm"` key | `MissingHyperparameterError` (crash) | `config.get("algorithm")` returns `None`, which is not in `ALGORITHM_GENOMES`. |
+| `config` missing `"algorithm"` key | `MissingHyperparameterError` (crash) | Explicit guard: `"Missing required key: 'algorithm'"`. |
 
 All failures are loud and immediate. No silent fallbacks.
 
@@ -156,4 +156,4 @@ File: `tests/test_reproducibility_gate.py`
 
 ## Known Deviations
 
-- The gate does not validate that `config["algorithm"]` is present as an explicit key — if missing, `config.get("algorithm")` returns `None`, which fails the "unknown algorithm" check rather than a more specific "algorithm key missing" error. The error message is slightly misleading but the failure is still loud and immediate.
+None.
