@@ -1,3 +1,6 @@
+from pathlib import Path
+from types import SimpleNamespace
+
 import pandas as pd
 import pytest
 
@@ -40,6 +43,50 @@ def make_dummy_df(entity_id="pg_id", time_range=range(440, 540)):
 @pytest.fixture
 def targets():
     return ["y1", "y2"]
+
+
+@pytest.fixture
+def manager_df():
+    """Small DataFrame for manager-level tests (16 timesteps, 2 entities)."""
+    return make_dummy_df(time_range=range(110, 126))
+
+
+@pytest.fixture
+def manager_partition_dict():
+    """Partition dict aligned with manager_df: test_start=120, train_end=119."""
+    return {"test": (120, 125)}
+
+
+def make_manager(config, partition_dict):
+    """
+    Create a BaselineForecastingModelManager bypassing __init__,
+    with manually attached attributes for testing.
+    """
+    from views_pipeline_core.managers.configuration.configuration import ConfigurationManager
+
+    from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
+
+    mgr = BaselineForecastingModelManager.__new__(BaselineForecastingModelManager)
+    mgr._config_manager = ConfigurationManager(
+        config_hyperparameters={},
+        config_deployment={},
+        config_meta={},
+        partition_dict={},
+        config_sweep=None,
+    )
+    mgr._sweep = False
+    mgr.config = config
+    mgr._model_path = SimpleNamespace(
+        data_raw=Path("dummy_raw_path"),
+        artifacts=Path("dummy_artifacts_path"),
+    )
+    mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
+
+    def fake_resolve_evaluation_sequence_number(eval_type: str) -> int:
+        return config.get("sequence_numbers", 1)
+
+    mgr._resolve_evaluation_sequence_number = fake_resolve_evaluation_sequence_number
+    return mgr
 
 
 def assert_prediction_structure(

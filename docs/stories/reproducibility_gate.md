@@ -1,7 +1,7 @@
 # Story: ReproducibilityGate for views-baseline
 
-**Status:** Proposed
-**Date:** 2026-04-06
+**Status:** Accepted
+**Date:** 2026-04-07
 **Origin:** views-models risk register C-05
 **Reference implementation:** `views_r2darts2.infrastructure.reproducibility_gate.ReproducibilityGate`
 
@@ -38,7 +38,7 @@ Baseline models are intentionally simple — most have no tunable estimator para
 | `AverageModel` | `window_months` | Rolling window size (60 for CM, 18 for PGM) |
 | `ZeroModel` | — | No additional params (always predicts zero) |
 | `LocfModel` | — | No additional params (last observation carried forward) |
-| `MixtureBaseline` | TBD | Depends on mixture configuration |
+| `MixtureBaseline` | `window_months`, `lambda_mix`, `n_samples` | Mixing coefficient and sampling params |
 
 ### Runtime enforcement
 
@@ -72,4 +72,5 @@ ALGO_PARAMS = ReproducibilityGate.ALGORITHM_GENOMES
 
 - Baseline's gate will be much simpler than DARTS (4 algorithms, minimal params). This is a feature, not a limitation — baseline models are intentionally simple.
 - The existing ADR and CIC infrastructure in views-baseline means this work can follow established patterns. Consider whether this warrants a new ADR (e.g., ADR-014: Reproducibility Gate) or fits within existing ADR-011 (RNG Determinism).
-- `MixtureBaseline` param requirements need investigation — it may have more complex configuration than the other three algorithms.
+- `MixtureBaseline` requires `window_months`, `lambda_mix`, and `n_samples` — same complexity level as `ConflictologyModel` plus the mixing coefficient.
+- `ConflictologyModel` is also registered in the gate (requires `window_months`, `n_samples`) though it was omitted from the original story scope table.

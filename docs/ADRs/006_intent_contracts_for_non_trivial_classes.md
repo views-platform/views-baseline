@@ -26,7 +26,7 @@ The two protocol classes (`BaselineModel` and `DistributionalBaselineModel` in `
 
 ## Classes Covered
 
-Seven classes have CICs. All CIC documents live in `docs/CICs/`.
+Eight classes have CICs. All CIC documents live in `docs/CICs/`.
 
 ### Core Domain Models (5 classes)
 
@@ -45,6 +45,10 @@ These five classes implement the forecasting strategies. Each CIC describes the 
 ### Orchestrator (1 class)
 
 - **BaselineForecastingModelManager** — extends `ForecastingModelManager` from `views-pipeline-core`. The CIC records which six symbols are imported from the base package, the decision to always call `_setup_model_and_data()` at the start of both evaluate and forecast operations rather than loading a pickled artifact, the distributional dispatch logic in `_generate_predictions()`, and the known gap that `_evaluate_sweep()` has no test coverage.
+
+### Infrastructure (1 class)
+
+- **ReproducibilityGate** — canonical hyperparameter contract for all baseline models. The CIC records the `CORE_GENOME` and `ALGORITHM_GENOMES` definitions, the four-step `audit_manifest()` validation sequence, the `MissingHyperparameterError` exception, and the single-source-of-truth relationship with `BaselineModelCatalog.MODEL_GENOMES`.
 
 ---
 

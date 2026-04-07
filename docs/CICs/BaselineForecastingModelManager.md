@@ -3,7 +3,7 @@
 **Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
-**Related ADRs:** ADR-001, ADR-002, ADR-006, ADR-008, ADR-009
+**Related ADRs:** ADR-001, ADR-002, ADR-006, ADR-008, ADR-009, ADR-014
 
 ---
 
@@ -27,6 +27,7 @@ The manager also serves as the dispatch layer between point models (which return
 ## Responsibilities and Guarantees
 
 **`_setup_model_and_data()`**:
+- Calls `ReproducibilityGate.Config.audit_manifest(self.config)` as a precondition — raises `MissingHyperparameterError` if core or algorithm-specific keys are missing or `None`.
 - Reads `config["run_type"]`, `config["level"]`, and `_data_loader.partition_dict`.
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
 - Stamps `config["timestamp"]` with the current datetime.
@@ -50,8 +51,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_forecast_model_artifact(artifact_name)`**:
 - Calls `_setup_model_and_data()`.
-- If distributional: calls `model.predict(df=df_viewser, sequence_number=0)` with keyword argument `df=` first.
-- If point: calls `model.predict(sequence_number=0, df=df_viewser)` with positional arguments reversed relative to the distributional path.
+- Calls `model.predict(df=df_viewser, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
 - Returns the prediction result directly (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:
@@ -94,7 +94,8 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | `config["algorithm"]` unknown to catalog | `ValueError` from `BaselineModelCatalog.get_model()` | Descriptive error listing available names. |
 | Required config key missing for the algorithm | `ValueError` from catalog | Lists missing keys. |
 | Data file not found on disk | `FileNotFoundError` from `read_dataframe` | No explicit error handling in manager. |
-| `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation. |
+| Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
+| `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate as "unknown algorithm `None`"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 
@@ -119,6 +120,7 @@ The manager emits `logger.info()` messages at lifecycle boundaries: initialisati
 **Imports from project:**
 | Symbol | Purpose |
 |---|---|
+| `ReproducibilityGate` | Config validation gate — `audit_manifest()` called in `_setup_model_and_data()`. |
 | `BaselineModelCatalog` | Model factory. |
 | `DistributionalBaselineModel` | Protocol used for `isinstance()` dispatch. |
 
@@ -204,6 +206,7 @@ File: `tests/test_baseline_manager.py`
 | `test_manager_train_saves_artifact` | Pickle file is written to `artifacts/`, filename matches pattern `calibration_model_{YYYYMMDD}_{HHMMSS}.pkl`, and the unpickled object is a valid `ZeroModel`. |
 | `test_manager_evaluate_distributional_model` | `_evaluate_model_artifact` with `ConflictologyModel` returns `dict[str, list[PredictionFrame]]` with correct keys and list length matching `sequence_numbers`. |
 | `test_manager_forecast_distributional_model` | `_forecast_model_artifact` with `ConflictologyModel` returns `dict[str, PredictionFrame]` with correct keys and types. |
+| `test_manager_gate_rejects_incomplete_config` | `_setup_model_and_data()` raises `MissingHyperparameterError` when core keys are missing. (In `test_reproducibility_gate.py`.) |
 
 ---
 
@@ -211,7 +214,6 @@ File: `tests/test_baseline_manager.py`
 
 - The distributional code paths in `_generate_predictions` and `_forecast_model_artifact` are now covered by `test_manager_evaluate_distributional_model` and `test_manager_forecast_distributional_model`.
 - `_evaluate_sweep` is also untested. If WandB sweeps are used with baseline models, tests are needed.
-- The argument order inconsistency in `_forecast_model_artifact` (distributional path uses `df=` as first kwarg; point path uses `sequence_number=0, df=` with positional positional mismatch) should be normalised to keyword-only arguments in both branches to prevent silent bugs.
 - Manager log messages are currently all `INFO` level. If `WARNING` or `ERROR` messages are added, they should follow the two-tier observability pattern (ADR-008).
 
 ---
@@ -219,5 +221,4 @@ File: `tests/test_baseline_manager.py`
 ## Known Deviations
 
 - **`_evaluate_sweep` is untested:** No test exercises this method.
-- **Argument order inconsistency:** In `_forecast_model_artifact`, the distributional branch calls `model.predict(df=df_viewser, sequence_number=0)` while the point branch calls `model.predict(sequence_number=0, df=df_viewser)`. Both are keyword arguments and functionally equivalent, but the inconsistency creates a subtle maintenance hazard.
 - **`config["timestamp"]` mutation in `_setup_model_and_data()`:** The manager stamps the config dict with the current time as a side effect of setup. This is a mutation of shared state that callers may not expect.

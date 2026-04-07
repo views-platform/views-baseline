@@ -54,7 +54,7 @@ The following six ontological categories are recognised in this repository. Ever
 - **Purpose:** Config-validated model instantiation. The factory owns the mapping from string algorithm names to constructor calls, and enforces that required config keys are present before constructing a model.
 - **Classes:** `BaselineModelCatalog`
 - **File:** `views_baseline/model/catalog.py`
-- **Implementation detail:** `MODEL_GENOMES` is a dict mapping each model name to its list of required config keys. `get_model(name)` raises `ValueError` if the name is unknown or if required keys are missing. Optional parameters (e.g., `n_samples`, `lambda_mix`, `window_months` for `MixtureBaseline`) are handled inside the factory methods via `config.get(key, default)` and are not listed in `MODEL_GENOMES`.
+- **Implementation detail:** `MODEL_GENOMES` is an alias for `ReproducibilityGate.Config.ALGORITHM_GENOMES`, mapping each model name to its list of required config keys. `get_model(name)` raises `ValueError` if the name is unknown or if required keys are missing. All model-specific parameters (`window_months`, `n_samples`, `lambda_mix`) are required — they are listed in `MODEL_GENOMES` and accessed via `self.config["key"]` in factory methods. No defaults are applied.
 - **Authority:** Authoritative — owns model construction. No other code should instantiate model classes directly in production paths.
 - **Stability:** Stable. The catalog's public API (`get_model`, `list_models`) is consumed by the manager.
 
@@ -76,6 +76,15 @@ The following six ontological categories are recognised in this repository. Ever
 - **Authority:** Derived — helpers serve the point forecast models, not the other way around.
 - **Stability:** Stable. The function signature and output contract are depended on by three model classes.
 
+#### 7. Infrastructure and Validation
+
+- **Purpose:** Canonical hyperparameter contracts and exception definitions. The `ReproducibilityGate` defines which config keys each baseline algorithm requires (`CORE_GENOME` and `ALGORITHM_GENOMES`) and enforces these contracts at runtime before model instantiation.
+- **Classes:** `ReproducibilityGate`, `ReproducibilityError`, `MissingHyperparameterError`
+- **Files:** `views_baseline/infrastructure/reproducibility_gate.py`, `views_baseline/infrastructure/exceptions.py`
+- **Implementation detail:** `ReproducibilityGate.Config.audit_manifest(config)` is called as the first operation in `_setup_model_and_data()`. The catalog's `MODEL_GENOMES` is an alias to the gate's `ALGORITHM_GENOMES`, establishing a single source of truth. The gate is importable by downstream packages (e.g., views-models) for static config validation.
+- **Authority:** Authoritative — owns the definition of required hyperparameters. The catalog and manager consume this definition; they do not define their own.
+- **Stability:** Stable. The public API (`CORE_GENOME`, `ALGORITHM_GENOMES`, `audit_manifest()`) is consumed by the catalog, the manager, and downstream packages.
+
 ---
 
 ## Rationale
@@ -87,6 +96,7 @@ Separating the ontology from the physical file layout makes the categories legib
 - **Factory** is a distinct category because it owns validation logic; it is not merely a convenience wrapper.
 - **Pipeline Integration** is explicitly marked as derived because the manager adds no prediction intelligence — this naming prevents future contributors from adding domain logic there.
 - **Prediction Builders** is separated from Point Forecast Models because helpers are utilities, not models, and have a different axis of change.
+- **Infrastructure and Validation** is separated from the Factory because the gate defines the contract while the catalog enforces it during construction — different responsibilities, different axes of change.
 
 ---
 

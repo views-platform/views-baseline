@@ -15,7 +15,7 @@ Use the [cic_template.md](cic_template.md) when writing a new CIC.
 
 ---
 
-## Active Contracts (7)
+## Active Contracts (8)
 
 | CIC | Class | One-line description |
 |-----|-------|----------------------|
@@ -25,6 +25,7 @@ Use the [cic_template.md](cic_template.md) when writing a new CIC.
 | [ConflictologyModel.md](ConflictologyModel.md) | `ConflictologyModel` | Distributional climatology resampler that draws `n_samples` bootstrap samples from each entity's historical window and returns a `dict[str, PredictionFrame]`. |
 | [MixtureBaseline.md](MixtureBaseline.md) | `MixtureBaseline` | Distributional local/global mixture baseline that addresses the zero-history trap by blending each entity's local empirical pool with a global positive pool at weight `lambda_mix`. |
 | [BaselineModelCatalog.md](BaselineModelCatalog.md) | `BaselineModelCatalog` | Config-validated model factory that maps algorithm names and config dicts to fully constructed model instances, enforcing required key presence via `MODEL_GENOMES`. |
+| [ReproducibilityGate.md](ReproducibilityGate.md) | `ReproducibilityGate` | Canonical hyperparameter contract that defines `CORE_GENOME` and `ALGORITHM_GENOMES` for all baseline models, enforced via `audit_manifest()` before model instantiation. |
 | [BaselineForecastingModelManager.md](BaselineForecastingModelManager.md) | `BaselineForecastingModelManager` | Pipeline integration orchestrator that extends `ForecastingModelManager` from views-pipeline-core, routing point-forecast and distributional models through separate prediction and artifact paths. |
 
 ---
