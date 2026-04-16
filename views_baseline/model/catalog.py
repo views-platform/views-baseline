@@ -1,4 +1,13 @@
-from views_baseline.model.baseline import ZeroModel, LocfModel, AverageModel, ConflictologyModel
+from views_baseline.model.baseline import (
+    ZeroModel,
+    LocfModel,
+    AverageModel,
+    ConflictologyModel,
+    MirrorModel,
+    DriftModel,
+    HistoricalAverageModel,
+    ClimatologyModel,
+)
 
 
 class BaselineModelCatalog:
@@ -15,6 +24,10 @@ class BaselineModelCatalog:
             "LocfModel": self._get_locf_model,
             "AverageModel":self._get_average_model,
             "ConflictologyModel":self._get_conflictology_model,
+            "MirrorModel": self._get_mirror_model,
+            "DriftModel": self._get_drift_model,
+            "HistoricalAverageModel": self._get_historical_average_model,
+            "ClimatologyModel": self._get_climatology_model,
         }
 
     def get_model(self, model_name: str):
@@ -54,6 +67,35 @@ class BaselineModelCatalog:
         return ConflictologyModel( 
             targets=self.config["targets"],
             months = self.config["months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
+
+    def _get_mirror_model(self):
+        return MirrorModel(
+            targets=self.config["targets"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
+
+    def _get_drift_model(self):
+        return DriftModel(
+            targets=self.config["targets"],
+            months=self.config["months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
+
+    def _get_historical_average_model(self):
+        return HistoricalAverageModel(
+            targets=self.config["targets"],
+            partition_dict=self.partition_dict,
+            loa=self.loa
+        )
+
+    def _get_climatology_model(self):
+        return ClimatologyModel(
+            targets=self.config["targets"],
             partition_dict=self.partition_dict,
             loa=self.loa
         )
