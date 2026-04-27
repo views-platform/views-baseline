@@ -51,7 +51,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_forecast_model_artifact(artifact_name)`**:
 - Calls `_setup_model_and_data()`.
-- Calls `model.predict(df=df, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
+- Calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
 - Returns the prediction result directly (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:

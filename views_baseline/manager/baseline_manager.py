@@ -60,9 +60,9 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
         self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df = read_dataframe(self._get_cached_data_path())
-        model.fit(df)
-        return model, df
+        df_source = read_dataframe(self._get_cached_data_path())
+        model.fit(df_source)
+        return model, df_source
 
     def _generate_predictions(self, model, df, eval_type):
         """
@@ -98,25 +98,25 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Evaluate trained model artifact.
         """
         logger.info("Evaluating baseline model artifact")
-        self.model, df = self._setup_model_and_data()
+        self.model, df_source = self._setup_model_and_data()
         logger.info(f"Generating predictions for {eval_type} evaluation")
-        return self._generate_predictions(self.model, df, eval_type)
+        return self._generate_predictions(self.model, df_source, eval_type)
 
     def _forecast_model_artifact(self, artifact_name: str = None):
         """
         Generate forecasts using trained model artifact.
         """
         logger.info("Generating forecasts")
-        self.model, df = self._setup_model_and_data()
+        self.model, df_source = self._setup_model_and_data()
         output_length = self.config["time_steps"]
 
         if isinstance(self.model, DistributionalBaselineModel):
             return self.model.predict(
-                df=df, sequence_number=0, output_length=output_length
+                df=df_source, sequence_number=0, output_length=output_length
             )
 
         return self.model.predict(
-            df=df, sequence_number=0, output_length=output_length
+            df=df_source, sequence_number=0, output_length=output_length
         )
 
     def _evaluate_sweep(self, eval_type: str, model):
@@ -126,5 +126,5 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        df = read_dataframe(self._get_cached_data_path())
-        return self._generate_predictions(model, df, eval_type)
+        df_source = read_dataframe(self._get_cached_data_path())
+        return self._generate_predictions(model, df_source, eval_type)
