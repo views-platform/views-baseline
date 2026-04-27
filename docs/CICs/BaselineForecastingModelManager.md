@@ -93,6 +93,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 |---|---|---|
 | `config["algorithm"]` unknown to catalog | `ValueError` from `BaselineModelCatalog.get_model()` | Descriptive error listing available names. |
 | Required config key missing for the algorithm | `ValueError` from catalog | Lists missing keys. |
+| Cached data path not set (data fetching not run) | `RuntimeError` from `_get_cached_data_path()` | Raised if `_execute_data_fetching()` has not run before a lifecycle method accesses data. Message: "No cached data path available." |
 | Data file not found on disk | `FileNotFoundError` from `read_dataframe` | No explicit error handling in manager. |
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
