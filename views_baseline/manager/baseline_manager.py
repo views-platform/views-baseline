@@ -98,25 +98,25 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Evaluate trained model artifact.
         """
         logger.info("Evaluating baseline model artifact")
-        self.model, df_viewser = self._setup_model_and_data()
+        self.model, df = self._setup_model_and_data()
         logger.info(f"Generating predictions for {eval_type} evaluation")
-        return self._generate_predictions(self.model, df_viewser, eval_type)
+        return self._generate_predictions(self.model, df, eval_type)
 
     def _forecast_model_artifact(self, artifact_name: str = None):
         """
         Generate forecasts using trained model artifact.
         """
         logger.info("Generating forecasts")
-        self.model, df_viewser = self._setup_model_and_data()
+        self.model, df = self._setup_model_and_data()
         output_length = self.config["time_steps"]
 
         if isinstance(self.model, DistributionalBaselineModel):
             return self.model.predict(
-                df=df_viewser, sequence_number=0, output_length=output_length
+                df=df, sequence_number=0, output_length=output_length
             )
 
         return self.model.predict(
-            df=df_viewser, sequence_number=0, output_length=output_length
+            df=df, sequence_number=0, output_length=output_length
         )
 
     def _evaluate_sweep(self, eval_type: str, model):
@@ -126,5 +126,5 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        df_viewser = read_dataframe(self._get_cached_data_path())
-        return self._generate_predictions(model, df_viewser, eval_type)
+        df = read_dataframe(self._get_cached_data_path())
+        return self._generate_predictions(model, df, eval_type)
