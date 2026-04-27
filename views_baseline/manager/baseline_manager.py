@@ -2,7 +2,6 @@ import logging
 import pickle
 from datetime import datetime
 
-from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 
@@ -53,8 +52,6 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Instantiate the baseline model via the catalog, load data, fit, and return both.
         """
         ReproducibilityGate.Config.audit_manifest(self.config)
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
         loa = self.config["level"]
         partition_dict = self._data_loader.partition_dict
         catalog = BaselineModelCatalog(
@@ -63,9 +60,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
         self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
+        df = read_dataframe(self._get_cached_data_path())
         model.fit(df)
         return model, df
 
@@ -131,9 +126,5 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
-        df_viewser = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
+        df_viewser = read_dataframe(self._get_cached_data_path())
         return self._generate_predictions(model, df_viewser, eval_type)
