@@ -97,7 +97,7 @@ def test_manager_forecast_uses_baseline_model(
 ):
     """
     _forecast_model_artifact should:
-    - Load the viewser df (here via monkeypatched read_dataframe)
+    - Load the cached DataFrame (here via monkeypatched read_dataframe)
     - Instantiate the correct baseline model via the catalog
     - Call .fit() and then .predict(sequence_number=0)
     - Return that prediction DataFrame
@@ -209,7 +209,6 @@ def test_manager_train_saves_artifact(
     }
     manager = make_manager(config, manager_partition_dict)
     manager._model_path = SimpleNamespace(
-        data_raw=Path("dummy_raw_path"),
         artifacts=tmp_path,
     )
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)

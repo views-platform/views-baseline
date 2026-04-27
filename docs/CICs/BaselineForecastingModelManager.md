@@ -51,7 +51,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_forecast_model_artifact(artifact_name)`**:
 - Calls `_setup_model_and_data()`.
-- Calls `model.predict(df=df_viewser, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
+- Calls `model.predict(df=df, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
 - Returns the prediction result directly (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:
@@ -160,8 +160,9 @@ mgr = BaselineForecastingModelManager.__new__(BaselineForecastingModelManager)
 mgr._config_manager = ConfigurationManager(...)
 mgr._sweep = False
 mgr.config = config
-mgr._model_path = SimpleNamespace(data_raw=..., artifacts=...)
+mgr._model_path = SimpleNamespace(artifacts=...)
 mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
+mgr._cached_data_path = Path("dummy_raw_path") / "cached_df.parquet"
 mgr._resolve_evaluation_sequence_number = lambda eval_type: config.get("sequence_numbers", 1)
 monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
 preds = mgr._evaluate_model_artifact(eval_type="temporal")
