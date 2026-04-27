@@ -32,8 +32,8 @@ The manager also serves as the dispatch layer between point models (which return
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
 - Stamps `config["timestamp"]` with the current datetime.
 - Reads the training DataFrame from disk via `self._get_cached_data_path()` (path set by the base class during data fetching).
-- Calls `model.fit(df)`.
-- Returns `(model, df)`.
+- Calls `model.fit(df_source)`.
+- Returns `(model, df_source)`.
 
 **`_train_model_artifact()`**:
 - Calls `_setup_model_and_data()`.

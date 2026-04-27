@@ -157,7 +157,6 @@ from views_baseline.model.baseline import (
 
 **`manager/baseline_manager.py` (top of file):**
 ```python
-from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 from views_baseline.model.catalog import BaselineModelCatalog
