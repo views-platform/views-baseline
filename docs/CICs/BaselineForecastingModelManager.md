@@ -28,7 +28,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_setup_model_and_data()`**:
 - Calls `ReproducibilityGate.Config.audit_manifest(self.config)` as a precondition — raises `MissingHyperparameterError` if core or algorithm-specific keys are missing or `None`.
-- Reads `config["run_type"]`, `config["level"]`, and `_data_loader.partition_dict`.
+- Reads `config["level"]` and `_data_loader.partition_dict`.
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
 - Stamps `config["timestamp"]` with the current datetime.
 - Reads the training DataFrame from disk via `self._get_cached_data_path()` (path set by the base class during data fetching).
