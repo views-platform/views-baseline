@@ -44,12 +44,11 @@ These are the only points where `model/` touches views-pipeline-core. They execu
 #### `manager/baseline_manager.py` — 4 module-level imports
 
 ```python
-from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 ```
 
-These are acceptable: `manager/` is the pipeline integration layer and is expected to couple tightly to views-pipeline-core. It is not independently testable by design.
+These are acceptable: `manager/` is the pipeline integration layer and is expected to couple tightly to views-pipeline-core. It is not independently testable by design. The manager also depends on `_get_cached_data_path()` from the base class at runtime.
 
 #### `tests/` — mixed
 

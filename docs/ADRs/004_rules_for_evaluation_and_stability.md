@@ -58,7 +58,7 @@ The seed arithmetic is considered part of the stable interface for these models 
 
 An ADR update (or a new ADR) is required when:
 
-1. **views-pipeline-core API changes** — any change to `ForecastingModelManager`, `ModelPathManager`, `PipelineConfig`, `read_dataframe`, `generate_model_file_name`, or `PredictionFrame` that requires a code change in `manager/baseline_manager.py` or in the distributional `predict()` methods.
+1. **views-pipeline-core API changes** — any change to `ForecastingModelManager`, `ModelPathManager`, `read_dataframe`, `generate_model_file_name`, `_get_cached_data_path()`, or `PredictionFrame` that requires a code change in `manager/baseline_manager.py` or in the distributional `predict()` methods.
 2. **New model class additions** — a new class in `baseline.py` requires updating `MODEL_GENOMES` in `catalog.py`, the stability map in this ADR, and the ontology in ADR 001. If the new class introduces a new output type, it also requires updating ADR 003.
 3. **PredictionFrame schema changes** — changes to the `y_pred` shape convention, `identifiers` key names, or constructor signature in `views-pipeline-core.data.prediction_frame` affect both distributional models and any downstream consumer.
 4. **Protocol changes** — adding or removing attributes or methods from `BaselineModel` or `DistributionalBaselineModel`.

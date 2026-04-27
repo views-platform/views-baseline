@@ -28,12 +28,12 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_setup_model_and_data()`**:
 - Calls `ReproducibilityGate.Config.audit_manifest(self.config)` as a precondition — raises `MissingHyperparameterError` if core or algorithm-specific keys are missing or `None`.
-- Reads `config["run_type"]`, `config["level"]`, and `_data_loader.partition_dict`.
+- Reads `config["level"]` and `_data_loader.partition_dict`.
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
 - Stamps `config["timestamp"]` with the current datetime.
-- Reads the training DataFrame from disk: `{path_raw}/{run_type}_viewser_df{PipelineConfig.dataframe_format}`.
-- Calls `model.fit(df)`.
-- Returns `(model, df)`.
+- Reads the training DataFrame from disk via `self._get_cached_data_path()` (path set by the base class during data fetching).
+- Calls `model.fit(df_source)`.
+- Returns `(model, df_source)`.
 
 **`_train_model_artifact()`**:
 - Calls `_setup_model_and_data()`.
@@ -51,7 +51,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_forecast_model_artifact(artifact_name)`**:
 - Calls `_setup_model_and_data()`.
-- Calls `model.predict(df=df_viewser, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
+- Calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
 - Returns the prediction result directly (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:
@@ -65,7 +65,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 | Source | What is consumed | Notes |
 |---|---|---|
-| `model_path` (constructor) | `ModelPathManager` instance | Provides `.data_raw` and `.artifacts` paths. |
+| `model_path` (constructor) | `ModelPathManager` instance | Provides `.artifacts` path. `.data_raw` is no longer accessed directly (data path comes from base class `_cached_data_path`). |
 | `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"level"`, `"algorithm"`, `"targets"`. |
 | `_data_loader.partition_dict` | `dict` | Must contain `"test"` key. |
 | `_config_manager` | `ConfigurationManager` | Used by base class; not directly accessed in overridden methods. |
@@ -81,7 +81,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | `_train_model_artifact()` | Fitted model instance | Fitted model instance | Writes `.pkl` file to `artifacts/` |
 | `_evaluate_model_artifact()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 | `_forecast_model_artifact()` | `pd.DataFrame` | `dict[str, PredictionFrame]` | None (reads disk) |
-| `_setup_model_and_data()` | `(model, df)` | `(model, df)` | Mutates `config["timestamp"]` |
+| `_setup_model_and_data()` | `(model, df_source)` | `(model, df_source)` | Mutates `config["timestamp"]` |
 | `_generate_predictions()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None |
 | `_evaluate_sweep()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 
@@ -93,6 +93,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 |---|---|---|
 | `config["algorithm"]` unknown to catalog | `ValueError` from `BaselineModelCatalog.get_model()` | Descriptive error listing available names. |
 | Required config key missing for the algorithm | `ValueError` from catalog | Lists missing keys. |
+| Cached data path not set (data fetching not run) | `RuntimeError` from `_get_cached_data_path()` | Raised if `_execute_data_fetching()` has not run before a lifecycle method accesses data. Message: "No cached data path available." |
 | Data file not found on disk | `FileNotFoundError` from `read_dataframe` | No explicit error handling in manager. |
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
@@ -110,7 +111,6 @@ The manager emits `logger.info()` messages at lifecycle boundaries: initialisati
 **Imports from `views_pipeline_core`:**
 | Symbol | Purpose |
 |---|---|
-| `PipelineConfig` | Provides `dataframe_format` extension for data file path construction. |
 | `generate_model_file_name` | Generates timestamped artifact filename. |
 | `read_dataframe` | Reads the viewser DataFrame from disk. |
 | `ForecastingModelManager` | Base class providing `config` property, `_config_manager`, `_data_loader`, `_resolve_evaluation_sequence_number`, etc. |
@@ -161,8 +161,9 @@ mgr = BaselineForecastingModelManager.__new__(BaselineForecastingModelManager)
 mgr._config_manager = ConfigurationManager(...)
 mgr._sweep = False
 mgr.config = config
-mgr._model_path = SimpleNamespace(data_raw=..., artifacts=...)
+mgr._model_path = SimpleNamespace(artifacts=...)
 mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
+mgr._cached_data_path = Path("dummy_raw_path") / "cached_df.parquet"
 mgr._resolve_evaluation_sequence_number = lambda eval_type: config.get("sequence_numbers", 1)
 monkeypatch.setattr(bm, "read_dataframe", lambda path: base_df)
 preds = mgr._evaluate_model_artifact(eval_type="temporal")

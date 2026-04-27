@@ -63,7 +63,7 @@ The following six ontological categories are recognised in this repository. Ever
 - **Purpose:** Orchestrates the model lifecycle (load data, fit, predict, save artifact, sweep) within the VIEWS pipeline infrastructure. Translates between the pipeline's conventions (run types, artifact paths, partition dicts from `views-pipeline-core`) and the model layer's interface.
 - **Classes:** `BaselineForecastingModelManager`
 - **File:** `views_baseline/manager/baseline_manager.py`
-- **Implementation detail:** Extends `ForecastingModelManager` from `views-pipeline-core`. Overrides five methods: `_train_model_artifact`, `_setup_model_and_data`, `_generate_predictions`, `_evaluate_model_artifact`, `_forecast_model_artifact`. Imports 6 names from `views-pipeline-core`: `PipelineConfig`, `generate_model_file_name`, `read_dataframe`, `ForecastingModelManager`, `ModelPathManager`, and the `DistributionalBaselineModel` protocol (the last is from the local `model/` layer, not pipeline-core).
+- **Implementation detail:** Extends `ForecastingModelManager` from `views-pipeline-core`. Overrides five methods: `_train_model_artifact`, `_setup_model_and_data`, `_generate_predictions`, `_evaluate_model_artifact`, `_forecast_model_artifact`. Imports 4 names from `views-pipeline-core`: `generate_model_file_name`, `read_dataframe`, `ForecastingModelManager`, `ModelPathManager`. The `DistributionalBaselineModel` protocol is from the local `model/` layer, not pipeline-core.
 - **Authority:** Derived — the manager delegates all prediction logic to the model layer. It adds no domain knowledge; it only routes.
 - **Stability:** Evolving. Tightly coupled to `views-pipeline-core`; any breaking change there propagates here.
 

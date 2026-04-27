@@ -2,7 +2,6 @@ import logging
 import pickle
 from datetime import datetime
 
-from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 
@@ -53,8 +52,6 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Instantiate the baseline model via the catalog, load data, fit, and return both.
         """
         ReproducibilityGate.Config.audit_manifest(self.config)
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
         loa = self.config["level"]
         partition_dict = self._data_loader.partition_dict
         catalog = BaselineModelCatalog(
@@ -63,11 +60,9 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
         self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
-        model.fit(df)
-        return model, df
+        df_source = read_dataframe(self._get_cached_data_path())
+        model.fit(df_source)
+        return model, df_source
 
     def _generate_predictions(self, model, df, eval_type):
         """
@@ -103,25 +98,25 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Evaluate trained model artifact.
         """
         logger.info("Evaluating baseline model artifact")
-        self.model, df_viewser = self._setup_model_and_data()
+        self.model, df_source = self._setup_model_and_data()
         logger.info(f"Generating predictions for {eval_type} evaluation")
-        return self._generate_predictions(self.model, df_viewser, eval_type)
+        return self._generate_predictions(self.model, df_source, eval_type)
 
     def _forecast_model_artifact(self, artifact_name: str = None):
         """
         Generate forecasts using trained model artifact.
         """
         logger.info("Generating forecasts")
-        self.model, df_viewser = self._setup_model_and_data()
+        self.model, df_source = self._setup_model_and_data()
         output_length = self.config["time_steps"]
 
         if isinstance(self.model, DistributionalBaselineModel):
             return self.model.predict(
-                df=df_viewser, sequence_number=0, output_length=output_length
+                df=df_source, sequence_number=0, output_length=output_length
             )
 
         return self.model.predict(
-            df=df_viewser, sequence_number=0, output_length=output_length
+            df=df_source, sequence_number=0, output_length=output_length
         )
 
     def _evaluate_sweep(self, eval_type: str, model):
@@ -131,9 +126,5 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
-        df_viewser = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
-        return self._generate_predictions(model, df_viewser, eval_type)
+        df_source = read_dataframe(self._get_cached_data_path())
+        return self._generate_predictions(model, df_source, eval_type)

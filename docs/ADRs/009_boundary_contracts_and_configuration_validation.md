@@ -129,10 +129,9 @@ All five models assume without checking:
 
 **What is imported from views-pipeline-core:**
 
-Six symbols are imported at module load time:
+Four symbols are imported at module load time:
 
 ```python
-from views_pipeline_core.configs.pipeline import PipelineConfig
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 ```
@@ -147,9 +146,8 @@ from views_pipeline_core.data.prediction_frame import PredictionFrame
 
 **What is assumed:**
 
-- `ForecastingModelManager` provides `_resolve_evaluation_sequence_number(eval_type)`, `_config_manager`, `_sweep`, and `config` setter. These are used by `BaselineForecastingModelManager` but their contracts are defined in the base class, not in this package.
-- `ModelPathManager` provides `.data_raw` and `.artifacts` attributes that are `pathlib.Path`-like objects.
-- `PipelineConfig.dataframe_format` is a string suffix (e.g., `".parquet"`) used to construct the data file name.
+- `ForecastingModelManager` provides `_resolve_evaluation_sequence_number(eval_type)`, `_config_manager`, `_sweep`, `_get_cached_data_path()`, and `config` setter. These are used by `BaselineForecastingModelManager` but their contracts are defined in the base class, not in this package.
+- `ModelPathManager` provides `.artifacts` attribute that is a `pathlib.Path`-like object. `.data_raw` is no longer accessed directly by the manager (data path comes from the base class `_cached_data_path`).
 - `generate_model_file_name(run_type, file_extension=".pkl")` returns a filename string in the format `{run_type}_model_{timestamp}.pkl`.
 - `partition_dict` is accessed via `self._data_loader.partition_dict`. The structure is assumed to match what model constructors expect (`{"test": (start, end)}`), but this is not checked.
 
