@@ -81,7 +81,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | `_train_model_artifact()` | Fitted model instance | Fitted model instance | Writes `.pkl` file to `artifacts/` |
 | `_evaluate_model_artifact()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 | `_forecast_model_artifact()` | `pd.DataFrame` | `dict[str, PredictionFrame]` | None (reads disk) |
-| `_setup_model_and_data()` | `(model, df)` | `(model, df)` | Mutates `config["timestamp"]` |
+| `_setup_model_and_data()` | `(model, df_source)` | `(model, df_source)` | Mutates `config["timestamp"]` |
 | `_generate_predictions()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None |
 | `_evaluate_sweep()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 
