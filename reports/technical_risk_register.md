@@ -4,10 +4,10 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-04-27                           |
+| Last Updated      | 2026-04-28                           |
 | Total Concerns    | 3                                    |
-| Open Concerns     | 3                                    |
-| Resolved Concerns | 0                                    |
+| Open Concerns     | 2                                    |
+| Resolved Concerns | 1                                    |
 
 ---
 
@@ -23,22 +23,6 @@
 ---
 
 ## Open Concerns
-
-### C-01: Version floor admits unreleased views-pipeline-core
-
-| Field | Value |
-|-------|-------|
-| ID | C-01 |
-| Tier | 2 |
-| Source | falsification-audit (2026-04-27) |
-| Trigger | When a CI runner or new contributor installs views-baseline from the `development` branch, `pip`/`poetry` resolves `views-pipeline-core>=2.3.0` — if `v2.3.0` has not been released yet, the install fails or falls back to `v2.2.0` which lacks `_get_cached_data_path()`, causing `AttributeError` at runtime |
-| Location | `pyproject.toml:11` |
-
-The `_get_cached_data_path()` method (commit `bbdba39` in views-pipeline-core) exists only on the `fix/C-59-cached-data-path-coupling` branch and is not in any tagged release through `v2.2.0`. The version floor was bumped from `>=2.0.0` to `>=2.3.0` to make the dependency explicit, but `v2.3.0` does not exist yet. This PR cannot be safely merged to `development` until views-pipeline-core ships a release containing the method. Currently mitigated by the fact that the views-pipeline monorepo typically installs from local checkouts, not from PyPI — but any CI pipeline or fresh clone would hit this.
-
-See also pipeline-core C-59 (filename coupling across engine repos), D-12 (pass DataFrame to engines).
-
----
 
 ### C-02: `_evaluate_sweep` method has no test coverage
 
@@ -76,7 +60,13 @@ All five model classes (`ZeroModel`, `LocfModel`, `AverageModel`, `Conflictology
 
 ## Resolved Concerns
 
-(No resolved concerns yet.)
+### C-01: Version floor admits unreleased views-pipeline-core — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-01 |
+| Resolved | 2026-04-28 |
+| Resolution | views-pipeline-core bumped to `v2.3.0` (commit `0f87358`) on its `fix/C-59-cached-data-path-coupling` branch. Both branches ship together; the `>=2.3.0` floor in `pyproject.toml` now resolves correctly. |
 
 ---
 
