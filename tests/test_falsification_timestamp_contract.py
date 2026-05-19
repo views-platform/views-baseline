@@ -9,26 +9,15 @@ F-4 (SOFT): No test verifies timestamp propagation — stubs below.
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from conftest import make_manager
+import pytest
 
-ARTIFACT_TS = "20260101_120000"
+from conftest import make_manager, MANAGER_BASE_CONFIG, MANAGER_PARTITION, ARTIFACT_TS
+
 ARTIFACT_PATH = Path(f"dummy_artifacts_path/calibration_model_{ARTIFACT_TS}.pkl")
-
-BASE_CONFIG = {
-    "run_type": "calibration",
-    "algorithm": "LocfModel",
-    "level": "pgm",
-    "time_steps": 36,
-    "targets": ["synth_target"],
-    "regression_targets": ["synth_target"],
-    "regression_point_metrics": ["MSE"],
-}
-
-PARTITION = {"test": (120, 125)}
 
 
 def _make():
-    mgr = make_manager(BASE_CONFIG.copy(), PARTITION)
+    mgr = make_manager(MANAGER_BASE_CONFIG.copy(), MANAGER_PARTITION)
     mgr._model_path.get_latest_model_artifact_path = lambda run_type: ARTIFACT_PATH
     return mgr
 
@@ -39,28 +28,34 @@ class TestTimestampPropagation:
     extract the artifact timestamp and persist it in config, per ADR-052.
     """
 
-    def test_evaluate_persists_artifact_timestamp_in_config(self):
+    @pytest.mark.parametrize("method,setup_patches,kwargs", [
+        (
+            "_evaluate_model_artifact",
+            {"_setup_model_and_data": (MagicMock(), MagicMock()),
+             "_generate_predictions": []},
+            {"eval_type": "standard"},
+        ),
+        (
+            "_forecast_model_artifact",
+            None,
+            {},
+        ),
+    ])
+    def test_persists_artifact_timestamp_in_config(self, method, setup_patches, kwargs):
         mgr = _make()
 
-        with patch.object(mgr, "_setup_model_and_data") as mock_setup, \
-             patch.object(mgr, "_generate_predictions") as mock_preds:
-            mock_setup.return_value = (MagicMock(), MagicMock())
-            mock_preds.return_value = []
-            mgr._evaluate_model_artifact(eval_type="standard")
-
-        assert mgr.config["timestamp"] == ARTIFACT_TS, (
-            f"Expected '{ARTIFACT_TS}' from artifact stem, "
-            f"got '{mgr.config.get('timestamp')}'"
-        )
-
-    def test_forecast_persists_artifact_timestamp_in_config(self):
-        mgr = _make()
-
-        with patch.object(mgr, "_setup_model_and_data") as mock_setup:
-            mock_model = MagicMock()
-            mock_model.predict.return_value = MagicMock()
-            mock_setup.return_value = (mock_model, MagicMock())
-            mgr._forecast_model_artifact()
+        if method == "_forecast_model_artifact":
+            with patch.object(mgr, "_setup_model_and_data") as mock_setup:
+                mock_model = MagicMock()
+                mock_model.predict.return_value = MagicMock()
+                mock_setup.return_value = (mock_model, MagicMock())
+                getattr(mgr, method)(**kwargs)
+        else:
+            with patch.object(mgr, "_setup_model_and_data") as mock_setup, \
+                 patch.object(mgr, "_generate_predictions") as mock_preds:
+                mock_setup.return_value = setup_patches["_setup_model_and_data"]
+                mock_preds.return_value = setup_patches["_generate_predictions"]
+                getattr(mgr, method)(**kwargs)
 
         assert mgr.config["timestamp"] == ARTIFACT_TS, (
             f"Expected '{ARTIFACT_TS}' from artifact stem, "

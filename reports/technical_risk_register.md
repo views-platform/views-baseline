@@ -4,10 +4,10 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-04-28                           |
-| Total Concerns    | 3                                    |
-| Open Concerns     | 2                                    |
-| Resolved Concerns | 1                                    |
+| Last Updated      | 2026-05-19                           |
+| Total Concerns    | 4                                    |
+| Open Concerns     | 1                                    |
+| Resolved Concerns | 3                                    |
 
 ---
 
@@ -23,20 +23,6 @@
 ---
 
 ## Open Concerns
-
-### C-02: `_evaluate_sweep` method has no test coverage
-
-| Field | Value |
-|-------|-------|
-| ID | C-02 |
-| Tier | 4 |
-| Source | pr-review (2026-04-27), tech-debt-audit (2026-04-27) |
-| Trigger | When a developer modifies `_evaluate_sweep()` logic (e.g., adding sweep-specific data transforms or changing the prediction call), there is no test to detect regressions |
-| Location | `views_baseline/manager/baseline_manager.py:122-130` |
-
-`_evaluate_sweep()` is a two-line method that loads data via `_get_cached_data_path()` and delegates to `_generate_predictions()`. Both paths it depends on are tested individually, and the method is trivially correct. However, it is the only public lifecycle method on `BaselineForecastingModelManager` with zero test coverage. Already noted as a Known Deviation in the CIC. If WandB sweeps are ever used with baseline models, a test should be added first.
-
----
 
 ### C-03: Duplicated index extraction across all 5 model classes
 
@@ -59,6 +45,26 @@ All five model classes (`ZeroModel`, `LocfModel`, `AverageModel`, `Conflictology
 ---
 
 ## Resolved Concerns
+
+### C-02: `_evaluate_sweep` method has no test coverage — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-02 |
+| Resolved | 2026-05-19 |
+| Resolution | `test_manager_evaluate_sweep` added in `tests/test_baseline_manager.py`. Verifies that `_evaluate_sweep` loads data and delegates to `_generate_predictions`, returning identical output to direct model invocation. |
+
+---
+
+### C-04: `artifact_name` parameter silently ignored in evaluate/forecast — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-04 |
+| Resolved | 2026-05-19 |
+| Resolution | `if artifact_name:` branching implemented in both `_evaluate_model_artifact` and `_forecast_model_artifact`, following the stepshifter pattern. Tested by `test_uses_specified_artifact_timestamp` in `tests/test_falsification_ship_readiness.py`. |
+
+---
 
 ### C-01: Version floor admits unreleased views-pipeline-core — RESOLVED
 

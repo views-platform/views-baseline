@@ -263,6 +263,43 @@ def test_manager_evaluate_distributional_model(
         assert len(result[target_key]) == 2
 
 
+def test_manager_evaluate_sweep(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """
+    _evaluate_sweep should load data and delegate to _generate_predictions,
+    returning the same structure as _evaluate_model_artifact.
+    """
+    config = {
+        "run_type": "eval",
+        "level": "pg_id",
+        "algorithm": "LocfModel",
+        "targets": targets,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "sequence_numbers": 2,
+    }
+
+    manager = make_manager(config, manager_partition_dict)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+
+    model, _ = manager._setup_model_and_data()
+    preds_list = manager._evaluate_sweep(eval_type="temporal", model=model)
+
+    assert isinstance(preds_list, list)
+    assert len(preds_list) == 2
+
+    locf = LocfModel(
+        targets=targets, partition_dict=manager_partition_dict, loa="pg_id"
+    )
+    locf.fit(manager_df)
+    expected0 = locf.predict(df=manager_df, sequence_number=0, output_length=36)
+    expected1 = locf.predict(df=manager_df, sequence_number=1, output_length=36)
+
+    pd.testing.assert_frame_equal(preds_list[0], expected0)
+    pd.testing.assert_frame_equal(preds_list[1], expected1)
+
+
 def test_manager_forecast_distributional_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):

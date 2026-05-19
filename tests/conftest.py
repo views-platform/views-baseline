@@ -5,6 +5,21 @@ import pandas as pd
 import pytest
 
 
+MANAGER_BASE_CONFIG = {
+    "run_type": "calibration",
+    "algorithm": "LocfModel",
+    "level": "pgm",
+    "time_steps": 36,
+    "targets": ["synth_target"],
+    "regression_targets": ["synth_target"],
+    "regression_point_metrics": ["MSE"],
+}
+
+MANAGER_PARTITION = {"test": (120, 125)}
+
+ARTIFACT_TS = "20260101_120000"
+
+
 def make_dummy_df(entity_id="pg_id", time_range=range(440, 540)):
     """
     Create a simple MultiIndex dataframe with 2 entities and a range of months.

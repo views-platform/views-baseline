@@ -45,13 +45,13 @@ The manager also serves as the dispatch layer between point models (which return
 - Otherwise: iterates and accumulates `list[pd.DataFrame]`.
 
 **`_evaluate_model_artifact(eval_type, artifact_name)`**:
-- Resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
+- If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
 - Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()` then `_generate_predictions()`.
 - Returns the accumulated predictions.
 
 **`_forecast_model_artifact(artifact_name)`**:
-- Resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
+- If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
 - Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()`.
 - If `isinstance(model, DistributionalBaselineModel)`: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns `dict[str, PredictionFrame]`.
@@ -102,6 +102,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
 | No artifact `.pkl` for the run type on disk | `FileNotFoundError` from `get_latest_model_artifact_path()` | Raised in `_evaluate_model_artifact` and `_forecast_model_artifact` before setup. New precondition introduced by ADR-016 fix. |
+| `artifact_name` points to non-existent file | No error at resolve time | The path is constructed but not checked for existence; the timestamp is still extracted from the filename stem. Downstream failure occurs only if the artifact is loaded (baseline models don't load artifacts, so this is benign). |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 
 The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry, prediction generation, and forecast entry (6 messages total in `baseline_manager.py`). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
@@ -216,6 +217,7 @@ File: `tests/test_baseline_manager.py`
 | `test_manager_train_saves_artifact` | Pickle file is written to `artifacts/`, filename matches pattern `calibration_model_{YYYYMMDD}_{HHMMSS}.pkl`, and the unpickled object is a valid `ZeroModel`. |
 | `test_manager_evaluate_distributional_model` | `_evaluate_model_artifact` with `ConflictologyModel` returns `dict[str, list[PredictionFrame]]` with correct keys and list length matching `sequence_numbers`. |
 | `test_manager_forecast_distributional_model` | `_forecast_model_artifact` with `ConflictologyModel` returns `dict[str, PredictionFrame]` with correct keys and types. |
+| `test_manager_evaluate_sweep` | `_evaluate_sweep` loads data, delegates to `_generate_predictions`, and returns a list of DataFrames identical to direct model output. |
 | `test_manager_gate_rejects_incomplete_config` | `_setup_model_and_data()` raises `MissingHyperparameterError` when core keys are missing. (In `test_reproducibility_gate.py`.) |
 
 File: `tests/test_falsification_timestamp_contract.py`
@@ -234,16 +236,23 @@ File: `tests/test_falsification_merge_regression.py`
 | `test_evaluate_raises_when_no_artifact_exists` | `_evaluate_model_artifact` raises `FileNotFoundError` when no artifact `.pkl` exists on disk. |
 | `test_forecast_raises_when_no_artifact_exists` | `_forecast_model_artifact` raises `FileNotFoundError` when no artifact `.pkl` exists on disk. |
 
+File: `tests/test_falsification_ship_readiness.py`
+
+| Test | What it verifies |
+|---|---|
+| `test_uses_specified_artifact_timestamp[_evaluate_model_artifact]` | When `artifact_name` is provided, `_evaluate_model_artifact` extracts timestamp from the specified artifact, not the latest. |
+| `test_uses_specified_artifact_timestamp[_forecast_model_artifact]` | When `artifact_name` is provided, `_forecast_model_artifact` extracts timestamp from the specified artifact, not the latest. |
+
 ---
 
 ## Evolution Notes
 
 - The distributional code paths in `_generate_predictions` and `_forecast_model_artifact` are now covered by `test_manager_evaluate_distributional_model` and `test_manager_forecast_distributional_model`.
-- `_evaluate_sweep` is also untested. If WandB sweeps are used with baseline models, tests are needed.
+- `_evaluate_sweep` is now covered by `test_manager_evaluate_sweep`.
 - Manager log messages are currently all `INFO` level. If `WARNING` or `ERROR` messages are added, they should follow the two-tier observability pattern (ADR-008).
 
 ---
 
 ## Known Deviations
 
-- **`_evaluate_sweep` is untested:** No test exercises this method.
+None.

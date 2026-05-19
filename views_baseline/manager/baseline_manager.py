@@ -96,9 +96,12 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Evaluate trained model artifact.
         """
         logger.info("Evaluating baseline model artifact")
-        path_artifact = self._model_path.get_latest_model_artifact_path(
-            run_type=self.config["run_type"]
-        )
+        if artifact_name:
+            path_artifact = self._model_path.artifacts / artifact_name
+        else:
+            path_artifact = self._model_path.get_latest_model_artifact_path(
+                run_type=self.config["run_type"]
+            )
         self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
         logger.info(f"Generating predictions for {eval_type} evaluation")
@@ -109,9 +112,12 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Generate forecasts using trained model artifact.
         """
         logger.info("Generating forecasts")
-        path_artifact = self._model_path.get_latest_model_artifact_path(
-            run_type=self.config["run_type"]
-        )
+        if artifact_name:
+            path_artifact = self._model_path.artifacts / artifact_name
+        else:
+            path_artifact = self._model_path.get_latest_model_artifact_path(
+                run_type=self.config["run_type"]
+            )
         self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
         output_length = self.config["time_steps"]
