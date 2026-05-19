@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-
 MANAGER_BASE_CONFIG = {
     "run_type": "calibration",
     "algorithm": "LocfModel",

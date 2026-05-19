@@ -7,11 +7,10 @@ F-4 (SOFT): No test verifies timestamp propagation — stubs below.
 """
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from conftest import make_manager, MANAGER_BASE_CONFIG, MANAGER_PARTITION, ARTIFACT_TS
+from conftest import ARTIFACT_TS, MANAGER_BASE_CONFIG, MANAGER_PARTITION, make_manager
 
 ARTIFACT_PATH = Path(f"dummy_artifacts_path/calibration_model_{ARTIFACT_TS}.pkl")
 

@@ -7,18 +7,18 @@ F-2 (SOFT): New FileNotFoundError precondition in evaluate/forecast.
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from conftest import make_manager, MANAGER_BASE_CONFIG, MANAGER_PARTITION
+from conftest import MANAGER_BASE_CONFIG, MANAGER_PARTITION, make_manager
 
 
 class TestCicDrift:
 
     def test_setup_model_and_data_does_not_stamp_timestamp(self, monkeypatch):
-        import views_baseline.manager.baseline_manager as bm
         import pandas as pd
+
+        import views_baseline.manager.baseline_manager as bm
 
         mgr = make_manager(MANAGER_BASE_CONFIG.copy(), MANAGER_PARTITION)
         monkeypatch.setattr(bm, "read_dataframe", lambda path: pd.DataFrame())

@@ -7,12 +7,10 @@ F-4 (SOFT): PR body claims 85 tests, ADR says 75/75, actual is 75+6.
 """
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from conftest import make_manager, MANAGER_BASE_CONFIG, MANAGER_PARTITION
-
+from conftest import MANAGER_BASE_CONFIG, MANAGER_PARTITION, make_manager
 
 LATEST_TS = "20260201_120000"
 SPECIFIED_TS = "20260101_090000"
