@@ -3,7 +3,7 @@
 **Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
-**Related ADRs:** ADR-001, ADR-002, ADR-006, ADR-008, ADR-009, ADR-014
+**Related ADRs:** ADR-001, ADR-002, ADR-006, ADR-008, ADR-009, ADR-014, ADR-016
 
 ---
 
@@ -30,7 +30,6 @@ The manager also serves as the dispatch layer between point models (which return
 - Calls `ReproducibilityGate.Config.audit_manifest(self.config)` as a precondition — raises `MissingHyperparameterError` if core or algorithm-specific keys are missing or `None`.
 - Reads `config["level"]` and `_data_loader.partition_dict`.
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
-- Stamps `config["timestamp"]` with the current datetime.
 - Reads the training DataFrame from disk via `self._get_cached_data_path()` (path set by the base class during data fetching).
 - Calls `model.fit(df_source)`.
 - Returns `(model, df_source)`.
@@ -46,10 +45,14 @@ The manager also serves as the dispatch layer between point models (which return
 - Otherwise: iterates and accumulates `list[pd.DataFrame]`.
 
 **`_evaluate_model_artifact(eval_type, artifact_name)`**:
+- Resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
+- Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()` then `_generate_predictions()`.
 - Returns the accumulated predictions.
 
 **`_forecast_model_artifact(artifact_name)`**:
+- Resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
+- Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()`.
 - Calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
 - Returns the prediction result directly (not wrapped in a list).
@@ -79,9 +82,9 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | Method | Output type (point) | Output type (distributional) | Side effects |
 |---|---|---|---|
 | `_train_model_artifact()` | Fitted model instance | Fitted model instance | Writes `.pkl` file to `artifacts/` |
-| `_evaluate_model_artifact()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
-| `_forecast_model_artifact()` | `pd.DataFrame` | `dict[str, PredictionFrame]` | None (reads disk) |
-| `_setup_model_and_data()` | `(model, df_source)` | `(model, df_source)` | Mutates `config["timestamp"]` |
+| `_evaluate_model_artifact()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | Persists artifact timestamp in config via `add_config` |
+| `_forecast_model_artifact()` | `pd.DataFrame` | `dict[str, PredictionFrame]` | Persists artifact timestamp in config via `add_config` |
+| `_setup_model_and_data()` | `(model, df_source)` | `(model, df_source)` | None |
 | `_generate_predictions()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None |
 | `_evaluate_sweep()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 
@@ -98,6 +101,7 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
+| No artifact `.pkl` for the run type on disk | `FileNotFoundError` from `get_latest_model_artifact_path()` | Raised in `_evaluate_model_artifact` and `_forecast_model_artifact` before setup. New precondition introduced by ADR-016 fix. |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 
 The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry, prediction generation, and forecast entry (6 messages total in `baseline_manager.py`). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
@@ -222,4 +226,3 @@ File: `tests/test_baseline_manager.py`
 ## Known Deviations
 
 - **`_evaluate_sweep` is untested:** No test exercises this method.
-- **`config["timestamp"]` mutation in `_setup_model_and_data()`:** The manager stamps the config dict with the current time as a side effect of setup. This is a mutation of shared state that callers may not expect.

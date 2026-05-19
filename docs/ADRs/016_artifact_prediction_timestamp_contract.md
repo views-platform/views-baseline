@@ -70,7 +70,7 @@ The bug was discovered during integration testing of synthetic ensemble models i
 
 - Baseline predictions now carry artifact-derived timestamps, matching all other model repos.
 - Ensemble manager can resolve baseline predictions without subprocess fallback.
-- 82/82 existing tests pass after the fix.
+- 75/75 existing tests pass after the fix.
 
 ### Negative
 

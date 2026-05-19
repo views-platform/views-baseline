@@ -6,7 +6,6 @@ F-1 (HARD): Implementation fix not committed — branch-hygiene finding, not a c
 F-4 (SOFT): No test verifies timestamp propagation — stubs below.
 """
 
-import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
