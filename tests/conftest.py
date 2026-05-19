@@ -4,6 +4,20 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+MANAGER_BASE_CONFIG = {
+    "run_type": "calibration",
+    "algorithm": "LocfModel",
+    "level": "pgm",
+    "time_steps": 36,
+    "targets": ["synth_target"],
+    "regression_targets": ["synth_target"],
+    "regression_point_metrics": ["MSE"],
+}
+
+MANAGER_PARTITION = {"test": (120, 125)}
+
+ARTIFACT_TS = "20260101_120000"
+
 
 def make_dummy_df(entity_id="pg_id", time_range=range(440, 540)):
     """
@@ -78,6 +92,9 @@ def make_manager(config, partition_dict):
     mgr.config = config
     mgr._model_path = SimpleNamespace(
         artifacts=Path("dummy_artifacts_path"),
+        get_latest_model_artifact_path=lambda run_type: Path(
+            f"dummy_artifacts_path/{run_type}_model_20260101_120000.pkl"
+        ),
     )
     mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
     mgr._cached_data_path = Path("dummy_raw_path") / "cached_df.parquet"
