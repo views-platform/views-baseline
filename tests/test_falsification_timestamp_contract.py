@@ -28,20 +28,11 @@ class TestTimestampPropagation:
     extract the artifact timestamp and persist it in config, per ADR-052.
     """
 
-    @pytest.mark.parametrize("method,setup_patches,kwargs", [
-        (
-            "_evaluate_model_artifact",
-            {"_setup_model_and_data": (MagicMock(), MagicMock()),
-             "_generate_predictions": []},
-            {"eval_type": "standard"},
-        ),
-        (
-            "_forecast_model_artifact",
-            None,
-            {},
-        ),
+    @pytest.mark.parametrize("method,kwargs", [
+        ("_evaluate_model_artifact", {"eval_type": "standard"}),
+        ("_forecast_model_artifact", {}),
     ])
-    def test_persists_artifact_timestamp_in_config(self, method, setup_patches, kwargs):
+    def test_persists_artifact_timestamp_in_config(self, method, kwargs):
         mgr = _make()
 
         if method == "_forecast_model_artifact":
@@ -53,8 +44,8 @@ class TestTimestampPropagation:
         else:
             with patch.object(mgr, "_setup_model_and_data") as mock_setup, \
                  patch.object(mgr, "_generate_predictions") as mock_preds:
-                mock_setup.return_value = setup_patches["_setup_model_and_data"]
-                mock_preds.return_value = setup_patches["_generate_predictions"]
+                mock_setup.return_value = (MagicMock(), MagicMock())
+                mock_preds.return_value = []
                 getattr(mgr, method)(**kwargs)
 
         assert mgr.config["timestamp"] == ARTIFACT_TS, (
