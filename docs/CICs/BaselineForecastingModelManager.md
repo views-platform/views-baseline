@@ -54,8 +54,8 @@ The manager also serves as the dispatch layer between point models (which return
 - Resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
 - Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()`.
-- Calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` using keyword arguments. Both distributional and point paths use the same calling convention.
-- Returns the prediction result directly (not wrapped in a list).
+- If `isinstance(model, DistributionalBaselineModel)`: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns `dict[str, PredictionFrame]`.
+- Otherwise: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns a single `pd.DataFrame` (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:
 - Reads the DataFrame from disk using the same path logic as `_setup_model_and_data()`.
@@ -71,7 +71,7 @@ The manager also serves as the dispatch layer between point models (which return
 | `model_path` (constructor) | `ModelPathManager` instance | Provides `.artifacts` path. `.data_raw` is no longer accessed directly (data path comes from base class `_cached_data_path`). |
 | `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"level"`, `"algorithm"`, `"targets"`. |
 | `_data_loader.partition_dict` | `dict` | Must contain `"test"` key. |
-| `_config_manager` | `ConfigurationManager` | Used by base class; not directly accessed in overridden methods. |
+| `_config_manager` | `ConfigurationManager` | Used by base class and accessed directly in `_evaluate_model_artifact` and `_forecast_model_artifact` via `add_config()` to persist the artifact timestamp. |
 
 The `config` dict is populated by the base class `_config_manager` before any lifecycle method is called.
 
@@ -165,7 +165,12 @@ mgr = BaselineForecastingModelManager.__new__(BaselineForecastingModelManager)
 mgr._config_manager = ConfigurationManager(...)
 mgr._sweep = False
 mgr.config = config
-mgr._model_path = SimpleNamespace(artifacts=...)
+mgr._model_path = SimpleNamespace(
+    artifacts=Path("dummy_artifacts_path"),
+    get_latest_model_artifact_path=lambda run_type: Path(
+        f"dummy_artifacts_path/{run_type}_model_20260101_120000.pkl"
+    ),
+)
 mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
 mgr._cached_data_path = Path("dummy_raw_path") / "cached_df.parquet"
 mgr._resolve_evaluation_sequence_number = lambda eval_type: config.get("sequence_numbers", 1)
@@ -212,6 +217,22 @@ File: `tests/test_baseline_manager.py`
 | `test_manager_evaluate_distributional_model` | `_evaluate_model_artifact` with `ConflictologyModel` returns `dict[str, list[PredictionFrame]]` with correct keys and list length matching `sequence_numbers`. |
 | `test_manager_forecast_distributional_model` | `_forecast_model_artifact` with `ConflictologyModel` returns `dict[str, PredictionFrame]` with correct keys and types. |
 | `test_manager_gate_rejects_incomplete_config` | `_setup_model_and_data()` raises `MissingHyperparameterError` when core keys are missing. (In `test_reproducibility_gate.py`.) |
+
+File: `tests/test_falsification_timestamp_contract.py`
+
+| Test | What it verifies |
+|---|---|
+| `test_evaluate_persists_artifact_timestamp_in_config` | `_evaluate_model_artifact` extracts the artifact timestamp and persists it in config via `add_config`. |
+| `test_forecast_persists_artifact_timestamp_in_config` | `_forecast_model_artifact` extracts the artifact timestamp and persists it in config via `add_config`. |
+| `test_timestamp_is_not_datetime_now` | The persisted timestamp comes from the artifact stem, not `datetime.now()`. |
+
+File: `tests/test_falsification_merge_regression.py`
+
+| Test | What it verifies |
+|---|---|
+| `test_setup_model_and_data_does_not_stamp_timestamp` | `_setup_model_and_data` no longer mutates `config["timestamp"]` (CIC drift guard). |
+| `test_evaluate_raises_when_no_artifact_exists` | `_evaluate_model_artifact` raises `FileNotFoundError` when no artifact `.pkl` exists on disk. |
+| `test_forecast_raises_when_no_artifact_exists` | `_forecast_model_artifact` raises `FileNotFoundError` when no artifact `.pkl` exists on disk. |
 
 ---
 
