@@ -78,6 +78,9 @@ def make_manager(config, partition_dict):
     mgr.config = config
     mgr._model_path = SimpleNamespace(
         artifacts=Path("dummy_artifacts_path"),
+        get_latest_model_artifact_path=lambda run_type: Path(
+            f"dummy_artifacts_path/{run_type}_model_20260101_120000.pkl"
+        ),
     )
     mgr._data_loader = SimpleNamespace(partition_dict=partition_dict)
     mgr._cached_data_path = Path("dummy_raw_path") / "cached_df.parquet"

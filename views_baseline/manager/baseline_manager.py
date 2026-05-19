@@ -1,6 +1,5 @@
 import logging
 import pickle
-from datetime import datetime
 
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
@@ -59,7 +58,6 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         )
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
-        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
         df_source = read_dataframe(self._get_cached_data_path())
         model.fit(df_source)
         return model, df_source
@@ -98,6 +96,10 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Evaluate trained model artifact.
         """
         logger.info("Evaluating baseline model artifact")
+        path_artifact = self._model_path.get_latest_model_artifact_path(
+            run_type=self.config["run_type"]
+        )
+        self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
         logger.info(f"Generating predictions for {eval_type} evaluation")
         return self._generate_predictions(self.model, df_source, eval_type)
@@ -107,6 +109,10 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         Generate forecasts using trained model artifact.
         """
         logger.info("Generating forecasts")
+        path_artifact = self._model_path.get_latest_model_artifact_path(
+            run_type=self.config["run_type"]
+        )
+        self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
         output_length = self.config["time_steps"]
 
