@@ -108,7 +108,7 @@ def make_manager(config, partition_dict):
     return mgr
 
 
-def assert_prediction_structure(
+def assert_point_prediction_structure(
     result, df, targets, partition_dict, sequence_number, output_length
 ):
     """Assert common structural properties of prediction PredictionFrame dicts."""

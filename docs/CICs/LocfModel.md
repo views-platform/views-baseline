@@ -17,16 +17,16 @@
 
 - Does not average across time. Only the single last observation before `test_start` is retained per entity per target.
 - Does not interpolate or extrapolate.
-- Does not produce distributional output. The class attribute `distributional` is absent.
+- Does not produce distributional output. Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` — a single deterministic value per cell, not multiple samples.
 
 ---
 
 ## Responsibilities and Guarantees
 
 - `fit(df)` filters `df` to rows where `time_idx < test_start`, sorts by `[entity_idx, time_idx]`, then computes `groupby(entity_idx)[targets].last()`. The result is stored as `self.last_observations` (a DataFrame indexed by entity, columns = targets). Returns `self`.
-- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `last_observations`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `last_observations.loc[cid, t]`.
+- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `last_observations`, and returns `dict[str, PredictionFrame]` via `build_prediction_frame` where every cell for entity `cid` and target `t` has the value `last_observations.loc[cid, t]`.
 - If any entities in `entity_ids` are absent from `last_observations`, a `WARNING` is logged with the count of dropped entities.
-- The returned DataFrame has the same structure contract as `ZeroModel`: MultiIndex `(time_idx, entity_idx)`, columns `pred_{target}`, sorted index.
+- The returned dict has the same structure contract as all baseline models: one key per target, each value a `PredictionFrame` with `identifiers` dict containing `"time"` and `"unit"` arrays.
 - `self.time_idx` is `None` before `fit()` is called — callers can use this as a pre-fit sentinel.
 
 ---
@@ -50,7 +50,7 @@ The model handles unsorted input data correctly because `fit()` explicitly calls
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.last_observations`. Emits an `INFO` log message. No external side effects.
-- **`predict()`**: Returns a `pd.DataFrame`. Emits an `INFO` log and, if entities are dropped, a `WARNING`. No external side effects.
+- **`predict()`**: Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)`. Emits an `INFO` log and, if entities are dropped, a `WARNING`. No external side effects.
 
 ---
 
@@ -62,17 +62,16 @@ The model handles unsorted input data correctly because `fit()` explicitly calls
 | `df` missing 2-level MultiIndex | `IndexError` (crash) | No structural validation. |
 | `partition_dict` missing `"test"` key | `KeyError` (crash) | No validation. |
 | Entities in `entity_ids` absent from `last_observations` | `WARNING` log | Entity is silently dropped from predictions. |
-| All entities dropped | Silent empty DataFrame | `build_prediction_grid` returns valid empty result. |
+| All entities dropped | Silent empty dict | `build_prediction_frame` returns an empty dict. |
 | `predict()` called before `fit()` | `AttributeError` | `self.last_observations` is `None`; `cid in None` raises. |
 
 ---
 
 ## Boundaries and Interactions
 
-- **Depends on:** `views_baseline.model.helpers.build_prediction_grid`.
-- **No external dependencies** beyond standard library and pandas.
+- **Depends on:** `views_baseline.model.helpers.build_prediction_frame`. `PredictionFrame` is lazy-imported from `views-pipeline-core` inside the helper.
+- **External dependency:** `views-pipeline-core` (via `PredictionFrame`, lazy-imported at call time).
 - **Instantiated by:** `BaselineModelCatalog._get_locf_model()`.
-- Does not import from `views_pipeline_core`.
 
 ---
 

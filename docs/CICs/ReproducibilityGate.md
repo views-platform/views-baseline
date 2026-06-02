@@ -25,7 +25,7 @@ The class is importable by downstream packages (e.g. views-models) so they can v
 
 ## Responsibilities and Guarantees
 
-**`Config.CORE_GENOME`**: Class attribute. List of config keys required by every baseline model: `["steps", "time_steps"]`.
+**`Config.CORE_GENOME`**: Class attribute. List of config keys required by every baseline model: `["steps", "time_steps", "prediction_format"]`.
 
 **`Config.ALGORITHM_GENOMES`**: Class attribute. Dict mapping each algorithm name to its list of additional required config keys. This dict is the single source of truth; `BaselineModelCatalog.MODEL_GENOMES` is an alias to it.
 

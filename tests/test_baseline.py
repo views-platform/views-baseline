@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import assert_prediction_structure, make_dummy_df
+from conftest import assert_point_prediction_structure, make_dummy_df
 
 from views_baseline.model.baseline import (
     AverageModel,
@@ -38,7 +38,9 @@ def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     output_length = 36
     result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
     assert base_df_pgm.index.names[1] == "pg_id"
     for target in targets:
         assert (result[target].y_pred == 0.0).all()
@@ -50,7 +52,9 @@ def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     output_length = 36
     result = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(result, base_df_cm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_cm, targets, partition_dict, 0, output_length
+    )
     assert base_df_cm.index.names[1] == "country_id"
     for target in targets:
         assert (result[target].y_pred == 0.0).all()
@@ -96,7 +100,9 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
             uid = pf.identifiers["unit"][i]
             assert pf.y_pred[i, 0] == expected_last.loc[uid, target]
 
-    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -168,7 +174,9 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
             uid = pf.identifiers["unit"][i]
             assert pf.y_pred[i, 0] == pytest.approx(expected_means.loc[uid, target])
 
-    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
 
 
 def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
