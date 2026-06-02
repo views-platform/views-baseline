@@ -29,6 +29,7 @@ def test_audit_manifest_accepts_valid_zero_model_config():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     ReproducibilityGate.Config.audit_manifest(config)
 
@@ -39,6 +40,7 @@ def test_audit_manifest_accepts_valid_mixture_config():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "window_months": 18,
         "lambda_mix": 0.05,
         "n_samples": 256,
@@ -63,6 +65,7 @@ def test_audit_manifest_rejects_missing_algorithm_key():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         # "window_months" is missing
     }
     with pytest.raises(MissingHyperparameterError, match="window_months"):
@@ -75,6 +78,7 @@ def test_audit_manifest_rejects_unknown_algorithm():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     with pytest.raises(MissingHyperparameterError, match="NonExistentModel"):
         ReproducibilityGate.Config.audit_manifest(config)
@@ -105,6 +109,7 @@ def test_manager_gate_rejects_incomplete_config(
         "level": "pg_id",
         "algorithm": "ZeroModel",
         "targets": ["y1"],
+        "prediction_format": "prediction_frame",
         # "steps" and "time_steps" are missing
     }
 
@@ -139,6 +144,7 @@ def test_none_value_injection():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": None,
+        "prediction_format": "prediction_frame",
         "window_months": 6,
     }
     with pytest.raises(MissingHyperparameterError, match="None"):
@@ -152,6 +158,7 @@ def test_empty_string_algorithm():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     with pytest.raises(MissingHyperparameterError, match="Unknown algorithm"):
         ReproducibilityGate.Config.audit_manifest(config)
@@ -163,6 +170,7 @@ def test_missing_algorithm_key():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     with pytest.raises(MissingHyperparameterError, match="algorithm"):
         ReproducibilityGate.Config.audit_manifest(config)
@@ -175,6 +183,7 @@ def test_extra_keys_ignored():
         "targets": ["y1"],
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "totally_unknown_key": "should be fine",
         "another_extra": 999,
     }

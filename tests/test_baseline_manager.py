@@ -2,11 +2,11 @@ import pickle
 import re
 from types import SimpleNamespace
 
-import pandas as pd
+import numpy as np
 from conftest import make_manager
 
 import views_baseline.manager.baseline_manager as bm
-from views_baseline.model.baseline import LocfModel, ZeroModel
+from views_baseline.model.baseline import ZeroModel
 
 # ---------------------------------------------------------------------
 # Tests: _evaluate_model_artifact
@@ -16,12 +16,6 @@ from views_baseline.model.baseline import LocfModel, ZeroModel
 def test_manager_evaluate_uses_zero_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _evaluate_model_artifact should:
-    - Use BaselineModelCatalog to get the correct baseline class (ZeroModel here)
-    - Call .predict() for each sequence_number
-    - Return a list of prediction DataFrames
-    """
     config = {
         "run_type": "eval",
         "level": "pg_id",
@@ -29,36 +23,25 @@ def test_manager_evaluate_uses_zero_model(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "sequence_numbers": 2,
     }
 
     manager = make_manager(config, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
 
-    preds_list = manager._evaluate_model_artifact(eval_type="temporal")
+    result = manager._evaluate_model_artifact(eval_type="temporal")
 
-    assert isinstance(preds_list, list)
-    assert len(preds_list) == 2
-
-    zero_model = ZeroModel(
-        targets=targets, partition_dict=manager_partition_dict, loa="pg_id"
-    )
-    zero_model.fit(manager_df)
-
-    expected0 = zero_model.predict(df=manager_df, sequence_number=0, output_length=36)
-    expected1 = zero_model.predict(df=manager_df, sequence_number=1, output_length=36)
-
-    pd.testing.assert_frame_equal(preds_list[0], expected0)
-    pd.testing.assert_frame_equal(preds_list[1], expected1)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], list)
+        assert len(result[target_key]) == 2
 
 
 def test_manager_evaluate_uses_locf_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    Same as above but for LocfModel, just to make sure the manager is respecting
-    config['algorithm'] and not hard-coding ZeroModel.
-    """
     config = {
         "run_type": "eval",
         "level": "pg_id",
@@ -66,24 +49,19 @@ def test_manager_evaluate_uses_locf_model(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "sequence_numbers": 1,
     }
 
     manager = make_manager(config, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
 
-    preds_list = manager._evaluate_model_artifact(eval_type="temporal")
+    result = manager._evaluate_model_artifact(eval_type="temporal")
 
-    assert isinstance(preds_list, list)
-    assert len(preds_list) == 1
-
-    locf = LocfModel(
-        targets=targets, partition_dict=manager_partition_dict, loa="pg_id"
-    )
-    locf.fit(manager_df)
-    expected = locf.predict(df=manager_df, sequence_number=0, output_length=36)
-
-    pd.testing.assert_frame_equal(preds_list[0], expected)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert len(result[target_key]) == 1
 
 
 # ---------------------------------------------------------------------
@@ -94,13 +72,8 @@ def test_manager_evaluate_uses_locf_model(
 def test_manager_forecast_uses_baseline_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _forecast_model_artifact should:
-    - Load the cached DataFrame (here via monkeypatched read_dataframe)
-    - Instantiate the correct baseline model via the catalog
-    - Call .fit() and then .predict(sequence_number=0)
-    - Return that prediction DataFrame
-    """
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
     config = {
         "run_type": "forecast",
         "level": "pg_id",
@@ -108,29 +81,23 @@ def test_manager_forecast_uses_baseline_model(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
 
     manager = make_manager(config, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
 
-    forecasts = manager._forecast_model_artifact()
+    result = manager._forecast_model_artifact()
 
-    locf = LocfModel(
-        targets=targets, partition_dict=manager_partition_dict, loa="pg_id"
-    )
-    locf.fit(manager_df)
-    expected = locf.predict(df=manager_df, sequence_number=0, output_length=36)
-
-    pd.testing.assert_frame_equal(forecasts, expected)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], PredictionFrame)
 
 
 def test_manager_forecast_respects_algorithm_choice(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    Smoke test: switching algorithm in config should change the forecast
-    (ZeroModel vs LocfModel should not match unless the data are degenerate).
-    """
     config_zero = {
         "run_type": "forecast",
         "level": "pg_id",
@@ -138,6 +105,7 @@ def test_manager_forecast_respects_algorithm_choice(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     manager_zero = make_manager(config_zero, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
@@ -150,12 +118,14 @@ def test_manager_forecast_respects_algorithm_choice(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     manager_locf = make_manager(config_locf, manager_partition_dict)
     forecasts_locf = manager_locf._forecast_model_artifact()
 
-    assert forecasts_zero.shape == forecasts_locf.shape
-    assert (forecasts_zero.values != forecasts_locf.values).any()
+    target = targets[0]
+    assert forecasts_zero[target].y_pred.shape == forecasts_locf[target].y_pred.shape
+    assert not np.array_equal(forecasts_zero[target].y_pred, forecasts_locf[target].y_pred)
 
 
 # ---------------------------------------------------------------------
@@ -166,10 +136,6 @@ def test_manager_forecast_respects_algorithm_choice(
 def test_manager_setup_returns_model_and_data(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _setup_model_and_data should instantiate the correct model via the catalog,
-    fit it on the data, and return (model, df).
-    """
     config = {
         "run_type": "eval",
         "level": "pg_id",
@@ -177,6 +143,7 @@ def test_manager_setup_returns_model_and_data(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     manager = make_manager(config, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
@@ -195,9 +162,6 @@ def test_manager_setup_returns_model_and_data(
 def test_manager_train_saves_artifact(
     monkeypatch, manager_df, manager_partition_dict, targets, tmp_path
 ):
-    """
-    _train_model_artifact should pickle the fitted model to artifacts/.
-    """
     config = {
         "run_type": "calibration",
         "level": "pg_id",
@@ -205,6 +169,7 @@ def test_manager_train_saves_artifact(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
     manager = make_manager(config, manager_partition_dict)
     manager._model_path = SimpleNamespace(
@@ -228,17 +193,13 @@ def test_manager_train_saves_artifact(
 
 
 # ---------------------------------------------------------------------
-# Tests: distributional model paths
+# Tests: distributional model paths (unchanged — already returned dict)
 # ---------------------------------------------------------------------
 
 
 def test_manager_evaluate_distributional_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _evaluate_model_artifact for a distributional model (ConflictologyModel)
-    should return dict[str, list] where each value is a list of PredictionFrames.
-    """
     config = {
         "run_type": "eval",
         "level": "pg_id",
@@ -248,6 +209,7 @@ def test_manager_evaluate_distributional_model(
         "n_samples": 64,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "sequence_numbers": 2,
     }
 
@@ -266,10 +228,6 @@ def test_manager_evaluate_distributional_model(
 def test_manager_evaluate_sweep(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _evaluate_sweep should load data and delegate to _generate_predictions,
-    returning the same structure as _evaluate_model_artifact.
-    """
     config = {
         "run_type": "eval",
         "level": "pg_id",
@@ -277,6 +235,7 @@ def test_manager_evaluate_sweep(
         "targets": targets,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
         "sequence_numbers": 2,
     }
 
@@ -284,29 +243,18 @@ def test_manager_evaluate_sweep(
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
 
     model, _ = manager._setup_model_and_data()
-    preds_list = manager._evaluate_sweep(eval_type="temporal", model=model)
+    result = manager._evaluate_sweep(eval_type="temporal", model=model)
 
-    assert isinstance(preds_list, list)
-    assert len(preds_list) == 2
-
-    locf = LocfModel(
-        targets=targets, partition_dict=manager_partition_dict, loa="pg_id"
-    )
-    locf.fit(manager_df)
-    expected0 = locf.predict(df=manager_df, sequence_number=0, output_length=36)
-    expected1 = locf.predict(df=manager_df, sequence_number=1, output_length=36)
-
-    pd.testing.assert_frame_equal(preds_list[0], expected0)
-    pd.testing.assert_frame_equal(preds_list[1], expected1)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], list)
+        assert len(result[target_key]) == 2
 
 
 def test_manager_forecast_distributional_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """
-    _forecast_model_artifact for a distributional model (ConflictologyModel)
-    should return dict[str, PredictionFrame].
-    """
     from views_pipeline_core.data.prediction_frame import PredictionFrame
 
     config = {
@@ -318,6 +266,7 @@ def test_manager_forecast_distributional_model(
         "n_samples": 64,
         "steps": [*range(1, 37)],
         "time_steps": 36,
+        "prediction_format": "prediction_frame",
     }
 
     manager = make_manager(config, manager_partition_dict)

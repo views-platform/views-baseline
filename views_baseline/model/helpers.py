@@ -70,7 +70,7 @@ def filter_entities(entity_ids, valid_set, model_name: str) -> list:
 def build_identifier_arrays(
     entities, time_ids: list[int]
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build time and unit identifier arrays for distributional models.
+    """Build time and unit identifier arrays.
 
     Iterates entity→time to preserve ordering per ADR-011.
     """
@@ -81,3 +81,36 @@ def build_identifier_arrays(
             time_arr.append(tid)
             unit_arr.append(cid)
     return np.array(time_arr), np.array(unit_arr)
+
+
+def build_prediction_frame(
+    entity_ids,
+    time_ids: list[int],
+    targets: list[str],
+    value_fn: Callable[[Any, str], Any],
+) -> dict:
+    """Build a dict[str, PredictionFrame] on the (entity, time) grid.
+
+    Point-model counterpart of build_prediction_grid(). Returns one
+    PredictionFrame per target with y_pred shape (N, 1).
+
+    Iterates entity→time to match distributional model ordering (ADR-011).
+    """
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+    time_arr, unit_arr = build_identifier_arrays(entity_ids, time_ids)
+    n_rows = len(time_arr)
+
+    result = {}
+    for target in targets:
+        values = np.empty((n_rows, 1), dtype=np.float64)
+        idx = 0
+        for cid in entity_ids:
+            for _ in time_ids:
+                values[idx, 0] = value_fn(cid, target)
+                idx += 1
+        result[target] = PredictionFrame(
+            y_pred=values,
+            identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
+        )
+    return result

@@ -36,22 +36,24 @@ def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     model.fit(base_df_pgm)
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
     assert base_df_pgm.index.names[1] == "pg_id"
-    assert (preds.values == 0.0).all()
+    for target in targets:
+        assert (result[target].y_pred == 0.0).all()
 
 
 def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="country_id")
     model.fit(base_df_cm)
     output_length = 36
-    preds = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(preds, base_df_cm, targets, partition_dict, 0, output_length)
+    assert_prediction_structure(result, base_df_cm, targets, partition_dict, 0, output_length)
     assert base_df_cm.index.names[1] == "country_id"
-    assert (preds.values == 0.0).all()
+    for target in targets:
+        assert (result[target].y_pred == 0.0).all()
 
 
 def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -62,11 +64,12 @@ def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, target
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
-    time_idx = base_df_pgm.index.names[0]
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
 
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 # -----------------------------------------------------------------------
@@ -82,20 +85,18 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    # Expected last obs per entity from training part (< test_start)
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     expected_last = train_df.groupby(level=entity_idx)[targets].last()
 
-    # Check predictions align with last observation for each entity
-    for ent in expected_last.index:
-        for t in range(test_start, test_start + 2):
-            row = preds.loc[(t, ent)]
-            for target in targets:
-                assert row[f"pred_{target}"] == expected_last.loc[ent, target]
+    for target in targets:
+        pf = result[target]
+        for i in range(pf.y_pred.shape[0]):
+            uid = pf.identifiers["unit"][i]
+            assert pf.y_pred[i, 0] == expected_last.loc[uid, target]
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -105,11 +106,12 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
     test_start = partition_dict["test"][0]
     seq_num = 1
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
 
-    time_idx = base_df_pgm.index.names[0]
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 def test_locf_model_time_idx_is_not_tuple_before_fit(partition_dict, targets):
@@ -152,23 +154,21 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    # Expected means: per entity, mean of last `months` rows in train
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
     expected_means = train_df.groupby(level=entity_idx, group_keys=False).apply(
         lambda g: g.tail(months)[targets].mean()
     )
 
-    # Check predictions equal these means for each entity and time
-    for ent in expected_means.index:
-        for t in range(test_start, test_start + 2):
-            row = preds.loc[(t, ent)]
-            for target in targets:
-                assert row[f"pred_{target}"] == pytest.approx(expected_means.loc[ent, target])
+    for target in targets:
+        pf = result[target]
+        for i in range(pf.y_pred.shape[0]):
+            uid = pf.identifiers["unit"][i]
+            assert pf.y_pred[i, 0] == pytest.approx(expected_means.loc[uid, target])
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_prediction_structure(result, base_df_pgm, targets, partition_dict, 0, output_length)
 
 
 def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -185,11 +185,12 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
-    time_idx = base_df_pgm.index.names[0]
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
 
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 # -----------------------------------------------------------------------
@@ -662,8 +663,9 @@ def test_average_model_window_months_zero_produces_nan(base_df_pgm, partition_di
         targets=targets, window_months=0, partition_dict=partition_dict, loa="pg_id"
     )
     model.fit(base_df_pgm)
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
-    assert preds.isna().all().all()
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
+    for target in targets:
+        assert np.isnan(result[target].y_pred).all()
 
 
 def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, targets):

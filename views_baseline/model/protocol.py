@@ -7,6 +7,8 @@ import pandas as pd
 
 @runtime_checkable
 class BaselineModel(Protocol):
+    """All baseline models return dict[str, PredictionFrame] from predict()."""
+
     targets: list[str]
     partition_dict: dict
     loa: str
@@ -18,12 +20,12 @@ class BaselineModel(Protocol):
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame: ...
+    ) -> dict: ...
 
 
 @runtime_checkable
 class DistributionalBaselineModel(Protocol):
-    """Distributional baseline that returns dict[str, PredictionFrame] from predict()."""
+    """Distributional baseline with multi-sample y_pred (n_samples > 1)."""
 
     targets: list[str]
     partition_dict: dict

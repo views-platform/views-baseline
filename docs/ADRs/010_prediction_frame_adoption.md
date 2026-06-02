@@ -1,39 +1,40 @@
-# ADR-010: PredictionFrame Adoption and DataFrame Deprecation
+# ADR-010: PredictionFrame as Universal Output Format
 
-**Status:** Accepted
-**Date:** 2026-03-13
+**Status:** Superseded (originally Accepted 2026-03-13; updated 2026-06-02)
+**Date:** 2026-06-02
 **Deciders:** Project maintainers
 
 ---
 
 ## Context
 
-The views-baseline package produces two structurally different output types depending on the model category:
+As of 2026-06-02, all 5 baseline model classes return `dict[str, PredictionFrame]` from `predict()`. Point models produce `y_pred` with shape `(N, 1)` (single deterministic value); distributional models produce `(N, n_samples)`.
 
-- **Point forecast models** (ZeroModel, LocfModel, AverageModel) return a `pd.DataFrame` indexed by `(time, entity)` with columns `pred_{target}`. These are built by `build_prediction_grid` in `model/helpers.py`.
-- **Distributional models** (ConflictologyModel, MixtureBaseline) return `dict[str, PredictionFrame]` — one `PredictionFrame` per target, each containing a `y_pred` array of shape `(N, n_samples)` and an `identifiers` dict with `time` and `unit` arrays.
+Previously (ADR-010 original, 2026-03-13), only distributional models returned PredictionFrame while point models returned `pd.DataFrame`. This created a dual dispatch in the manager (`isinstance(model, DistributionalBaselineModel)`) and two code paths in pipeline-core. The migration was motivated by:
 
-Historically, the distributional models returned `pd.DataFrame` with list-valued cells (each cell containing a list of `n_samples` draws). This was removed as dead code following the adoption of `PredictionFrame` upstream in views-pipeline-core (ADR-033 in that project).
-
-The current state works but the decision has not been formally recorded: is `PredictionFrame` the permanent canonical output for distributional models? Should point models also migrate?
+1. **12 of 21 deployed baseline models already used PredictionFrame** — all MixtureBaseline and ConflictologyModel configs in views-models had `prediction_format: "prediction_frame"`.
+2. **The dual dispatch was fragile** — pipeline-core's external dispatch (config-based) and the baseline manager's internal dispatch (isinstance-based) aligned by coincidence, not by contract.
+3. **Hydranet completed the same migration** (ADR-047) as a clean break with no dual-format period.
 
 ---
 
 ## Decision
 
-**`PredictionFrame` is the canonical output format for distributional models. No DataFrame fallback is provided or planned.**
+**`PredictionFrame` is the canonical output format for ALL baseline models. No DataFrame output path exists.**
 
-### In scope
+### What changed
 
-1. `ConflictologyModel.predict()` returns `dict[str, PredictionFrame]` — one PF per target.
-2. `MixtureBaseline.predict()` returns `dict[str, PredictionFrame]` — same structure.
-3. `PredictionFrame` is lazy-imported inside `predict()` methods to keep `model/` testable without views-pipeline-core installed (ADR-002 topology constraint).
-4. The manager dispatches on `isinstance(model, DistributionalBaselineModel)` to handle the two output types (ADR-003 declaration principle).
+1. All 5 model classes return `dict[str, PredictionFrame]` from `predict()`.
+2. Point models use `build_prediction_frame()` in `model/helpers.py` — a new helper that mirrors `build_prediction_grid()` but outputs PredictionFrame with `y_pred` shape `(N, 1)`.
+3. The `isinstance(model, DistributionalBaselineModel)` dispatch in the manager is removed. One code path for all models.
+4. The `BaselineModel` protocol's `predict()` return type is `dict` (was `pd.DataFrame`).
+5. `prediction_format` is added to `ReproducibilityGate.Config.CORE_GENOME`.
 
-### Out of scope
+### What stays the same
 
-- Point forecast models (ZeroModel, LocfModel, AverageModel) continue to return `pd.DataFrame` via `build_prediction_grid`. Migration to `PredictionFrame` is not part of this decision.
-- The internal structure of `PredictionFrame` (column names, metadata) is owned by views-pipeline-core, not this project.
+- `DistributionalBaselineModel` protocol is retained for semantic classification (marks models with `distributional = True`), but is no longer used for dispatch.
+- `build_prediction_grid()` is retained in `helpers.py` for backward compatibility but is no longer called by any model class.
+- The internal structure of `PredictionFrame` is owned by views-pipeline-core.
 
 ---
 

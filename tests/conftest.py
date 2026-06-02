@@ -12,6 +12,8 @@ MANAGER_BASE_CONFIG = {
     "targets": ["synth_target"],
     "regression_targets": ["synth_target"],
     "regression_point_metrics": ["MSE"],
+    "prediction_format": "prediction_frame",
+    "steps": [*range(1, 37)],
 }
 
 MANAGER_PARTITION = {"test": (120, 125)}
@@ -107,17 +109,31 @@ def make_manager(config, partition_dict):
 
 
 def assert_prediction_structure(
-    preds, df, targets, partition_dict, sequence_number, output_length
+    result, df, targets, partition_dict, sequence_number, output_length
 ):
-    """Assert common structural properties of point-model prediction DataFrames."""
-    time_idx, entity_idx = df.index.names
+    """Assert common structural properties of prediction PredictionFrame dicts."""
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
     test_start = partition_dict["test"][0]
     prediction_start = test_start + sequence_number
     prediction_end = prediction_start + output_length - 1
 
-    assert list(preds.columns) == [f"pred_{t}" for t in targets]
-    assert preds.index.names == [time_idx, entity_idx]
-    assert preds.index.get_level_values(time_idx).min() == prediction_start
-    assert preds.index.get_level_values(time_idx).max() == prediction_end
-    pred_time_ids = preds.index.get_level_values(time_idx).unique().tolist()
-    assert pred_time_ids == list(range(prediction_start, prediction_end + 1))
+    assert isinstance(result, dict)
+    assert set(result.keys()) == set(targets)
+
+    train_end = test_start - 1
+    time_idx = df.index.names[0]
+    entity_idx = df.index.names[1]
+    n_entities = (
+        df.loc[df.index.get_level_values(time_idx) == train_end]
+        .index.get_level_values(entity_idx)
+        .nunique()
+    )
+
+    for target in targets:
+        pf = result[target]
+        assert isinstance(pf, PredictionFrame)
+        assert pf.y_pred.shape == (n_entities * output_length, 1)
+        time_vals = pf.identifiers["time"]
+        assert min(time_vals) == prediction_start
+        assert max(time_vals) == prediction_end

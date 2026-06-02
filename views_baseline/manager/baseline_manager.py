@@ -6,7 +6,6 @@ from views_pipeline_core.managers.model import ForecastingModelManager, ModelPat
 
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
-from views_baseline.model.protocol import DistributionalBaselineModel
 
 logger = logging.getLogger(__name__)
 
@@ -66,29 +65,19 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         """
         Generate predictions for all sequence numbers in an evaluation.
 
-        Dispatches to the appropriate predict method based on model type:
-        distributional models return Dict[str, list[PredictionFrame]],
-        point models return list[DataFrame].
+        All models return Dict[str, PredictionFrame], so this accumulates
+        into Dict[str, list[PredictionFrame]] across sequence numbers.
         """
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
         output_length = self.config["time_steps"]
 
-        if isinstance(model, DistributionalBaselineModel):
-            predictions = {}
-            for seq_num in range(sequence_numbers):
-                pf_dict = model.predict(
-                    df=df, sequence_number=seq_num, output_length=output_length
-                )
-                for target, pf in pf_dict.items():
-                    predictions.setdefault(target, []).append(pf)
-            return predictions
-
-        predictions = []
+        predictions = {}
         for seq_num in range(sequence_numbers):
-            preds = model.predict(
+            pf_dict = model.predict(
                 df=df, sequence_number=seq_num, output_length=output_length
             )
-            predictions.append(preds)
+            for target, pf in pf_dict.items():
+                predictions.setdefault(target, []).append(pf)
         return predictions
 
     def _evaluate_model_artifact(self, eval_type: str, artifact_name: str = None):
@@ -121,11 +110,6 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
         output_length = self.config["time_steps"]
-
-        if isinstance(self.model, DistributionalBaselineModel):
-            return self.model.predict(
-                df=df_source, sequence_number=0, output_length=output_length
-            )
 
         return self.model.predict(
             df=df_source, sequence_number=0, output_length=output_length

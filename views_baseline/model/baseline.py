@@ -7,7 +7,7 @@ import pandas as pd
 
 from views_baseline.model.helpers import (
     build_identifier_arrays,
-    build_prediction_grid,
+    build_prediction_frame,
     build_time_grid,
     filter_entities,
 )
@@ -36,7 +36,7 @@ class ZeroModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Predicts zero for each target variable over output_length time steps
         starting from test_start + sequence_number.
@@ -53,9 +53,7 @@ class ZeroModel:
         )
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -94,7 +92,7 @@ class LocfModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Repeats the last observed value for each target and entity over the forecast horizon.
         """
@@ -111,9 +109,7 @@ class LocfModel:
         entity_ids = filter_entities(entity_ids, self.last_observations.index, "LocfModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -160,7 +156,7 @@ class AverageModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Repeats the average over the last m months for each target
         and entity over the forecast horizon.
@@ -178,9 +174,7 @@ class AverageModel:
         entity_ids = filter_entities(entity_ids, self.mean.index, "AverageModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
