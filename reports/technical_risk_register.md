@@ -4,7 +4,7 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-06-02                           |
+| Last Updated      | 2026-06-04                           |
 | Total Concerns    | 13                                   |
 | Open Concerns     | 10                                   |
 | Resolved Concerns | 3                                    |
@@ -19,6 +19,8 @@
 | 2 | High | Structural fragility that will cause failures under realistic change scenarios. |
 | 3 | Medium | Maintainability or coupling issues that increase cost of change. |
 | 4 | Low | Code quality concerns that do not affect correctness or reliability. |
+
+Tiers reflect **expected risk** (impact × likelihood), not impact alone. A silent-correctness risk with a low-likelihood trigger can sit at Tier 2 rather than Tier 1 — the narrative should state the impact-vs-likelihood reasoning when it does (see C-05, C-13).
 
 ---
 
@@ -51,6 +53,8 @@ See also C-05 (related: same code locations, different problem — C-03 is dupli
 | Location | `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` |
 
 Every model class extracts `self.time_idx = df.index.names[0]` and `self.entity_idx = df.index.names[1]` in `fit()` without validating that the DataFrame has a 2-level MultiIndex or that the levels are in the expected `(time, entity)` order. If the index levels are reversed, the model would set `self.time_idx` to the entity name and vice versa. Subsequent time-based filtering (e.g., `df.index.get_level_values(self.time_idx) < test_start`) would compare entity IDs against a month boundary, producing structurally valid but semantically wrong predictions with no error signal. Currently mitigated only by the convention that views-pipeline-core's data loader always produces `(time, entity)` ordering.
+
+**Tier rationale (impact vs. likelihood):** The *impact* is Tier 1 — this is the register's clearest silent-correctness case (semantically wrong predictions, no error). It sits at Tier 2 because *likelihood* is low: the `(time, entity)` ordering is governed by a stable upstream convention. If that convention ever becomes configurable or a code path begins constructing model input DataFrames directly, re-evaluate for Tier 1.
 
 See also C-03 (related: same code locations, C-03 addresses duplication, C-05 addresses validation absence).
 
@@ -140,6 +144,8 @@ The `seed` parameter for `ConflictologyModel` and `MixtureBaseline` has a defaul
 
 GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame but do not track ensemble manager compatibility as a prerequisite. Pipeline-core has two separate ensemble managers: `EnsembleManager` (works exclusively with `pd.DataFrame`, loads `.parquet` prediction files) and `PredictionFrameEnsembleManager` (works exclusively with `PredictionFrame`, loads `.npy` files). After migration, baseline predictions can only be consumed by the PF ensemble. No issue verifies which ensemble currently consumes baseline outputs or tracks the ensemble config change as a dependency. This is the critical integration point — without it, the migration lands cleanly in views-baseline but breaks the monthly prediction cycle at ensemble evaluation time.
 
+**Status update (review-rr 2026-06-04):** Investigation during the migration established that no ensemble lists any baseline model as a constituent (`models` list) — baselines appear only in `regression_point_baselines`/`regression_sample_baselines` for evaluation benchmarking. The realistic likelihood of a production ensemble break is therefore much lower than first assessed. Prerequisite tracked in GitHub issue #12. Keep open until the migration (PR #15) merges and issue #12 confirms the consuming ensemble's manager/format.
+
 ---
 
 ### C-12: `skip_predictions_delivery` config key added without effect analysis
@@ -153,6 +159,8 @@ GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame
 | Location | GitHub issue #10, `views_pipeline_core/managers/forecasting/stage.py` (delivery logic), `views_pipeline_core/managers/prediction/io.py` (save path) |
 
 Issue #10 requires adding `skip_predictions_delivery: True` to all PredictionFrame baseline configs because pipeline-core's `CoreConfigSniffer` mandates this key when `prediction_format == "prediction_frame"`. However, views-hydranet — the only repo that completed this migration — does not use `skip_predictions_delivery` anywhere in its codebase. The flag's actual effect on baseline's simpler delivery path has not been analyzed. It may suppress the standard prediction file write in `ForecastingStage`, which baseline's ensemble integration may depend on. Adding config keys copied from a sniffer's mandatory list without understanding their runtime effect risks silently disabling file output.
+
+**Status update (review-rr 2026-06-04):** The PFE production roadmap (pipeline-core `2026-06-01_pfe_production_roadmap.md` §4.4) clarifies that `skip_predictions_delivery` controls **only Track B** (the Arrow/parquet write); Track A+ (`.npy` for PF-ensemble consumption) is always written. PR #76 applied `True` to all 9 point-model configs, matching the deployed ranger models. The runtime effect is now understood; residual concern is only confirming no current downstream consumer reads baseline Track-B parquet. Likelihood downgraded; keep open until that consumer check is done.
 
 See also C-11 (related: both concern the PredictionFrame migration's downstream effects).
 
@@ -183,7 +191,7 @@ See also C-11 (related: both concern the PredictionFrame migration's interaction
 | ID | D-01 |
 | Source | expert-review (2026-06-02) |
 | Perspectives | Feathers (gradual — the dual-format seam enables per-model testing and rollback if ensemble integration fails), Hickey/Ousterhout (clean break — baseline has 5 trivial models and 880 LOC, transient dual-format complexity is not justified, hydranet proved the direct switch works at larger scale), Beck (gradual only if integration-tested at each step; without an integration test, gradual is just slow risk accumulation) |
-| Resolution | Unresolved. Recommend clean break given baseline's small surface area and hydranet's successful precedent (ADR-047). |
+| Resolution | **Resolved in practice (2026-06-04).** Clean break implemented in PR #15: all point models switched directly to `dict[str, PredictionFrame]`, the isinstance dispatch was removed, and no dual-format path was introduced. Final on merge of PR #15. |
 
 ---
 
@@ -205,7 +213,7 @@ See also C-11 (related: both concern the PredictionFrame migration's interaction
 | ID | D-03 |
 | Source | expert-review (2026-06-02) |
 | Perspectives | Feathers (event-triggered: un-defer baseline issues #8-#11 when golden_hour issue #126 closes — clear, concrete, no drift), Ousterhout (time-boxed: proceed independently if golden_hour hasn't shipped by a deadline — prevents indefinite blocking on another team's timeline), Hickey (permanent deferral until someone actually needs baselines in a PFE ensemble — don't build for hypothetical requirements; baselines currently serve only as evaluation benchmarks, not ensemble constituents) |
-| Resolution | Unresolved. Recommend event-triggered with time-box fallback: "Un-defer when pipeline-core golden_hour #126 closes, or by 2026-07-15, whichever first." |
+| Resolution | **Moot — overtaken by events (2026-06-04).** The deferral never took effect: the baseline migration proceeded directly (PR #15 in views-baseline, PR #76 in views-models) rather than waiting on golden_hour. The deferral-mechanism question (event-triggered vs time-boxed vs permanent) is therefore no longer live. Retained for audit trail. |
 
 ---
 
