@@ -40,7 +40,7 @@ The class attribute `distributional = True` routes the output through the distri
 **`predict(df, sequence_number, output_length)`**:
 - Constructs entity list from `entity_ids` filtered to those in `local_pool`.
 - Logs `WARNING` on entity drops.
-- Returns `{}` if no entities have pools.
+- Raises a descriptive `ValueError` via `require_entities` if no entities have pools (fail-loud — consistent with all baseline models).
 - Returns `dict[str, PredictionFrame]` — one PF per target. Shape `(N, n_samples)` where `N = len(entities_with_pool) * output_length`.
 - RNG is re-initialised via `np.random.default_rng(self.seed)` at the start of each `predict()` call. Iteration order is entity→time→target for RNG consistency.
 
@@ -66,7 +66,7 @@ The class attribute `distributional = True` routes the output through the distri
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.entity_ids`, `self.local_pool`, `self.global_pool`. No external side effects.
-- **`predict()`**: Returns `dict[str, PredictionFrame]` (empty dict if no entities). Emits `WARNING` on entity drops. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame`. No other external side effects.
+- **`predict()`**: Returns `dict[str, PredictionFrame]`. Raises `ValueError` (via `require_entities`) if no entities have pools. Emits `WARNING` on entity drops. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame`. No other external side effects.
 
 ---
 
@@ -81,7 +81,7 @@ The class attribute `distributional = True` routes the output through the distri
 | `window_months <= 0` | Empty local pool arrays | `tail(0)` produces empty arrays; sampling from empty raises `ValueError` in numpy at predict time. |
 | `global_pool` empty for a target | Silent fallback | `_sample()` uses local-only path. No warning. |
 | Entities absent from `local_pool` at predict time | `WARNING` log | Dropped from output. |
-| No entities with pools | Silent `{}` return | Caller must handle. |
+| No entities with pools | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud — consistent with all baseline models; an empty result would otherwise surface as a `StopIteration` deep in pipeline-core's evaluation path. |
 | `views_pipeline_core` not installed | `ImportError` at predict time | Lazy import defers this error. |
 
 ---

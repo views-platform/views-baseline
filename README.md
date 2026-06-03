@@ -28,7 +28,7 @@ Models are fitted automatically via `fit()` before generating predictions. Fitte
 
 ### Point Forecast Models
 
-These models return a `pd.DataFrame` indexed by `(time, entity)` with columns `pred_<target>`.
+These models return `dict[str, PredictionFrame]` — one `PredictionFrame` per target with `y_pred` shape `(N, 1)` (single deterministic value).
 
 #### ZeroModel
 

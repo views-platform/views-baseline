@@ -16,7 +16,7 @@
 ## Non-Goals
 
 - Does not weight observations by recency (e.g., no exponential weighting).
-- Does not produce distributional output. The class attribute `distributional` is absent.
+- Does not produce distributional output. Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` — a single deterministic value per cell, not multiple samples.
 - Does not validate that `window_months` is positive or that it is less than the available training history length.
 
 ---
@@ -24,9 +24,9 @@
 ## Responsibilities and Guarantees
 
 - `fit(df)` filters to `time_idx < test_start`, sorts by `[entity_idx, time_idx]`, then applies `groupby(entity_idx).apply(lambda g: g.tail(window_months)[targets].mean())`. The result is stored as `self.mean` (a DataFrame indexed by entity, columns = targets). Returns `self`.
-- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `self.mean`, and returns a prediction grid where every cell for entity `cid` and target `t` has the value `self.mean.loc[cid, t]`.
+- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `self.mean`, and returns `dict[str, PredictionFrame]` via `build_prediction_frame` where every cell for entity `cid` and target `t` has the value `self.mean.loc[cid, t]`.
 - If entities in `entity_ids` are absent from `self.mean`, a `WARNING` is logged with the count of dropped entities.
-- Output DataFrame structure contract is identical to `ZeroModel` and `LocfModel`: MultiIndex `(time_idx, entity_idx)`, columns `pred_{target}`, sorted.
+- Output structure contract is identical to all baseline models: one key per target, each value a `PredictionFrame` with `identifiers` dict containing `"time"` and `"unit"` arrays.
 
 ---
 
@@ -49,7 +49,7 @@ When `window_months` exceeds the number of training rows available for an entity
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.mean`. Emits an `INFO` log. No external side effects.
-- **`predict()`**: Returns a `pd.DataFrame`. Emits an `INFO` log and, if entities are dropped, a `WARNING`. No external side effects.
+- **`predict()`**: Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)`. Emits an `INFO` log and, if entities are dropped, a `WARNING`. No external side effects.
 
 ---
 
@@ -63,14 +63,14 @@ When `window_months` exceeds the number of training rows available for an entity
 | `window_months <= 0` | Undefined behaviour | `tail(0)` returns empty; `.mean()` on empty returns `NaN`. Predictions silently become `NaN`. |
 | `window_months` exceeds entity history length | Silent degradation | Mean computed over all available rows; no warning emitted. |
 | Entities absent from `self.mean` at predict time | `WARNING` log | Entity dropped from output. |
-| All entities dropped | Silent empty DataFrame | Valid empty result from `build_prediction_grid`. |
+| All entities dropped | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud: a prediction over zero entities cannot satisfy the evaluation contract (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
 
 ---
 
 ## Boundaries and Interactions
 
-- **Depends on:** `views_baseline.model.helpers.build_prediction_grid`.
-- **No external dependencies** beyond standard library, pandas, and numpy (transitively via pandas).
+- **Depends on:** `views_baseline.model.helpers.build_prediction_frame`. `PredictionFrame` is lazy-imported from `views-pipeline-core` inside the helper.
+- **External dependency:** `views-pipeline-core` (via `PredictionFrame`, lazy-imported at call time).
 - **Instantiated by:** `BaselineModelCatalog._get_average_model()`, which reads `config["window_months"]`.
 
 ---

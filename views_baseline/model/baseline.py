@@ -7,9 +7,10 @@ import pandas as pd
 
 from views_baseline.model.helpers import (
     build_identifier_arrays,
-    build_prediction_grid,
+    build_prediction_frame,
     build_time_grid,
     filter_entities,
+    require_entities,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ class ZeroModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Predicts zero for each target variable over output_length time steps
         starting from test_start + sequence_number.
@@ -51,11 +52,10 @@ class ZeroModel:
             .index.get_level_values(self.entity_idx)
             .unique()
         )
+        require_entities(entity_ids, "ZeroModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -94,7 +94,7 @@ class LocfModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Repeats the last observed value for each target and entity over the forecast horizon.
         """
@@ -109,11 +109,10 @@ class LocfModel:
             .unique()
         )
         entity_ids = filter_entities(entity_ids, self.last_observations.index, "LocfModel")
+        require_entities(entity_ids, "LocfModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -160,7 +159,7 @@ class AverageModel:
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> pd.DataFrame:
+    ) -> dict:
         """
         Repeats the average over the last m months for each target
         and entity over the forecast horizon.
@@ -176,11 +175,10 @@ class AverageModel:
             .unique()
         )
         entity_ids = filter_entities(entity_ids, self.mean.index, "AverageModel")
+        require_entities(entity_ids, "AverageModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
-        return build_prediction_grid(
-            time_idx=self.time_idx,
-            entity_idx=self.entity_idx,
+        return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
@@ -264,9 +262,7 @@ class ConflictologyModel:
         entities_with_history = filter_entities(
             self.entity_ids, self.hist_per_entity, "ConflictologyModel"
         )
-
-        if not entities_with_history:
-            return {}
+        require_entities(entities_with_history, "ConflictologyModel")
 
         time_arr, unit_arr = build_identifier_arrays(entities_with_history, time_ids)
         n_rows = len(time_arr)
@@ -385,9 +381,7 @@ class MixtureBaseline:
         entities_with_pool = filter_entities(
             self.entity_ids, self.local_pool, "MixtureBaseline"
         )
-
-        if not entities_with_pool:
-            return {}
+        require_entities(entities_with_pool, "MixtureBaseline")
 
         time_arr, unit_arr = build_identifier_arrays(entities_with_pool, time_ids)
         n_rows = len(time_arr)

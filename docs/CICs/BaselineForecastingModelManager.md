@@ -11,7 +11,7 @@
 
 `BaselineForecastingModelManager` orchestrates the full lifecycle of a baseline model within the VIEWS pipeline by extending `views_pipeline_core`'s `ForecastingModelManager`. It is the single entry point for the pipeline to set up, train, evaluate, and forecast using any model registered in `BaselineModelCatalog`. It does not implement model logic itself; instead, it delegates model selection and validation to the catalog, delegates data loading to `_data_loader`, and delegates config management to `_config_manager`.
 
-The manager also serves as the dispatch layer between point models (which return `list[pd.DataFrame]`) and distributional models (which return `dict[target, list[PredictionFrame]]`), routing output based on `isinstance(model, DistributionalBaselineModel)`.
+All models now return `dict[str, PredictionFrame]` from `predict()`. The manager has a single code path — no type-based dispatch.
 
 ---
 
@@ -41,8 +41,7 @@ The manager also serves as the dispatch layer between point models (which return
 
 **`_generate_predictions(model, df, eval_type)`**:
 - Calls `_resolve_evaluation_sequence_number(eval_type)` to determine iteration count.
-- If `isinstance(model, DistributionalBaselineModel)`: iterates over sequence numbers, calls `model.predict(df=df, sequence_number=seq_num)` for each, accumulates `dict[target, list[PredictionFrame]]`.
-- Otherwise: iterates and accumulates `list[pd.DataFrame]`.
+- Iterates over sequence numbers, calls `model.predict(df=df, sequence_number=seq_num, output_length=...)` for each, accumulates `dict[str, list[PredictionFrame]]`.
 
 **`_evaluate_model_artifact(eval_type, artifact_name)`**:
 - If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.

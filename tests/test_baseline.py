@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import assert_prediction_structure, make_dummy_df
+from conftest import assert_point_prediction_structure, make_dummy_df
 
 from views_baseline.model.baseline import (
     AverageModel,
@@ -36,22 +36,28 @@ def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
     model.fit(base_df_pgm)
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
     assert base_df_pgm.index.names[1] == "pg_id"
-    assert (preds.values == 0.0).all()
+    for target in targets:
+        assert (result[target].y_pred == 0.0).all()
 
 
 def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="country_id")
     model.fit(base_df_cm)
     output_length = 36
-    preds = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
 
-    assert_prediction_structure(preds, base_df_cm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_cm, targets, partition_dict, 0, output_length
+    )
     assert base_df_cm.index.names[1] == "country_id"
-    assert (preds.values == 0.0).all()
+    for target in targets:
+        assert (result[target].y_pred == 0.0).all()
 
 
 def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -62,11 +68,12 @@ def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, target
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
-    time_idx = base_df_pgm.index.names[0]
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
 
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 # -----------------------------------------------------------------------
@@ -82,20 +89,20 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    # Expected last obs per entity from training part (< test_start)
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     expected_last = train_df.groupby(level=entity_idx)[targets].last()
 
-    # Check predictions align with last observation for each entity
-    for ent in expected_last.index:
-        for t in range(test_start, test_start + 2):
-            row = preds.loc[(t, ent)]
-            for target in targets:
-                assert row[f"pred_{target}"] == expected_last.loc[ent, target]
+    for target in targets:
+        pf = result[target]
+        for i in range(pf.y_pred.shape[0]):
+            uid = pf.identifiers["unit"][i]
+            assert pf.y_pred[i, 0] == expected_last.loc[uid, target]
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -105,11 +112,12 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
     test_start = partition_dict["test"][0]
     seq_num = 1
     output_length = 36
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
 
-    time_idx = base_df_pgm.index.names[0]
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 def test_locf_model_time_idx_is_not_tuple_before_fit(partition_dict, targets):
@@ -152,23 +160,23 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
     time_idx, entity_idx = base_df_pgm.index.names
     test_start = partition_dict["test"][0]
 
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
 
-    # Expected means: per entity, mean of last `months` rows in train
     train_df = base_df_pgm[base_df_pgm.index.get_level_values(time_idx) < test_start]
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
     expected_means = train_df.groupby(level=entity_idx, group_keys=False).apply(
         lambda g: g.tail(months)[targets].mean()
     )
 
-    # Check predictions equal these means for each entity and time
-    for ent in expected_means.index:
-        for t in range(test_start, test_start + 2):
-            row = preds.loc[(t, ent)]
-            for target in targets:
-                assert row[f"pred_{target}"] == pytest.approx(expected_means.loc[ent, target])
+    for target in targets:
+        pf = result[target]
+        for i in range(pf.y_pred.shape[0]):
+            uid = pf.identifiers["unit"][i]
+            assert pf.y_pred[i, 0] == pytest.approx(expected_means.loc[uid, target])
 
-    assert_prediction_structure(preds, base_df_pgm, targets, partition_dict, 0, output_length)
+    assert_point_prediction_structure(
+        result, base_df_pgm, targets, partition_dict, 0, output_length
+    )
 
 
 def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -185,11 +193,12 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
     seq_num = 2
     output_length = 36
 
-    preds = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
-    time_idx = base_df_pgm.index.names[0]
+    result = model.predict(df=base_df_pgm, sequence_number=seq_num, output_length=output_length)
+    pf = result[targets[0]]
+    time_vals = pf.identifiers["time"]
 
-    assert preds.index.get_level_values(time_idx).min() == test_start + seq_num
-    assert preds.index.get_level_values(time_idx).max() == test_start + seq_num + output_length - 1
+    assert min(time_vals) == test_start + seq_num
+    assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
 # -----------------------------------------------------------------------
@@ -662,8 +671,9 @@ def test_average_model_window_months_zero_produces_nan(base_df_pgm, partition_di
         targets=targets, window_months=0, partition_dict=partition_dict, loa="pg_id"
     )
     model.fit(base_df_pgm)
-    preds = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
-    assert preds.isna().all().all()
+    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
+    for target in targets:
+        assert np.isnan(result[target].y_pred).all()
 
 
 def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, targets):
@@ -758,6 +768,109 @@ def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, target
         model.predict(df=df_predict, sequence_number=0, output_length=5)
 
     assert "AverageModel: 1 entities dropped" in caplog.text
+
+
+# -----------------------------------------------------------------------
+# Empty-entity: fail loud (all 5 models + helper)
+# -----------------------------------------------------------------------
+
+
+def test_require_entities_raises_on_empty():
+    from views_baseline.model.helpers import require_entities
+
+    with pytest.raises(ValueError, match="no entities to predict"):
+        require_entities([], "TestModel")
+
+
+def test_require_entities_noop_when_present():
+    from views_baseline.model.helpers import require_entities
+
+    assert require_entities([1, 2], "TestModel") is None
+
+
+def _train_end_only_entity(train_end, entity_id):
+    """A predict df whose only train_end row holds a single entity."""
+    return pd.DataFrame(
+        {"y1": [99.0], "y2": [99.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end, entity_id)], names=["month_id", "pg_id"]
+        ),
+    )
+
+
+def test_zero_model_raises_when_no_entities_at_train_end(
+    base_df_pgm, partition_dict, targets
+):
+    """ZeroModel: no rows at train_end → fail loud, not a cryptic shape error."""
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(base_df_pgm)
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    # predict df has rows only well before train_end → no entities at train_end
+    df_predict = pd.DataFrame(
+        {"y1": [1.0], "y2": [2.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end - 5, 1)], names=["month_id", "pg_id"]
+        ),
+    )
+    with pytest.raises(ValueError, match="ZeroModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_locf_model_raises_when_all_entities_dropped(
+    base_df_pgm, partition_dict, targets
+):
+    """LocfModel: every train_end entity absent from fitted state → fail loud."""
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(base_df_pgm)  # fitted on entities {1, 2}
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    df_predict = _train_end_only_entity(train_end, 3)  # only unknown entity 3
+    with pytest.raises(ValueError, match="LocfModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_average_model_raises_when_all_entities_dropped(
+    base_df_pgm, partition_dict, targets
+):
+    """AverageModel: every train_end entity absent from fitted state → fail loud."""
+    model = AverageModel(
+        targets=targets, window_months=3, partition_dict=partition_dict, loa="pg_id"
+    )
+    model.fit(base_df_pgm)  # fitted on entities {1, 2}
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    df_predict = _train_end_only_entity(train_end, 3)
+    with pytest.raises(ValueError, match="AverageModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_conflictology_raises_when_no_entities(base_df_pgm, partition_dict, targets):
+    """ConflictologyModel: empty fitted pool → fail loud (was a silent return {})."""
+    model = ConflictologyModel(
+        targets=targets, window_months=4, partition_dict=partition_dict,
+        loa="pg_id", n_samples=10,
+    )
+    model.fit(base_df_pgm)
+    model.entity_ids = []  # force the all-dropped state
+    with pytest.raises(ValueError, match="ConflictologyModel: no entities to predict"):
+        model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
+
+
+def test_mixture_raises_when_no_entities(partition_dict, targets):
+    """MixtureBaseline: empty fitted pool → fail loud (was a silent return {})."""
+    df = make_mixture_df()
+    model = MixtureBaseline(
+        targets=targets, window_months=4, lambda_mix=0.05,
+        n_samples=10, partition_dict=partition_dict, loa="pg_id",
+    )
+    model.fit(df)
+    model.entity_ids = []  # force the all-dropped state
+    with pytest.raises(ValueError, match="MixtureBaseline: no entities to predict"):
+        model.predict(df=df, sequence_number=0, output_length=5)
 
 
 # -----------------------------------------------------------------------

@@ -67,10 +67,34 @@ def filter_entities(entity_ids, valid_set, model_name: str) -> list:
     return filtered
 
 
+def require_entities(entities, model_name: str) -> None:
+    """Fail loud when there are no entities to predict for.
+
+    A prediction over zero entities cannot satisfy the pipeline's evaluation
+    contract (it requires at least one (entity, time) cell per target) and would
+    otherwise surface as an opaque error far from the cause — either
+    ``ValueError: y_pred must have at least one row`` when constructing a
+    PredictionFrame, or a ``StopIteration`` deep inside pipeline-core's
+    streaming evaluation. Raising here names the actual cause at the model
+    boundary.
+
+    Reached when the data has no rows at the train/test boundary, or when every
+    entity present at ``train_end`` was absent from the fitted state and dropped
+    by :func:`filter_entities`.
+    """
+    if len(entities) == 0:
+        raise ValueError(
+            f"{model_name}: no entities to predict. The data has no rows at the "
+            f"train/test boundary (train_end), or all entities present at "
+            f"train_end were absent from the fitted state and were dropped. "
+            f"A prediction cannot be constructed."
+        )
+
+
 def build_identifier_arrays(
     entities, time_ids: list[int]
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build time and unit identifier arrays for distributional models.
+    """Build time and unit identifier arrays.
 
     Iterates entity→time to preserve ordering per ADR-011.
     """
@@ -81,3 +105,36 @@ def build_identifier_arrays(
             time_arr.append(tid)
             unit_arr.append(cid)
     return np.array(time_arr), np.array(unit_arr)
+
+
+def build_prediction_frame(
+    entity_ids,
+    time_ids: list[int],
+    targets: list[str],
+    value_fn: Callable[[Any, str], Any],
+) -> dict:
+    """Build a dict[str, PredictionFrame] on the (entity, time) grid.
+
+    Point-model counterpart of build_prediction_grid(). Returns one
+    PredictionFrame per target with y_pred shape (N, 1).
+
+    Iterates entity→time to match distributional model ordering (ADR-011).
+    """
+    from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+    time_arr, unit_arr = build_identifier_arrays(entity_ids, time_ids)
+    n_rows = len(time_arr)
+
+    result = {}
+    for target in targets:
+        values = np.empty((n_rows, 1), dtype=np.float64)
+        idx = 0
+        for cid in entity_ids:
+            for _ in time_ids:
+                values[idx, 0] = value_fn(cid, target)
+                idx += 1
+        result[target] = PredictionFrame(
+            y_pred=values,
+            identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
+        )
+    return result

@@ -16,7 +16,7 @@
 ## Non-Goals
 
 - Does not learn from training data in any sense. `fit()` records only the index names from the DataFrame; no statistics are computed.
-- Does not produce distributional output. The class attribute `distributional` is absent; the manager dispatches it through the point-model code path.
+- Does not produce distributional output. Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` — a single deterministic value per cell, not multiple samples.
 - Does not perform any entity filtering beyond reading which entities were present at `train_end`.
 
 ---
@@ -24,10 +24,9 @@
 ## Responsibilities and Guarantees
 
 - `fit(df)` records `time_idx` and `entity_idx` from `df.index.names[0]` and `df.index.names[1]` respectively. Returns `self`.
-- `predict(df, sequence_number, output_length)` constructs the entity list from rows where `time_idx == train_end` (where `train_end = partition_dict["test"][0] - 1`), then builds and returns a prediction grid via `build_prediction_grid` with `value_fn = lambda cid, target: 0.0`.
-- The returned DataFrame always has columns `pred_{target}` for each target in `self.targets`, with all values exactly `0.0`.
+- `predict(df, sequence_number, output_length)` constructs the entity list from rows where `time_idx == train_end` (where `train_end = partition_dict["test"][0] - 1`), then builds and returns `dict[str, PredictionFrame]` via `build_prediction_frame` with `value_fn = lambda cid, target: 0.0`.
+- The returned dict has one key per target. Each `PredictionFrame` has `y_pred` shape `(N, 1)` with all values exactly `0.0`, and `identifiers` with `"time"` and `"unit"` arrays.
 - The time range in the output is `[test_start + sequence_number, test_start + sequence_number + output_length - 1]` inclusive.
-- The MultiIndex of the output has names `[time_idx, entity_idx]` and is sorted.
 
 ---
 
@@ -50,7 +49,7 @@
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx` and `self.entity_idx`. No external side effects.
-- **`predict()`**: Returns a `pd.DataFrame` with MultiIndex `(time_idx, entity_idx)` and columns `pred_{target}` for all targets. All prediction values are `0.0`. Emits an `INFO` log line via module logger.
+- **`predict()`**: Returns `dict[str, PredictionFrame]`. Each PredictionFrame has `y_pred` shape `(N, 1)` with all values `0.0`, and `identifiers` dict with `"time"` and `"unit"` arrays. Emits an `INFO` log line via module logger.
 
 ---
 
@@ -60,7 +59,7 @@
 |---|---|---|
 | `df` passed to `fit()` or `predict()` lacks a 2-level MultiIndex | `IndexError` (crash) | No explicit validation is performed. |
 | `partition_dict` missing `"test"` key | `KeyError` (crash) | No explicit validation. |
-| No entities present at `train_end` | Silent empty DataFrame | `build_prediction_grid` returns a valid empty DataFrame with correct columns and index names. |
+| No entities present at `train_end` | `ValueError` (crash) | `require_entities` raises a descriptive error naming the cause. Fail-loud: the evaluation path cannot proceed with zero entities (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
 
 The model never emits `WARNING` or `ERROR` log messages.
 
@@ -68,10 +67,9 @@ The model never emits `WARNING` or `ERROR` log messages.
 
 ## Boundaries and Interactions
 
-- **Depends on:** `views_baseline.model.helpers.build_prediction_grid` — the only function called by `predict()`.
-- **No external dependencies** beyond the standard library and pandas.
+- **Depends on:** `views_baseline.model.helpers.build_prediction_frame` — the only function called by `predict()`. `PredictionFrame` is lazy-imported from `views-pipeline-core` inside the helper.
+- **External dependency:** `views-pipeline-core` (via `PredictionFrame`, lazy-imported at call time).
 - **Not imported by models.** Instantiated exclusively through `BaselineModelCatalog._get_zero_model()`.
-- Does not interact with `views_pipeline_core` directly.
 
 ---
 
@@ -83,8 +81,8 @@ from views_baseline.model.baseline import ZeroModel
 partition_dict = {"test": (493, 528)}
 model = ZeroModel(targets=["y1", "y2"], partition_dict=partition_dict, loa="pg_id")
 model.fit(df)                                         # records index names
-preds = model.predict(df=df, sequence_number=0)       # returns zero-filled DataFrame
-assert (preds.values == 0.0).all()
+result = model.predict(df=df, sequence_number=0, output_length=36)
+assert all(pf.y_pred == 0.0 for pf in result.values())  # all targets zero
 ```
 
 Using a non-zero `sequence_number` for rolling evaluation:

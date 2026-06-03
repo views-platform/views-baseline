@@ -21,7 +21,7 @@ class ReproducibilityGate:
         """Gates related to configuration and hyperparameter integrity."""
 
         # Core keys required by ALL baseline models regardless of algorithm.
-        CORE_GENOME = ["steps", "time_steps"]
+        CORE_GENOME = ["steps", "time_steps", "prediction_format"]
 
         # Algorithm-specific keys (audited only when the algorithm matches).
         ALGORITHM_GENOMES = {
