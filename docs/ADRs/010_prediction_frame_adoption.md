@@ -1,6 +1,6 @@
 # ADR-010: PredictionFrame as Universal Output Format
 
-**Status:** Superseded (originally Accepted 2026-03-13; updated 2026-06-02)
+**Status:** Accepted (revised 2026-06-02; supersedes the original 2026-03-13 decision)
 **Date:** 2026-06-02
 **Deciders:** Project maintainers
 

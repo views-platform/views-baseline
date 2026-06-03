@@ -70,7 +70,6 @@ The model never emits `WARNING` or `ERROR` log messages.
 - **Depends on:** `views_baseline.model.helpers.build_prediction_frame` — the only function called by `predict()`. `PredictionFrame` is lazy-imported from `views-pipeline-core` inside the helper.
 - **External dependency:** `views-pipeline-core` (via `PredictionFrame`, lazy-imported at call time).
 - **Not imported by models.** Instantiated exclusively through `BaselineModelCatalog._get_zero_model()`.
-- Does not interact with `views_pipeline_core` directly.
 
 ---
 
