@@ -62,7 +62,7 @@ The model handles unsorted input data correctly because `fit()` explicitly calls
 | `df` missing 2-level MultiIndex | `IndexError` (crash) | No structural validation. |
 | `partition_dict` missing `"test"` key | `KeyError` (crash) | No validation. |
 | Entities in `entity_ids` absent from `last_observations` | `WARNING` log | Entity is silently dropped from predictions. |
-| All entities dropped | Silent empty dict | `build_prediction_frame` returns an empty dict. |
+| All entities dropped | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud: a prediction over zero entities cannot satisfy the evaluation contract (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
 | `predict()` called before `fit()` | `AttributeError` | `self.last_observations` is `None`; `cid in None` raises. |
 
 ---

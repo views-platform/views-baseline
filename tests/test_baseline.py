@@ -771,6 +771,109 @@ def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, target
 
 
 # -----------------------------------------------------------------------
+# Empty-entity: fail loud (all 5 models + helper)
+# -----------------------------------------------------------------------
+
+
+def test_require_entities_raises_on_empty():
+    from views_baseline.model.helpers import require_entities
+
+    with pytest.raises(ValueError, match="no entities to predict"):
+        require_entities([], "TestModel")
+
+
+def test_require_entities_noop_when_present():
+    from views_baseline.model.helpers import require_entities
+
+    assert require_entities([1, 2], "TestModel") is None
+
+
+def _train_end_only_entity(train_end, entity_id):
+    """A predict df whose only train_end row holds a single entity."""
+    return pd.DataFrame(
+        {"y1": [99.0], "y2": [99.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end, entity_id)], names=["month_id", "pg_id"]
+        ),
+    )
+
+
+def test_zero_model_raises_when_no_entities_at_train_end(
+    base_df_pgm, partition_dict, targets
+):
+    """ZeroModel: no rows at train_end → fail loud, not a cryptic shape error."""
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(base_df_pgm)
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    # predict df has rows only well before train_end → no entities at train_end
+    df_predict = pd.DataFrame(
+        {"y1": [1.0], "y2": [2.0]},
+        index=pd.MultiIndex.from_tuples(
+            [(train_end - 5, 1)], names=["month_id", "pg_id"]
+        ),
+    )
+    with pytest.raises(ValueError, match="ZeroModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_locf_model_raises_when_all_entities_dropped(
+    base_df_pgm, partition_dict, targets
+):
+    """LocfModel: every train_end entity absent from fitted state → fail loud."""
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model.fit(base_df_pgm)  # fitted on entities {1, 2}
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    df_predict = _train_end_only_entity(train_end, 3)  # only unknown entity 3
+    with pytest.raises(ValueError, match="LocfModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_average_model_raises_when_all_entities_dropped(
+    base_df_pgm, partition_dict, targets
+):
+    """AverageModel: every train_end entity absent from fitted state → fail loud."""
+    model = AverageModel(
+        targets=targets, window_months=3, partition_dict=partition_dict, loa="pg_id"
+    )
+    model.fit(base_df_pgm)  # fitted on entities {1, 2}
+
+    test_start = partition_dict["test"][0]
+    train_end = test_start - 1
+    df_predict = _train_end_only_entity(train_end, 3)
+    with pytest.raises(ValueError, match="AverageModel: no entities to predict"):
+        model.predict(df=df_predict, sequence_number=0, output_length=5)
+
+
+def test_conflictology_raises_when_no_entities(base_df_pgm, partition_dict, targets):
+    """ConflictologyModel: empty fitted pool → fail loud (was a silent return {})."""
+    model = ConflictologyModel(
+        targets=targets, window_months=4, partition_dict=partition_dict,
+        loa="pg_id", n_samples=10,
+    )
+    model.fit(base_df_pgm)
+    model.entity_ids = []  # force the all-dropped state
+    with pytest.raises(ValueError, match="ConflictologyModel: no entities to predict"):
+        model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
+
+
+def test_mixture_raises_when_no_entities(partition_dict, targets):
+    """MixtureBaseline: empty fitted pool → fail loud (was a silent return {})."""
+    df = make_mixture_df()
+    model = MixtureBaseline(
+        targets=targets, window_months=4, lambda_mix=0.05,
+        n_samples=10, partition_dict=partition_dict, loa="pg_id",
+    )
+    model.fit(df)
+    model.entity_ids = []  # force the all-dropped state
+    with pytest.raises(ValueError, match="MixtureBaseline: no entities to predict"):
+        model.predict(df=df, sequence_number=0, output_length=5)
+
+
+# -----------------------------------------------------------------------
 # Green team: ConflictologyModel reproducibility
 # -----------------------------------------------------------------------
 

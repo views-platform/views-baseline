@@ -10,6 +10,7 @@ from views_baseline.model.helpers import (
     build_prediction_frame,
     build_time_grid,
     filter_entities,
+    require_entities,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class ZeroModel:
             .index.get_level_values(self.entity_idx)
             .unique()
         )
+        require_entities(entity_ids, "ZeroModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         return build_prediction_frame(
@@ -107,6 +109,7 @@ class LocfModel:
             .unique()
         )
         entity_ids = filter_entities(entity_ids, self.last_observations.index, "LocfModel")
+        require_entities(entity_ids, "LocfModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         return build_prediction_frame(
@@ -172,6 +175,7 @@ class AverageModel:
             .unique()
         )
         entity_ids = filter_entities(entity_ids, self.mean.index, "AverageModel")
+        require_entities(entity_ids, "AverageModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         return build_prediction_frame(
@@ -258,9 +262,7 @@ class ConflictologyModel:
         entities_with_history = filter_entities(
             self.entity_ids, self.hist_per_entity, "ConflictologyModel"
         )
-
-        if not entities_with_history:
-            return {}
+        require_entities(entities_with_history, "ConflictologyModel")
 
         time_arr, unit_arr = build_identifier_arrays(entities_with_history, time_ids)
         n_rows = len(time_arr)
@@ -379,9 +381,7 @@ class MixtureBaseline:
         entities_with_pool = filter_entities(
             self.entity_ids, self.local_pool, "MixtureBaseline"
         )
-
-        if not entities_with_pool:
-            return {}
+        require_entities(entities_with_pool, "MixtureBaseline")
 
         time_arr, unit_arr = build_identifier_arrays(entities_with_pool, time_ids)
         n_rows = len(time_arr)

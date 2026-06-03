@@ -63,7 +63,7 @@ When `window_months` exceeds the number of training rows available for an entity
 | `window_months <= 0` | Undefined behaviour | `tail(0)` returns empty; `.mean()` on empty returns `NaN`. Predictions silently become `NaN`. |
 | `window_months` exceeds entity history length | Silent degradation | Mean computed over all available rows; no warning emitted. |
 | Entities absent from `self.mean` at predict time | `WARNING` log | Entity dropped from output. |
-| All entities dropped | Silent empty dict | `build_prediction_frame` returns an empty dict. |
+| All entities dropped | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud: a prediction over zero entities cannot satisfy the evaluation contract (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
 
 ---
 

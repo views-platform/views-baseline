@@ -32,7 +32,7 @@ The class attribute `distributional = True` is used by `BaselineForecastingModel
   - `identifiers` dict with `"time"` and `"unit"` arrays of length `N`.
 - Samples are drawn using `np.random.default_rng(self.seed)`. The RNG is re-initialised fresh on each `predict()` call, making results deterministic given the same `seed` and `sequence_number`. RNG state is advanced in entity→time→target order to ensure consistent ordering.
 - Entities with no history (absent from `hist_per_entity`) are dropped with a `WARNING` log.
-- If no entities have history, returns `{}`.
+- If no entities have history, raises a descriptive `ValueError` via `require_entities` (fail-loud — consistent with all baseline models).
 
 ---
 
@@ -57,7 +57,7 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.hist_per_entity`, `self.entity_ids`. No external side effects.
-- **`predict()`**: Returns `dict[str, PredictionFrame]` (empty dict if no entities). Emits `WARNING` on entity drops. No external side effects. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame` at call time.
+- **`predict()`**: Returns `dict[str, PredictionFrame]`. Raises `ValueError` (via `require_entities`) if no entities have history. Emits `WARNING` on entity drops. No external side effects. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame` at call time.
 
 ---
 
@@ -72,7 +72,7 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 | `n_samples <= 0` | `ValueError` from numpy | `rng.choice(..., size=0)` succeeds but `size < 0` raises. |
 | Entities with empty history at fit time | Silently excluded from `hist_per_entity` | Only entities whose `xs()` call returns non-empty data are stored. |
 | Entities absent from `hist_per_entity` at predict time | `WARNING` log | Dropped from output. |
-| No entities have history | Silent `{}` return | Caller must handle empty dict. |
+| No entities have history | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud — consistent with all baseline models; an empty result would otherwise surface as a `StopIteration` deep in pipeline-core's evaluation path. |
 | `views_pipeline_core` not installed | `ImportError` (crash at predict time) | Lazy import defers this to `predict()`. |
 
 ---

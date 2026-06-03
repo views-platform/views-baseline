@@ -59,7 +59,7 @@
 |---|---|---|
 | `df` passed to `fit()` or `predict()` lacks a 2-level MultiIndex | `IndexError` (crash) | No explicit validation is performed. |
 | `partition_dict` missing `"test"` key | `KeyError` (crash) | No explicit validation. |
-| No entities present at `train_end` | Silent empty dict | `build_prediction_frame` returns an empty dict when no entities exist. |
+| No entities present at `train_end` | `ValueError` (crash) | `require_entities` raises a descriptive error naming the cause. Fail-loud: the evaluation path cannot proceed with zero entities (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
 
 The model never emits `WARNING` or `ERROR` log messages.
 

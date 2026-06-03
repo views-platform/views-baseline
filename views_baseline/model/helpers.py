@@ -67,6 +67,30 @@ def filter_entities(entity_ids, valid_set, model_name: str) -> list:
     return filtered
 
 
+def require_entities(entities, model_name: str) -> None:
+    """Fail loud when there are no entities to predict for.
+
+    A prediction over zero entities cannot satisfy the pipeline's evaluation
+    contract (it requires at least one (entity, time) cell per target) and would
+    otherwise surface as an opaque error far from the cause — either
+    ``ValueError: y_pred must have at least one row`` when constructing a
+    PredictionFrame, or a ``StopIteration`` deep inside pipeline-core's
+    streaming evaluation. Raising here names the actual cause at the model
+    boundary.
+
+    Reached when the data has no rows at the train/test boundary, or when every
+    entity present at ``train_end`` was absent from the fitted state and dropped
+    by :func:`filter_entities`.
+    """
+    if len(entities) == 0:
+        raise ValueError(
+            f"{model_name}: no entities to predict. The data has no rows at the "
+            f"train/test boundary (train_end), or all entities present at "
+            f"train_end were absent from the fitted state and were dropped. "
+            f"A prediction cannot be constructed."
+        )
+
+
 def build_identifier_arrays(
     entities, time_ids: list[int]
 ) -> tuple[np.ndarray, np.ndarray]:
