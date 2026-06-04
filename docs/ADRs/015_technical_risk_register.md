@@ -2,6 +2,7 @@
 
 **Date:** 2026-04-27
 **Status:** Active
+**Deciders:** Project maintainers
 **Relates to:** All ADRs (the register tracks risks across the codebase)
 
 ---

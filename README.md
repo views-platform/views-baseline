@@ -26,21 +26,30 @@ Models are fitted automatically via `fit()` before generating predictions. Fitte
 
 ## Implemented Models
 
-### Point Forecast Models
+All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`. ("unit" is the term used in `PredictionFrame.identifiers`; the input index calls the same axis the *entity*.)
 
-These models return `dict[str, PredictionFrame]` — one `PredictionFrame` per target with `y_pred` shape `(N, 1)` (single deterministic value).
+**Causal split (no leakage).** Every model is fit using only observations strictly before the test period. The last training month is `train_end = test_start − 1`; no value at or after `test_start` enters any fitted quantity. (The point models and `MixtureBaseline` filter `t < test_start`; `ConflictologyModel` filters `t ≤ train_end` — the same boundary, written two ways.)
+
+Two output families:
+
+- **Point forecasts** — one deterministic value per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, 1)`.
+- **Distributional forecasts** — `n_samples` Monte-Carlo draws per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, n_samples)`.
+
+In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries `identifiers` with the `time` and `unit` of every row.
+
+### Point Forecast Models
 
 #### ZeroModel
 
-Predicts **0 for all targets**, entities, and forecast horizons.
+Predicts exactly **0** for every target, unit, and forecast step. The lower-bound reference; performs no fitting.
 
 ```python
 ZeroModel(targets, partition_dict, loa)
 ```
 
-#### LocfModel (Last Observation Carried Forward)
+#### LocfModel — Last Observation Carried Forward
 
-Repeats the **last observed value before the test period** for each entity and target across the forecast horizon.
+For each unit and target, carries the **last observed value at `train_end`** forward unchanged across the entire horizon. A persistence baseline ("the most recent observation is the best guess"), strong for highly autocorrelated targets.
 
 ```python
 LocfModel(targets, partition_dict, loa)
@@ -48,30 +57,34 @@ LocfModel(targets, partition_dict, loa)
 
 #### AverageModel
 
-Forecasts the **mean of the last `window_months` months** before the test period for each entity and target.
+For each unit and target, forecasts the **arithmetic mean of that unit's last `window_months` observations** before `test_start`, held constant across the horizon. A smoothed-persistence baseline, more robust than LOCF when individual months are noisy.
 
 ```python
 AverageModel(targets, window_months, partition_dict, loa)
 ```
 
-* Averages are computed per entity
-* Entities without sufficient history are skipped
+* Means are computed per unit; units with no history before `test_start` are skipped (logged).
 
 ### Distributional Models
 
-These models return `dict[str, PredictionFrame]` — one `PredictionFrame` per target, each containing `n_samples` draws per cell.
+Both draw `n_samples` i.i.d. samples per cell from a fresh, seeded generator (`numpy.random.default_rng(seed)`), so a given (data, configuration, seed) reproduces bit-for-bit. The RNG is consumed in a fixed unit → time → target order to guarantee reproducibility.
 
-#### ConflictologyModel
+#### ConflictologyModel — empirical climatology
 
-Climatology baseline that **resamples with replacement** from the last `window_months` of data for each entity, producing `n_samples` i.i.d. draws per cell.
+For each unit `i`, collects that unit's **last `window_months` observed values** up to `train_end`, then draws `n_samples` samples **with replacement** from that per-unit history for every forecast cell. The predictive distribution for a cell is the recent empirical distribution of that same unit — a conflict "climatology." It uses only the unit's own recent history: no pooling across units, no older history.
 
 ```python
-ConflictologyModel(targets, window_months, partition_dict, loa, n_samples=256, seed=42)
+ConflictologyModel(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
-#### MixtureBaseline
+#### MixtureBaseline — mixture of local and global empirical pools
 
-Mixture empirical baseline that **combines local history with a global positive pool** to avoid the zero-probability trap. Each sample is drawn from the local pool with probability `1 - lambda_mix` or the global positive pool with probability `lambda_mix`.
+Combines two empirical sources to avoid the **zero-probability trap** (a unit whose recent history is entirely zero being structurally unable to predict a nonzero outcome):
+
+- **Local pool** — the unit's last `window_months` observed values (as in `ConflictologyModel`).
+- **Global pool** — **all strictly-positive** observed values, pooled across **every unit** and the **entire training span**.
+
+Each of the `n_samples` draws is taken from the **global** pool with probability `lambda_mix`, otherwise from the **local** pool (probability `1 − lambda_mix`). At `lambda_mix = 0` it reduces to a local-only empirical baseline (same source as `ConflictologyModel`); larger `lambda_mix` injects more cross-unit, full-history positive mass.
 
 ```python
 MixtureBaseline(targets, window_months, lambda_mix, n_samples, partition_dict, loa, seed=42)

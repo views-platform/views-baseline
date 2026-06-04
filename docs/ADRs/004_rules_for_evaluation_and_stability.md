@@ -8,7 +8,7 @@
 
 ## Context
 
-views-baseline contains components at different stages of maturity and with different downstream audiences. Point forecast models are consumed by ensemble managers that depend on their output format being stable. Distributional models are newer and their output format has already changed once (from `DataFrame` to `PredictionFrame`). The manager is coupled to views-pipeline-core, which evolves independently.
+views-baseline contains components at different stages of maturity and with different downstream audiences. All models now emit `dict[str, PredictionFrame]` (ADR-017) — point models a single-sample `(N,1)`, distributional models `(N, n_samples)`. Both output types changed from `pd.DataFrame` during development. The manager is coupled to views-pipeline-core, which evolves independently.
 
 Without explicit stability classifications and rules for when those classifications trigger action, contributors have no shared framework for deciding whether a proposed change is safe, requires a migration path, or requires an ADR update. This ADR establishes that framework.
 
@@ -29,15 +29,15 @@ Each component carries one of two stability labels:
 
 | Component | Stability | Rationale |
 |---|---|---|
-| `ZeroModel` | Stable | Consumed by downstream ensembles; output format is `pd.DataFrame` with `pred_` columns on `MultiIndex(time, entity)` |
+| `ZeroModel` | Stable | Output is `dict[str, PredictionFrame]`, `y_pred` shape `(N, 1)` (ADR-017); consumed by downstream ensembles |
 | `LocfModel` | Stable | Same as above |
 | `AverageModel` | Stable | Same as above; `window_months` is a declared config parameter |
-| `ConflictologyModel` | Evolving | Output format changed from `DataFrame` to `dict[str, PredictionFrame]` during development; `PredictionFrame` schema is upstream-owned |
+| `ConflictologyModel` | Evolving | Output `dict[str, PredictionFrame]`, `(N, n_samples)`; `PredictionFrame` schema is upstream-owned |
 | `MixtureBaseline` | Evolving | Newer model; `lambda_mix` and `global_pool` semantics are still being evaluated |
-| `BaselineModel` (protocol) | Stable | Defines the point model contract; changes ripple to all implementing classes |
-| `DistributionalBaselineModel` (protocol) | Stable | Defines the distributional contract; changes ripple to all implementing classes and the manager dispatch |
+| `BaselineModel` (protocol) | Stable | Universal contract — all models return `dict[str, PredictionFrame]`; changes ripple to all implementing classes |
+| `DistributionalBaselineModel` (protocol) | Stable | Semantic marker for sampled models (`distributional = True`); no longer drives manager dispatch (ADR-017) |
 | `BaselineModelCatalog` | Stable | `get_model()` and `list_models()` are consumed by the manager |
-| `build_prediction_grid` | Stable | Called by three model classes; signature and output contract are depended on |
+| `build_prediction_frame` | Stable | Active output builder; called by the three point model classes (`build_prediction_grid` retained but unused) |
 | `BaselineForecastingModelManager` | Evolving | Tightly coupled to `views-pipeline-core`; any breaking change upstream propagates here |
 
 ### Reproducibility Contract
@@ -78,7 +78,7 @@ An ADR update (or a new ADR) is required when:
 
 ### Why the manager is evolving
 
-The manager does not contain domain logic; it translates between the pipeline infrastructure and the model layer. Its stability is therefore downstream of `views-pipeline-core`'s stability, which this project does not control. The manager's `_generate_predictions` method is particularly sensitive: it performs the `isinstance(model, DistributionalBaselineModel)` dispatch that routes to different return types. If the protocol changes, or if `views-pipeline-core` changes how it handles `dict[str, list[PredictionFrame]]` vs `list[DataFrame]`, the manager must change.
+The manager does not contain domain logic; it translates between the pipeline infrastructure and the model layer. Its stability is therefore downstream of `views-pipeline-core`'s stability, which this project does not control. Since ADR-017, `_generate_predictions` has a single path: every model returns `dict[str, PredictionFrame]`, accumulated into `dict[str, list[PredictionFrame]]` — no `isinstance` dispatch. The manager's sensitivity is now purely to `views-pipeline-core` changes in how it consumes `dict[str, list[PredictionFrame]]` (and the `prediction_format` routing).
 
 ### Why the seed arithmetic matters
 

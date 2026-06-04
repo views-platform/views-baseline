@@ -108,6 +108,7 @@ No migration is required. This ADR codifies the existing state.
 
 ## References
 
+- **ADR-017: Frames Replace DataFrames as Operational Containers** — the broader platform direction this decision is part of (universal PredictionFrame output incl. `n_samples == 1`; FeatureFrame as the input half). Read alongside this ADR.
 - ADR-002: Topology and Dependency Rules (lazy import mandate)
 - ADR-003: Authority of Declarations over Inference (protocol dispatch)
 - `views_baseline/model/baseline.py` — `ConflictologyModel`, `MixtureBaseline`

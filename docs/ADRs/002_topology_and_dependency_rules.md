@@ -140,10 +140,18 @@ import pandas as pd
 ```python
 import numpy as np
 import pandas as pd
-from views_baseline.model.helpers import build_prediction_grid
+from views_baseline.model.helpers import (
+    build_identifier_arrays, build_prediction_frame, build_time_grid,
+    filter_entities, require_entities,
+)
 ```
 
 **`model/baseline.py` (inside `ConflictologyModel.predict()` and `MixtureBaseline.predict()`):**
+```python
+from views_pipeline_core.data.prediction_frame import PredictionFrame
+```
+
+**`model/helpers.py` (inside `build_prediction_frame()` — point-model PredictionFrame site, ADR-013):**
 ```python
 from views_pipeline_core.data.prediction_frame import PredictionFrame
 ```
@@ -160,8 +168,8 @@ from views_baseline.model.baseline import (
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
 from views_baseline.model.catalog import BaselineModelCatalog
-from views_baseline.model.protocol import DistributionalBaselineModel
 ```
+*(Since ADR-017 the manager no longer imports `DistributionalBaselineModel` — it has a single, type-uniform prediction path.)*
 
 ---
 

@@ -29,17 +29,20 @@ views-baseline depends on views-pipeline-core for pipeline integration (model ma
 - `model/protocol.py` — no module-level views-pipeline-core imports.
 - `model/helpers.py` — no module-level views-pipeline-core imports.
 
-#### `model/baseline.py` — 2 lazy imports inside `predict()` methods
+#### `model/` — 3 lazy `PredictionFrame` import sites (all inside function bodies)
 
 ```python
-# ConflictologyModel.predict()
+# model/baseline.py — ConflictologyModel.predict()
 from views_pipeline_core.data.prediction_frame import PredictionFrame
 
-# MixtureBaseline.predict()
+# model/baseline.py — MixtureBaseline.predict()
+from views_pipeline_core.data.prediction_frame import PredictionFrame
+
+# model/helpers.py — build_prediction_frame()  (used by ALL point models since ADR-010/ADR-017)
 from views_pipeline_core.data.prediction_frame import PredictionFrame
 ```
 
-These are the only points where `model/` touches views-pipeline-core. They execute only when a distributional model's `predict()` is called, not at import time.
+These are the only points where `model/` touches views-pipeline-core. Since ADR-010/ADR-017 unified all models onto PredictionFrame output, the point models reach pipeline-core too — via `build_prediction_frame()` in `helpers.py`. All three sites are still lazy (inside function bodies), so `model/` remains importable without views-pipeline-core; the dependency is incurred only when `predict()` is actually called.
 
 #### `manager/baseline_manager.py` — 4 module-level imports
 
@@ -52,11 +55,11 @@ These are acceptable: `manager/` is the pipeline integration layer and is expect
 
 #### `tests/` — mixed
 
-- `tests/conftest.py` — no views-pipeline-core imports.
-- `tests/test_baseline.py` — lazy `PredictionFrame` import in distributional tests.
+- `tests/conftest.py` — imports `PredictionFrame` (assertion helper for PF output) and `ConfigurationManager`.
+- `tests/test_baseline.py` — exercises `predict()` for **all** models, so all now reach `PredictionFrame` via `build_prediction_frame` / distributional `predict()`. **This file now requires views-pipeline-core** (see the narrowed guarantee below).
 - `tests/test_baseline_manager.py` — module-level `ConfigurationManager` import (required to construct manager instances).
-- `tests/test_catalog.py` — no views-pipeline-core imports.
-- `tests/test_protocol.py` — no views-pipeline-core imports.
+- `tests/test_catalog.py` — no views-pipeline-core imports (catalog construction only; does not call `predict()`).
+- `tests/test_protocol.py` — no views-pipeline-core imports (`isinstance` protocol checks only).
 
 ### Rules
 
@@ -69,7 +72,7 @@ These are acceptable: `manager/` is the pipeline integration layer and is expect
 
 ## Rationale
 
-- The `model/` zero-import rule ensures that `pytest tests/test_baseline.py tests/test_catalog.py tests/test_protocol.py` can run without views-pipeline-core installed (or with a broken version). This is valuable for rapid local development and for CI jobs that test model logic in isolation.
+- The `model/` zero-**module-level**-import rule keeps `model/` *importable* without views-pipeline-core. **Narrowed guarantee (ADR-010/ADR-017):** since all models now emit PredictionFrame, calling any model's `predict()` reaches pipeline-core. `tests/test_catalog.py` and `tests/test_protocol.py` (which only construct/inspect, never `predict()`) still run without pipeline-core; `tests/test_baseline.py` no longer does, because every model's `predict()` now builds a PredictionFrame. The original "run the whole model test suite without pipeline-core" property no longer holds — this is an accepted cost of unifying on PredictionFrame.
 - Module-level imports in `manager/` are acceptable because the manager is inherently a views-pipeline-core adapter. Testing it requires views-pipeline-core anyway (via `ConfigurationManager`, `ForecastingModelManager`).
 - Lazy imports in `predict()` are a pragmatic compromise: distributional output requires `PredictionFrame`, but the import cost is paid only at prediction time, not at module load time.
 
@@ -103,7 +106,7 @@ Define a `views_baseline.model.prediction.DistributionalOutput` class that wraps
 
 ### Positive
 
-- `model/` is independently testable — fast feedback loop for model development.
+- `model/` remains *importable* without views-pipeline-core; catalog/protocol tests still run in isolation. (Model `predict()` tests now require pipeline-core — see the narrowed guarantee under Rationale.)
 - The coupling inventory is explicit and auditable. New coupling is visible in code review.
 - Import-time failures in `manager/` are loud and immediate, which is the correct failure mode for integration code.
 

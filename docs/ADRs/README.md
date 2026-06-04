@@ -53,10 +53,14 @@ update the old ADR's status to `Superseded by ADR-NNN`.
 
 | ADR | Title | One-line description |
 |-----|-------|----------------------|
-| [ADR-010](010_prediction_frame_adoption.md) | PredictionFrame Adoption and DataFrame Deprecation | Codifies `PredictionFrame` as the canonical output for distributional models; no DataFrame fallback. |
+| [ADR-010](010_prediction_frame_adoption.md) | PredictionFrame as Universal Output Format | All baseline models return `dict[str, PredictionFrame]`; point models are `(N, 1)`. No DataFrame output path. |
 | [ADR-011](011_rng_determinism_contract.md) | RNG Determinism Contract and Seed Arithmetic | Documents the fresh-RNG-per-predict, fixed-seed, entity→time→target iteration contract for reproducibility. |
 | [ADR-012](012_model_addition_protocol.md) | Model Addition Protocol and Catalog Registration | Authoritative 7-step checklist for adding a new model (define, register, test, document). |
-| [ADR-013](013_pipeline_core_coupling.md) | views-pipeline-core Coupling Management | Zero module-level imports in `model/`, lazy `PredictionFrame` imports in `predict()`, free imports in `manager/`. |
+| [ADR-013](013_pipeline_core_coupling.md) | views-pipeline-core Coupling Management | Zero module-level imports in `model/`, lazy `PredictionFrame` imports (incl. `build_prediction_frame`), free imports in `manager/`. |
+| [ADR-014](014_reproducibility_gate.md) | Reproducibility Gate | `CORE_GENOME` / `ALGORITHM_GENOMES` hyperparameter contract enforced via `audit_manifest()`. |
+| [ADR-015](015_technical_risk_register.md) | Technical Risk Register | Establishes the register as a governance artifact tracking risks across the codebase. |
+| [ADR-016](016_artifact_prediction_timestamp_contract.md) | Artifact-Prediction Timestamp Contract | Prediction filenames carry the trained-artifact timestamp, not wall-clock time. |
+| [ADR-017](017_frames_replace_dataframes.md) | Frames Replace DataFrames as Operational Containers | PredictionFrame (output, in core) + FeatureFrame (input, in datafactory, pending); allows `n_samples == 1`. |
 
 ---
 

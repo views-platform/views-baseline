@@ -27,25 +27,25 @@ The following six ontological categories are recognised in this repository. Ever
 - **Purpose:** Deterministic, single-value predictions. For each (entity, time) cell in the forecast horizon, produce one scalar per target column.
 - **Classes:** `ZeroModel`, `LocfModel`, `AverageModel`
 - **File:** `views_baseline/model/baseline.py`
-- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> pd.DataFrame` with `MultiIndex(time, entity)` and columns `pred_{target}`.
+- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` (one deterministic value per cell) and `identifiers` `{"time", "unit"}`. Built via `build_prediction_frame` (ADR-010, ADR-017). *(Historically returned `pd.DataFrame`; unified onto PredictionFrame 2026-06.)*
 - **Authority:** Authoritative — these classes produce the final prediction values for point-forecast use cases.
-- **Stability:** Stable. Changes to their output format or fit/predict signatures would break downstream ensemble consumers.
+- **Stability:** Stable interface; output type changed once (DataFrame → `(N,1)` PredictionFrame) under ADR-017's universal-container decision.
 
 #### 2. Distributional Forecast Models
 
 - **Purpose:** Probabilistic, multi-sample predictions. For each (entity, time) cell, produce `n_samples` draws per target.
 - **Classes:** `ConflictologyModel`, `MixtureBaseline`
 - **File:** `views_baseline/model/baseline.py`
-- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]`. Both classes carry a class attribute `distributional = True` which is the protocol discriminator.
+- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, n_samples)`. Both carry the class attribute `distributional = True` — now a **semantic marker** (point vs sampled), no longer a manager dispatch discriminator (see Category 3 and ADR-017).
 - **Authority:** Authoritative — these classes produce the final prediction values for distributional use cases.
 - **Stability:** Evolving. The output format changed from `DataFrame` to `PredictionFrame` during development and may change again as the `PredictionFrame` schema evolves upstream.
 
 #### 3. Model Protocols
 
-- **Purpose:** Structural typing contracts that allow runtime dispatch without import coupling. Callers can check `isinstance(model, DistributionalBaselineModel)` without importing concrete model classes.
+- **Purpose:** Structural typing contracts. `BaselineModel` defines the universal interface (all models, returning `dict[str, PredictionFrame]`). `DistributionalBaselineModel` marks sampled models via `distributional: bool`.
 - **Classes:** `BaselineModel`, `DistributionalBaselineModel`
 - **File:** `views_baseline/model/protocol.py`
-- **Implementation detail:** Both protocols are decorated `@runtime_checkable`. `DistributionalBaselineModel` adds the `distributional: bool` attribute requirement to the protocol, which serves as the explicit discriminator used by `_generate_predictions` and `_forecast_model_artifact` in the manager.
+- **Implementation detail:** Both protocols are decorated `@runtime_checkable`. `DistributionalBaselineModel` adds the `distributional: bool` requirement. **It is a semantic classifier, not a dispatch mechanism** — since ADR-017 unified all models onto PredictionFrame, `_generate_predictions` and `_forecast_model_artifact` have a single code path and no longer branch on it.
 - **Authority:** Authoritative — these protocols define the model interface that the manager and any future caller must program against.
 - **Stability:** Stable. Protocol changes require coordinated updates to all implementing classes.
 
@@ -63,18 +63,18 @@ The following six ontological categories are recognised in this repository. Ever
 - **Purpose:** Orchestrates the model lifecycle (load data, fit, predict, save artifact, sweep) within the VIEWS pipeline infrastructure. Translates between the pipeline's conventions (run types, artifact paths, partition dicts from `views-pipeline-core`) and the model layer's interface.
 - **Classes:** `BaselineForecastingModelManager`
 - **File:** `views_baseline/manager/baseline_manager.py`
-- **Implementation detail:** Extends `ForecastingModelManager` from `views-pipeline-core`. Overrides five methods: `_train_model_artifact`, `_setup_model_and_data`, `_generate_predictions`, `_evaluate_model_artifact`, `_forecast_model_artifact`. Imports 4 names from `views-pipeline-core`: `generate_model_file_name`, `read_dataframe`, `ForecastingModelManager`, `ModelPathManager`. The `DistributionalBaselineModel` protocol is from the local `model/` layer, not pipeline-core.
+- **Implementation detail:** Extends `ForecastingModelManager` from `views-pipeline-core`. Overrides five methods: `_train_model_artifact`, `_setup_model_and_data`, `_generate_predictions`, `_evaluate_model_artifact`, `_forecast_model_artifact`. Imports from `views-pipeline-core`: `generate_model_file_name`, `read_dataframe`, `ForecastingModelManager`, `ModelPathManager`. Since ADR-017, the manager no longer imports `DistributionalBaselineModel` — `_generate_predictions` accumulates `dict[str, list[PredictionFrame]]` for every model with no type branch.
 - **Authority:** Derived — the manager delegates all prediction logic to the model layer. It adds no domain knowledge; it only routes.
 - **Stability:** Evolving. Tightly coupled to `views-pipeline-core`; any breaking change there propagates here.
 
 #### 6. Prediction Builders
 
-- **Purpose:** Shared output construction for point forecast models. Provides the canonical implementation of the (entity × time) grid expansion so that `ZeroModel`, `LocfModel`, and `AverageModel` do not each contain duplicated DataFrame assembly logic.
-- **Functions:** `build_prediction_grid`
+- **Purpose:** Shared output construction for point forecast models — the (entity × time) grid expansion so `ZeroModel`, `LocfModel`, and `AverageModel` do not each duplicate assembly logic.
+- **Functions:** `build_prediction_frame` (active), `build_identifier_arrays`, `filter_entities`, `require_entities`, `build_time_grid`. `build_prediction_grid` is **retained but no longer used** by any model (legacy DataFrame builder, kept for reference).
 - **File:** `views_baseline/model/helpers.py`
-- **Implementation detail:** Takes `time_idx`, `entity_idx`, `entity_ids`, `time_ids`, `targets`, and a `value_fn` callable. Returns a `pd.DataFrame` with `MultiIndex([time_idx, entity_idx])` and columns `pred_{target}`. Handles the empty-entity edge case explicitly.
+- **Implementation detail:** `build_prediction_frame(entity_ids, time_ids, targets, value_fn)` returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)`, lazy-importing `PredictionFrame` (ADR-013). `require_entities` fails loud (descriptive `ValueError`) when no entities remain.
 - **Authority:** Derived — helpers serve the point forecast models, not the other way around.
-- **Stability:** Stable. The function signature and output contract are depended on by three model classes.
+- **Stability:** Stable. `build_prediction_frame` is depended on by the three point model classes.
 
 #### 7. Infrastructure and Validation
 
@@ -91,7 +91,7 @@ The following six ontological categories are recognised in this repository. Ever
 
 Separating the ontology from the physical file layout makes the categories legible to contributors who read documentation before code. The categories chosen reflect actual authority and dependency relationships in the codebase:
 
-- **Point vs. Distributional** is a functional split, not an implementation convenience. The two categories have different output types, different manager dispatch paths, and different stability expectations.
+- **Point vs. Distributional** is a functional split (deterministic vs sampled), not an implementation convenience. Since ADR-017 the two share one output *type* (`dict[str, PredictionFrame]`) and one manager path; they differ in `y_pred` width (`(N,1)` vs `(N,n_samples)`) and in the `distributional` marker, not in container or dispatch.
 - **Protocols** are separate from implementations because they define contracts that cross the `model/`–`manager/` boundary without creating an import cycle.
 - **Factory** is a distinct category because it owns validation logic; it is not merely a convenience wrapper.
 - **Pipeline Integration** is explicitly marked as derived because the manager adds no prediction intelligence — this naming prevents future contributors from adding domain logic there.
