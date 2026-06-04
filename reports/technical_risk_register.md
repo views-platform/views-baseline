@@ -58,6 +58,8 @@ Every model class extracts `self.time_idx = df.index.names[0]` and `self.entity_
 
 See also C-03 (related: same code locations, C-03 addresses duplication, C-05 addresses validation absence).
 
+**Forward link (FeatureFrame input, 2026-06-04):** this same direct consumption of the DataFrame `(time, entity)` MultiIndex is what makes views-baseline a *high-effort* consumer in the platform's FeatureFrame-input migration — point models read `df.index.names` / `df[targets]` directly, so an input-format switch breaks `fit()` unless adapted (unlike adapter-fronted engines such as hydranet/r2darts2). Adopting FeatureFrame input (which carries its own validation) could *subsume* this risk. Tracked at `views-platform/views-pipeline-core#161` (input path) and `views-platform/views-pipeline-core#162` (contract hardening); see ADR-019 (proposed, not implemented).
+
 ---
 
 ### C-06: `partition_dict` structure assumed but never validated
