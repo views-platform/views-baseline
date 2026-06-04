@@ -25,8 +25,11 @@ This ADR serves as the authoritative checklist for adding a new model.
 **File:** `views_baseline/model/baseline.py`
 
 - Define a class with `fit(self, df: pd.DataFrame)` and `predict(self, df: pd.DataFrame, sequence_number: int, output_length: int)` methods.
-- If the model is distributional (returns `dict[str, PredictionFrame]`), set `distributional = True` as a class attribute.
-- If distributional, lazy-import `PredictionFrame` inside `predict()` — not at module level (ADR-002).
+- **All models return `dict[str, PredictionFrame]` from `predict()`** (ADR-010, ADR-017) — point models produce `y_pred` shape `(N, 1)`, distributional models `(N, n_samples)`.
+  - **Point models:** build the result with `build_prediction_frame()` from `model/helpers.py`. Do **not** use `build_prediction_grid()` — it is retained for reference but no longer used by any model.
+  - **Distributional models:** set `distributional = True` as a class attribute (semantic marker; no longer used for manager dispatch) and construct `PredictionFrame` objects directly.
+- `PredictionFrame` is lazy-imported inside the helper / `predict()` — never at module level (ADR-002, ADR-013). For point models this happens inside `build_prediction_frame()`.
+- **Call `require_entities(entity_ids, "<ModelName>")` before building output** — fail loud if no entities remain (ADR-008-style explicit failure; uniform across all five models).
 - Accept `targets`, `partition_dict`, and `loa` as constructor parameters (universal). Accept model-specific parameters (e.g., `window_months`, `n_samples`, `seed`) as additional constructor parameters.
 - Follow the entity → time → target iteration order for any RNG-consuming loops (ADR-011).
 
@@ -43,10 +46,9 @@ This ADR serves as the authoritative checklist for adding a new model.
 
 **File:** `tests/test_baseline.py`
 
-- Test `fit()` + `predict()` basic behaviour (correct output type, shape, index structure).
-- If distributional: verify return type is `dict[str, PredictionFrame]`, keys match targets, `y_pred` shape is `(N, n_samples)`.
+- Test `fit()` + `predict()` basic behaviour: return type is `dict[str, PredictionFrame]`, keys match targets, `y_pred` shape is `(N, 1)` for point models or `(N, n_samples)` for distributional.
 - If RNG-based: add a reproducibility test (call `predict()` twice, assert bitwise equality).
-- If the model drops entities: test the warning path.
+- If the model drops entities: test the warning path, and test the empty-entity case raises a descriptive `ValueError` via `require_entities`.
 
 ### Step 4: Add catalog tests
 
@@ -59,7 +61,7 @@ This ADR serves as the authoritative checklist for adding a new model.
 
 **File:** `tests/test_protocol.py`
 
-- Add the model class to the parametrized `isinstance` check for `BaselineModel` (all models) or `DistributionalBaselineModel` (distributional models only).
+- Add the model class to the parametrized `isinstance` check for `BaselineModel` (all models). Distributional models additionally satisfy `DistributionalBaselineModel` (the `distributional = True` marker) — though the manager no longer dispatches on it.
 
 ### Step 6: Update documentation
 
@@ -80,7 +82,7 @@ This ADR serves as the authoritative checklist for adding a new model.
 
 - A checklist reduces the risk of partial registration (model exists but is unreachable via the catalog, or reachable but untested).
 - The ordering (define → register → test → document) matches the natural development flow and ensures each step can be verified before moving to the next.
-- Requiring protocol tests ensures that new models satisfy the structural contracts that the manager relies on for dispatch.
+- Requiring protocol tests ensures that new models satisfy the structural contract the manager relies on (every model returns `dict[str, PredictionFrame]`).
 
 ---
 

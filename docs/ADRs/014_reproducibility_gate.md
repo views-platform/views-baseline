@@ -24,7 +24,7 @@ Add a `ReproducibilityGate` class to `views_baseline.infrastructure.reproducibil
 
 The gate defines:
 
-- **`CORE_GENOME`**: `["steps", "time_steps"]` — required by all baseline models regardless of algorithm.
+- **`CORE_GENOME`**: `["steps", "time_steps", "prediction_format"]` — required by all baseline models regardless of algorithm. (`prediction_format` added 2026-06 when all models unified onto PredictionFrame output — ADR-010, ADR-017.)
 - **`ALGORITHM_GENOMES`**: per-algorithm required keys, identical to the former `BaselineModelCatalog.MODEL_GENOMES`.
 
 The gate's `audit_manifest(config)` static method validates:
