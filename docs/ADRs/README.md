@@ -61,6 +61,8 @@ update the old ADR's status to `Superseded by ADR-NNN`.
 | [ADR-015](015_technical_risk_register.md) | Technical Risk Register | Establishes the register as a governance artifact tracking risks across the codebase. |
 | [ADR-016](016_artifact_prediction_timestamp_contract.md) | Artifact-Prediction Timestamp Contract | Prediction filenames carry the trained-artifact timestamp, not wall-clock time. |
 | [ADR-017](017_frames_replace_dataframes.md) | Frames Replace DataFrames as Operational Containers | PredictionFrame (output, in core) + FeatureFrame (input, in datafactory, pending); allows `n_samples == 1`. |
+| [ADR-018](018_predictionframe_use_in_views_baseline.md) | views-baseline's Use of PredictionFrame (Output) | **Implemented.** All models return `dict[str, PredictionFrame]`; output side done in this repo. |
+| [ADR-019](019_featureframe_use_in_views_baseline.md) | views-baseline's Use of FeatureFrame (Input) | **Proposed / NOT implemented.** Baseline still takes DataFrame input; blocked on pipeline-core FeatureFrame integration. |
 
 ---
 
