@@ -26,7 +26,7 @@ Models are fitted automatically via `fit()` before generating predictions. Fitte
 
 ## Implemented Models
 
-All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`.
+All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`. ("unit" is the term used in `PredictionFrame.identifiers`; the input index calls the same axis the *entity*.)
 
 **Causal split (no leakage).** Every model is fit using only observations strictly before the test period. The last training month is `train_end = test_start − 1`; no value at or after `test_start` enters any fitted quantity. (The point models and `MixtureBaseline` filter `t < test_start`; `ConflictologyModel` filters `t ≤ train_end` — the same boundary, written two ways.)
 
@@ -74,7 +74,7 @@ Both draw `n_samples` i.i.d. samples per cell from a fresh, seeded generator (`n
 For each unit `i`, collects that unit's **last `window_months` observed values** up to `train_end`, then draws `n_samples` samples **with replacement** from that per-unit history for every forecast cell. The predictive distribution for a cell is the recent empirical distribution of that same unit — a conflict "climatology." It uses only the unit's own recent history: no pooling across units, no older history.
 
 ```python
-ConflictologyModel(targets, window_months, partition_dict, loa, n_samples=256, seed=42)
+ConflictologyModel(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
 #### MixtureBaseline — mixture of local and global empirical pools
