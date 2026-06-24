@@ -3,7 +3,8 @@ name = "views-baseline"
 version = "0.1.0"
 description = ""
 authors = [
-    "Sonja Häffner <sonhaf@prio.org>"
+    "Sonja Häffner <sonhaf@prio.org>",
+    "Simon Polichinel von der Maase <simmaa@prio.org>"
 ]
 license = "MIT"
 
