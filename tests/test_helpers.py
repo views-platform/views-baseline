@@ -1,11 +1,14 @@
 import logging
 
 import numpy as np
+import pytest
 
 from views_baseline.model.helpers import (
     build_identifier_arrays,
     build_time_grid,
     filter_entities,
+    resolve_level,
+    to_prediction_frames,
 )
 
 # -----------------------------------------------------------------------
@@ -50,3 +53,86 @@ def test_build_identifier_arrays_entity_time_order():
     time_arr, unit_arr = build_identifier_arrays([1, 2], [100, 101])
     np.testing.assert_array_equal(time_arr, [100, 101, 100, 101])
     np.testing.assert_array_equal(unit_arr, [1, 1, 2, 2])
+
+
+# -----------------------------------------------------------------------
+# resolve_level (ADR-020 spatial-level contract; closes C-18)
+# -----------------------------------------------------------------------
+
+
+def test_resolve_level_pgm():
+    """Declared pgm + matching index resolves to SpatialLevel.PGM (independent expected)."""
+    from views_frames import SpatialLevel
+
+    assert resolve_level("pgm", ("month_id", "priogrid_id")) is SpatialLevel.PGM
+
+
+def test_resolve_level_cm():
+    """Declared cm + matching index resolves to SpatialLevel.CM (independent expected)."""
+    from views_frames import SpatialLevel
+
+    assert resolve_level("cm", ("month_id", "country_id")) is SpatialLevel.CM
+
+
+def test_resolve_level_rejects_unknown_loa():
+    """An loa that is not a SpatialLevel value (e.g. the 'pg_id' shorthand) fails loud."""
+    with pytest.raises(ValueError, match="Unknown level of analysis"):
+        resolve_level("pg_id", ("month_id", "pg_id"))
+
+
+def test_resolve_level_rejects_declared_observed_mismatch():
+    """Declared pgm but a cm entity index is the C-18 silent-mislabel case — must raise."""
+    with pytest.raises(ValueError, match="does not match declared level"):
+        resolve_level("pgm", ("month_id", "country_id"))
+
+
+def test_resolve_level_rejects_reversed_index():
+    """A (entity, time) reversal (the C-05 case) must raise, not silently mislabel."""
+    with pytest.raises(ValueError, match="does not match declared level"):
+        resolve_level("pgm", ("priogrid_id", "month_id"))
+
+
+def test_resolve_level_rejects_non_two_level_index():
+    """A 3-level or flat index does not match the declared (time, entity) vocabulary."""
+    with pytest.raises(ValueError, match="does not match declared level"):
+        resolve_level("pgm", ("month_id", "priogrid_id", "extra"))
+
+
+# -----------------------------------------------------------------------
+# to_prediction_frames — the single views-frames construction seam (ADR-020)
+# -----------------------------------------------------------------------
+
+
+def test_to_prediction_frames_real_leaf_canary():
+    """Canary: build a real views_frames.PredictionFrame through the single seam.
+
+    Fails loudly if the leaf constructor, SpatioTemporalIndex, or SpatialLevel API
+    shifts again — the early-warning ADR-020 exists to provide (C-16/C-17).
+    """
+    from views_frames import PredictionFrame, SpatialLevel
+
+    y_pred_by_target = {"y1": np.zeros((4, 3), dtype=np.float64)}
+    time = np.array([100, 101, 100, 101])
+    unit = np.array([1, 1, 2, 2])
+
+    result = to_prediction_frames(y_pred_by_target, time=time, unit=unit, level=SpatialLevel.PGM)
+    pf = result["y1"]
+
+    assert isinstance(pf, PredictionFrame)
+    assert pf.values.shape == (4, 3)
+    assert pf.index.level is SpatialLevel.PGM
+    assert list(pf.index.time) == [100, 101, 100, 101]
+    assert list(pf.index.unit) == [1, 1, 2, 2]
+
+
+def test_to_prediction_frames_rejects_zero_sample_columns():
+    """The seam restores the fail-loud guard views_frames dropped (C-20)."""
+    from views_frames import SpatialLevel
+
+    with pytest.raises(ValueError, match="at least one sample column"):
+        to_prediction_frames(
+            {"y1": np.zeros((2, 0), dtype=np.float64)},
+            time=np.array([1, 1]),
+            unit=np.array([1, 2]),
+            level=SpatialLevel.PGM,
+        )

@@ -19,7 +19,7 @@ def partition_dict():
 
 @pytest.fixture
 def base_df_pgm():
-    return make_dummy_df(entity_id="pg_id")
+    return make_dummy_df(entity_id="priogrid_id")
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def base_df_cm():
 
 
 def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
     output_length = 36
     result = model.predict(df=base_df_pgm, sequence_number=0, output_length=output_length)
@@ -41,13 +41,13 @@ def test_zero_model_predicts_zeros_pgm(base_df_pgm, partition_dict, targets):
     assert_point_prediction_structure(
         result, base_df_pgm, targets, partition_dict, 0, output_length
     )
-    assert base_df_pgm.index.names[1] == "pg_id"
+    assert base_df_pgm.index.names[1] == "priogrid_id"
     for target in targets:
-        assert (result[target].y_pred == 0.0).all()
+        assert (result[target].values == 0.0).all()
 
 
 def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="country_id")
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="cm")
     model.fit(base_df_cm)
     output_length = 36
     result = model.predict(df=base_df_cm, sequence_number=0, output_length=output_length)
@@ -57,11 +57,11 @@ def test_zero_model_predicts_zeros_cm(base_df_cm, partition_dict, targets):
     )
     assert base_df_cm.index.names[1] == "country_id"
     for target in targets:
-        assert (result[target].y_pred == 0.0).all()
+        assert (result[target].values == 0.0).all()
 
 
 def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
 
     test_start = partition_dict["test"][0]
@@ -82,7 +82,7 @@ def test_zero_model_respects_sequence_number(base_df_pgm, partition_dict, target
 
 
 def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
     output_length = 36
 
@@ -96,9 +96,9 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
 
     for target in targets:
         pf = result[target]
-        for i in range(pf.y_pred.shape[0]):
+        for i in range(pf.values.shape[0]):
             uid = pf.identifiers["unit"][i]
-            assert pf.y_pred[i, 0] == expected_last.loc[uid, target]
+            assert pf.values[i, 0] == expected_last.loc[uid, target]
 
     assert_point_prediction_structure(
         result, base_df_pgm, targets, partition_dict, 0, output_length
@@ -106,7 +106,7 @@ def test_locf_model_uses_last_observation(base_df_pgm, partition_dict, targets):
 
 
 def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
 
     test_start = partition_dict["test"][0]
@@ -121,19 +121,19 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
 
 
 def test_locf_model_time_idx_is_not_tuple_before_fit(partition_dict, targets):
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     assert model.time_idx is None
 
 
 def test_locf_model_fit_handles_unsorted_data(partition_dict, targets):
-    time_idx_name, entity_idx_name = "month_id", "pg_id"
+    time_idx_name, entity_idx_name = "month_id", "priogrid_id"
     rows = []
     for t in [490, 492, 491]:  # deliberately unsorted
         rows.append({time_idx_name: t, entity_idx_name: 1, "y1": t * 10 + 1, "y2": t * 100 + 1})
     rows.append({time_idx_name: 492, entity_idx_name: 2, "y1": 4921, "y2": 49202})
     df = pd.DataFrame(rows).set_index([time_idx_name, entity_idx_name])
 
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(df)
     # Must use month 492 (temporally last), not 491 (positionally last)
     assert model.last_observations.loc[1, "y1"] == 492 * 10 + 1
@@ -151,7 +151,7 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
         targets=targets,
         window_months=months,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
 
     output_length = 36
@@ -170,9 +170,9 @@ def test_average_model_uses_mean_of_last_n_months(base_df_pgm, partition_dict, t
 
     for target in targets:
         pf = result[target]
-        for i in range(pf.y_pred.shape[0]):
+        for i in range(pf.values.shape[0]):
             uid = pf.identifiers["unit"][i]
-            assert pf.y_pred[i, 0] == pytest.approx(expected_means.loc[uid, target])
+            assert pf.values[i, 0] == pytest.approx(expected_means.loc[uid, target])
 
     assert_point_prediction_structure(
         result, base_df_pgm, targets, partition_dict, 0, output_length
@@ -185,7 +185,7 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
         targets=targets,
         window_months=months,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(base_df_pgm)
 
@@ -207,7 +207,7 @@ def test_average_model_respects_sequence_number(base_df_pgm, partition_dict, tar
 
 
 def test_conflictology_model_resamples_from_history(base_df_pgm, partition_dict, targets):
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
+    from views_frames import PredictionFrame
 
     months = 4
     n_samples = 64
@@ -215,7 +215,7 @@ def test_conflictology_model_resamples_from_history(base_df_pgm, partition_dict,
         targets=targets,
         window_months=months,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         n_samples=n_samples,
         seed=42,
     )
@@ -241,7 +241,7 @@ def test_conflictology_model_resamples_from_history(base_df_pgm, partition_dict,
     for target in targets:
         pf = result[target]
         assert isinstance(pf, PredictionFrame)
-        assert pf.y_pred.shape == (n_entities * output_length, n_samples)
+        assert pf.values.shape == (n_entities * output_length, n_samples)
 
     # All sampled values must come from the history window
     train_df = base_df_pgm[
@@ -250,11 +250,11 @@ def test_conflictology_model_resamples_from_history(base_df_pgm, partition_dict,
     train_df = train_df.sort_index(level=[entity_idx, time_idx])
 
     pf = result[targets[0]]
-    for i in range(pf.y_pred.shape[0]):
+    for i in range(pf.values.shape[0]):
         uid = pf.identifiers["unit"][i]
         ent_history = train_df.xs(uid, level=entity_idx).tail(months)
         history_values = set(ent_history[targets[0]].tolist())
-        assert set(pf.y_pred[i].tolist()).issubset(history_values)
+        assert set(pf.values[i].tolist()).issubset(history_values)
 
 
 def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dict, targets):
@@ -264,7 +264,7 @@ def test_conflictology_model_respects_sequence_number(base_df_pgm, partition_dic
         targets=targets,
         window_months=months,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         n_samples=n_samples,
         seed=42,
     )
@@ -296,7 +296,7 @@ def test_conflictology_matches_mixture_lambda_zero(base_df_pgm, partition_dict, 
         targets=targets,
         window_months=window,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         n_samples=n_samples,
         seed=42,
     )
@@ -308,7 +308,7 @@ def test_conflictology_matches_mixture_lambda_zero(base_df_pgm, partition_dict, 
         lambda_mix=0.0,
         n_samples=n_samples,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         seed=99,  # different seed — we test pools, not samples
     )
     mix.fit(base_df_pgm)
@@ -326,44 +326,6 @@ def test_conflictology_matches_mixture_lambda_zero(base_df_pgm, partition_dict, 
 
 
 # -----------------------------------------------------------------------
-# build_prediction_grid helper
-# -----------------------------------------------------------------------
-
-
-def test_build_prediction_grid_shape_and_values():
-    from views_baseline.model.helpers import build_prediction_grid
-
-    df = build_prediction_grid(
-        time_idx="month_id",
-        entity_idx="pg_id",
-        entity_ids=[1, 2],
-        time_ids=[100, 101],
-        targets=["y1"],
-        value_fn=lambda cid, target: float(cid),
-    )
-    assert df.index.names == ["month_id", "pg_id"]
-    assert list(df.columns) == ["pred_y1"]
-    assert len(df) == 4  # 2 entities x 2 times
-    assert df.loc[(100, 2), "pred_y1"] == 2.0
-
-
-def test_build_prediction_grid_empty():
-    from views_baseline.model.helpers import build_prediction_grid
-
-    df = build_prediction_grid(
-        time_idx="month_id",
-        entity_idx="pg_id",
-        entity_ids=[],
-        time_ids=[100, 101],
-        targets=["y1"],
-        value_fn=lambda cid, target: 0.0,
-    )
-    assert len(df) == 0
-    assert list(df.columns) == ["pred_y1"]
-    assert df.index.names == ["month_id", "pg_id"]
-
-
-# -----------------------------------------------------------------------
 # MixtureBaseline
 # -----------------------------------------------------------------------
 
@@ -374,7 +336,7 @@ def make_mixture_df():
     Entity 3 (all-zero) tests the zero-probability trap.
     """
     time_idx_name = "month_id"
-    entity_idx_name = "pg_id"
+    entity_idx_name = "priogrid_id"
     times = list(range(440, 540))
     rows = []
     for t in times:
@@ -414,7 +376,7 @@ def test_mixture_fit_extracts_local_pool(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=10,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
 
@@ -438,7 +400,7 @@ def test_mixture_fit_extracts_global_pool(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=10,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
 
@@ -462,7 +424,7 @@ def test_mixture_fit_global_pool_causal(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=10,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
 
@@ -480,13 +442,13 @@ def test_mixture_fit_returns_self(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=10,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     assert model.fit(mixture_df) is model
 
 
 def test_mixture_predict_shape(mixture_df, partition_dict, targets):
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
+    from views_frames import PredictionFrame
 
     n_samples = 10
     model = MixtureBaseline(
@@ -495,7 +457,7 @@ def test_mixture_predict_shape(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=n_samples,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
     output_length = 5
@@ -508,7 +470,7 @@ def test_mixture_predict_shape(mixture_df, partition_dict, targets):
     for target in targets:
         pf = result[target]
         assert isinstance(pf, PredictionFrame)
-        assert pf.y_pred.shape == (n_entities * output_length, n_samples)
+        assert pf.values.shape == (n_entities * output_length, n_samples)
         assert len(pf.identifiers["time"]) == n_entities * output_length
         assert len(pf.identifiers["unit"]) == n_entities * output_length
 
@@ -520,7 +482,7 @@ def test_mixture_predict_respects_sequence_number(mixture_df, partition_dict, ta
         lambda_mix=0.05,
         n_samples=10,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
 
@@ -546,21 +508,21 @@ def test_mixture_predict_lambda_zero_local_only(mixture_df, partition_dict, targ
         lambda_mix=0.0,
         n_samples=n_samples,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
     result = model.predict(df=mixture_df, sequence_number=0, output_length=1)
 
     pf = result["y1"]
-    for i in range(pf.y_pred.shape[0]):
+    for i in range(pf.values.shape[0]):
         uid = pf.identifiers["unit"][i]
         local_vals = set(model.local_pool[uid]["y1"].tolist())
-        assert set(pf.y_pred[i].tolist()).issubset(local_vals)
+        assert set(pf.values[i].tolist()).issubset(local_vals)
 
     # Entity 3 (all-zero): should be all zeros
-    for i in range(pf.y_pred.shape[0]):
+    for i in range(pf.values.shape[0]):
         if pf.identifiers["unit"][i] == 3:
-            assert all(v == 0.0 for v in pf.y_pred[i])
+            assert all(v == 0.0 for v in pf.values[i])
             break
 
 
@@ -572,16 +534,16 @@ def test_mixture_predict_lambda_one_global_only(mixture_df, partition_dict, targ
         lambda_mix=1.0,
         n_samples=100,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
     )
     model.fit(mixture_df)
     result = model.predict(df=mixture_df, sequence_number=0, output_length=1)
 
     # Entity 3 (all-zero local pool) should have all positive samples from global pool
     pf = result["y1"]
-    for i in range(pf.y_pred.shape[0]):
+    for i in range(pf.values.shape[0]):
         if pf.identifiers["unit"][i] == 3:
-            assert all(v > 0 for v in pf.y_pred[i])
+            assert all(v > 0 for v in pf.values[i])
             break
 
 
@@ -593,7 +555,7 @@ def test_mixture_predict_reproducible(mixture_df, partition_dict, targets):
         lambda_mix=0.05,
         n_samples=50,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         seed=123,
     )
     m1 = MixtureBaseline(**kwargs)
@@ -605,7 +567,7 @@ def test_mixture_predict_reproducible(mixture_df, partition_dict, targets):
     r2 = m2.predict(df=mixture_df, sequence_number=0, output_length=2)
 
     for target in targets:
-        np.testing.assert_array_equal(r1[target].y_pred, r2[target].y_pred)
+        np.testing.assert_array_equal(r1[target].values, r2[target].values)
 
 
 # -----------------------------------------------------------------------
@@ -617,7 +579,7 @@ def test_catalog_get_zero_model(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
     config = {"targets": targets}
-    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     model = catalog.get_model("ZeroModel")
     assert isinstance(model, ZeroModel)
 
@@ -626,7 +588,7 @@ def test_catalog_get_average_model(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
     config = {"targets": targets, "window_months": 6}
-    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     model = catalog.get_model("AverageModel")
     assert isinstance(model, AverageModel)
     assert model.window_months == 6
@@ -636,7 +598,7 @@ def test_catalog_unknown_model_raises(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
     config = {"targets": targets}
-    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     with pytest.raises(ValueError, match="NoSuchModel"):
         catalog.get_model("NoSuchModel")
 
@@ -645,7 +607,7 @@ def test_catalog_missing_required_key_raises(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
     config = {"targets": targets}  # missing "window_months" required by AverageModel
-    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     with pytest.raises(ValueError, match="window_months"):
         catalog.get_model("AverageModel")
 
@@ -654,7 +616,7 @@ def test_catalog_list_models(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
     config = {"targets": targets}
-    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     names = catalog.list_models()
     expected = {"ZeroModel", "LocfModel", "AverageModel", "ConflictologyModel", "MixtureBaseline"}
     assert set(names) == expected
@@ -668,19 +630,19 @@ def test_catalog_list_models(partition_dict, targets):
 def test_average_model_window_months_zero_produces_nan(base_df_pgm, partition_dict, targets):
     """window_months=0 → tail(0) is empty → mean is NaN → all predictions NaN."""
     model = AverageModel(
-        targets=targets, window_months=0, partition_dict=partition_dict, loa="pg_id"
+        targets=targets, window_months=0, partition_dict=partition_dict, loa="pgm"
     )
     model.fit(base_df_pgm)
     result = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
     for target in targets:
-        assert np.isnan(result[target].y_pred).all()
+        assert np.isnan(result[target].values).all()
 
 
 def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, targets):
     """window_months=0 → tail(0) empty → xs() raises KeyError during fit."""
     model = ConflictologyModel(
         targets=targets, window_months=0, partition_dict=partition_dict,
-        loa="pg_id", n_samples=10,
+        loa="pgm", n_samples=10,
     )
     with pytest.raises(KeyError):
         model.fit(base_df_pgm)
@@ -691,7 +653,7 @@ def test_mixture_window_months_zero_raises(partition_dict, targets):
     df = make_mixture_df()
     model = MixtureBaseline(
         targets=targets, window_months=0, lambda_mix=0.0,
-        n_samples=10, partition_dict=partition_dict, loa="pg_id",
+        n_samples=10, partition_dict=partition_dict, loa="pgm",
     )
     model.fit(df)
     with pytest.raises(ValueError):
@@ -702,7 +664,7 @@ def test_conflictology_n_samples_zero_raises(base_df_pgm, partition_dict, target
     """n_samples=0 → PredictionFrame rejects y_pred with 0 sample columns."""
     model = ConflictologyModel(
         targets=targets, window_months=4, partition_dict=partition_dict,
-        loa="pg_id", n_samples=0,
+        loa="pgm", n_samples=0,
     )
     model.fit(base_df_pgm)
     with pytest.raises(ValueError, match="at least one sample column"):
@@ -711,7 +673,7 @@ def test_conflictology_n_samples_zero_raises(base_df_pgm, partition_dict, target
 
 def test_predict_before_fit_raises(base_df_pgm, partition_dict, targets):
     """predict() before fit() → self.time_idx is None → crash."""
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     with pytest.raises((AttributeError, TypeError, KeyError)):
         model.predict(df=base_df_pgm, sequence_number=0, output_length=36)
 
@@ -725,7 +687,7 @@ def test_locf_entity_drop_warning(caplog, base_df_pgm, partition_dict, targets):
     """Entities in predict df but not in fitted state trigger a WARNING."""
     import logging
 
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
 
     # Add entity 3 at train_end — it won't be in last_observations
@@ -734,7 +696,7 @@ def test_locf_entity_drop_warning(caplog, base_df_pgm, partition_dict, targets):
     extra = pd.DataFrame(
         {"y1": [99.0], "y2": [99.0]},
         index=pd.MultiIndex.from_tuples(
-            [(train_end, 3)], names=["month_id", "pg_id"]
+            [(train_end, 3)], names=["month_id", "priogrid_id"]
         ),
     )
     df_predict = pd.concat([base_df_pgm, extra]).sort_index()
@@ -750,7 +712,7 @@ def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, target
     import logging
 
     model = AverageModel(
-        targets=targets, window_months=3, partition_dict=partition_dict, loa="pg_id"
+        targets=targets, window_months=3, partition_dict=partition_dict, loa="pgm"
     )
     model.fit(base_df_pgm)
 
@@ -759,7 +721,7 @@ def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, target
     extra = pd.DataFrame(
         {"y1": [99.0], "y2": [99.0]},
         index=pd.MultiIndex.from_tuples(
-            [(train_end, 3)], names=["month_id", "pg_id"]
+            [(train_end, 3)], names=["month_id", "priogrid_id"]
         ),
     )
     df_predict = pd.concat([base_df_pgm, extra]).sort_index()
@@ -793,7 +755,7 @@ def _train_end_only_entity(train_end, entity_id):
     return pd.DataFrame(
         {"y1": [99.0], "y2": [99.0]},
         index=pd.MultiIndex.from_tuples(
-            [(train_end, entity_id)], names=["month_id", "pg_id"]
+            [(train_end, entity_id)], names=["month_id", "priogrid_id"]
         ),
     )
 
@@ -802,7 +764,7 @@ def test_zero_model_raises_when_no_entities_at_train_end(
     base_df_pgm, partition_dict, targets
 ):
     """ZeroModel: no rows at train_end → fail loud, not a cryptic shape error."""
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)
 
     test_start = partition_dict["test"][0]
@@ -811,7 +773,7 @@ def test_zero_model_raises_when_no_entities_at_train_end(
     df_predict = pd.DataFrame(
         {"y1": [1.0], "y2": [2.0]},
         index=pd.MultiIndex.from_tuples(
-            [(train_end - 5, 1)], names=["month_id", "pg_id"]
+            [(train_end - 5, 1)], names=["month_id", "priogrid_id"]
         ),
     )
     with pytest.raises(ValueError, match="ZeroModel: no entities to predict"):
@@ -822,7 +784,7 @@ def test_locf_model_raises_when_all_entities_dropped(
     base_df_pgm, partition_dict, targets
 ):
     """LocfModel: every train_end entity absent from fitted state → fail loud."""
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pg_id")
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(base_df_pgm)  # fitted on entities {1, 2}
 
     test_start = partition_dict["test"][0]
@@ -837,7 +799,7 @@ def test_average_model_raises_when_all_entities_dropped(
 ):
     """AverageModel: every train_end entity absent from fitted state → fail loud."""
     model = AverageModel(
-        targets=targets, window_months=3, partition_dict=partition_dict, loa="pg_id"
+        targets=targets, window_months=3, partition_dict=partition_dict, loa="pgm"
     )
     model.fit(base_df_pgm)  # fitted on entities {1, 2}
 
@@ -852,7 +814,7 @@ def test_conflictology_raises_when_no_entities(base_df_pgm, partition_dict, targ
     """ConflictologyModel: empty fitted pool → fail loud (was a silent return {})."""
     model = ConflictologyModel(
         targets=targets, window_months=4, partition_dict=partition_dict,
-        loa="pg_id", n_samples=10,
+        loa="pgm", n_samples=10,
     )
     model.fit(base_df_pgm)
     model.entity_ids = []  # force the all-dropped state
@@ -865,7 +827,7 @@ def test_mixture_raises_when_no_entities(partition_dict, targets):
     df = make_mixture_df()
     model = MixtureBaseline(
         targets=targets, window_months=4, lambda_mix=0.05,
-        n_samples=10, partition_dict=partition_dict, loa="pg_id",
+        n_samples=10, partition_dict=partition_dict, loa="pgm",
     )
     model.fit(df)
     model.entity_ids = []  # force the all-dropped state
@@ -884,7 +846,7 @@ def test_conflictology_predict_reproducible(base_df_pgm, partition_dict, targets
         targets=targets,
         window_months=4,
         partition_dict=partition_dict,
-        loa="pg_id",
+        loa="pgm",
         n_samples=50,
         seed=123,
     )
@@ -897,4 +859,4 @@ def test_conflictology_predict_reproducible(base_df_pgm, partition_dict, targets
     r2 = m2.predict(df=base_df_pgm, sequence_number=0, output_length=2)
 
     for target in targets:
-        np.testing.assert_array_equal(r1[target].y_pred, r2[target].y_pred)
+        np.testing.assert_array_equal(r1[target].values, r2[target].values)

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from views_frames import PredictionFrame
 
 
 @runtime_checkable
@@ -20,7 +23,7 @@ class BaselineModel(Protocol):
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> dict: ...
+    ) -> dict[str, PredictionFrame]: ...
 
 
 @runtime_checkable
@@ -39,4 +42,4 @@ class DistributionalBaselineModel(Protocol):
         df: pd.DataFrame,
         sequence_number: int,
         output_length: int,
-    ) -> dict: ...
+    ) -> dict[str, PredictionFrame]: ...

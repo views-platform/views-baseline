@@ -89,10 +89,9 @@ The class attribute `distributional = True` routes the output through the distri
 ## Boundaries and Interactions
 
 - **Depends on:** `numpy` for RNG and array operations.
-- **Lazy import:** `views_pipeline_core.data.prediction_frame.PredictionFrame` inside `predict()`.
-- **Does not depend on** `build_prediction_grid`. Output is built inline.
+- **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/helpers.py` (lazy `views_frames` leaf import inside the function). No inline construction; `build_prediction_grid` is deleted.
 - **Instantiated by:** `BaselineModelCatalog._get_mixture_model()`. All model-specific params (`window_months`, `lambda_mix`, `n_samples`) are required config keys — the catalog reads them via `self.config[key]` with no defaults.
-- **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` via `isinstance(model, DistributionalBaselineModel)`.
+- **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` — a single type-uniform path since ADR-017; `distributional = True` is a semantic marker, not an `isinstance` dispatch discriminator.
 - **Pool equivalence with `ConflictologyModel`:** When `lambda_mix=0.0`, all draws come from the local pool, which is constructed by the same logic as `ConflictologyModel.hist_per_entity`. This is verified by `test_conflictology_matches_mixture_lambda_zero`.
 
 ---

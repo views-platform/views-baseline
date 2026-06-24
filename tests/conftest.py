@@ -21,7 +21,7 @@ MANAGER_PARTITION = {"test": (120, 125)}
 ARTIFACT_TS = "20260101_120000"
 
 
-def make_dummy_df(entity_id="pg_id", time_range=range(440, 540)):
+def make_dummy_df(entity_id="priogrid_id", time_range=range(440, 540)):
     """
     Create a simple MultiIndex dataframe with 2 entities and a range of months.
     Index names matter because the models read them from df.index.names[0/1].
@@ -112,7 +112,7 @@ def assert_point_prediction_structure(
     result, df, targets, partition_dict, sequence_number, output_length
 ):
     """Assert common structural properties of prediction PredictionFrame dicts."""
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
+    from views_frames import PredictionFrame
 
     test_start = partition_dict["test"][0]
     prediction_start = test_start + sequence_number
@@ -133,7 +133,7 @@ def assert_point_prediction_structure(
     for target in targets:
         pf = result[target]
         assert isinstance(pf, PredictionFrame)
-        assert pf.y_pred.shape == (n_entities * output_length, 1)
+        assert pf.values.shape == (n_entities * output_length, 1)
         time_vals = pf.identifiers["time"]
         assert min(time_vals) == prediction_start
         assert max(time_vals) == prediction_end

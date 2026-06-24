@@ -53,6 +53,13 @@ Written as explicit rules:
 
 ### The `PredictionFrame` Lazy Import Rule
 
+> **Amended by ADR-020 (2026-06-24):** `PredictionFrame` now comes from the `views_frames` leaf
+> (re-exported by `views-pipeline-core` ≥3.0.0, #188), and all construction is **consolidated into
+> a single function-scoped import site** — `to_prediction_frames` in `model/helpers.py`. The two
+> per-model lazy imports described below are replaced by that one site; the distributional models
+> no longer construct `PredictionFrame` inline. This answers the first Open Question at the foot of
+> this ADR. The rule that `model/` carries no module-level frame import is unchanged.
+
 `PredictionFrame` from `views-pipeline-core` is required inside the `predict()` methods of `ConflictologyModel` and `MixtureBaseline`, but `model/` must not carry `views-pipeline-core` as a hard module-level import. The resolution is:
 
 ```python

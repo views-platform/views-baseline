@@ -34,7 +34,9 @@ All five baseline models return `dict[str, PredictionFrame]` from `predict()` �
 - **Empty-entity:** `require_entities()` fails loud with a descriptive `ValueError` rather than emitting an unusable empty/degenerate frame.
 - **Coupling:** `PredictionFrame` is lazy-imported at three sites (the two distributional `predict()` methods and `build_prediction_frame`); `model/` stays importable without pipeline-core, but model `predict()` now requires it (ADR-013).
 
-There is **no DataFrame output path**. `build_prediction_grid()` is retained in `helpers.py` for reference but is called by nothing.
+> **Status update (ADR-020, 2026-06-24):** the three lazy-import / construction sites are now **consolidated into one seam**, `to_prediction_frames` in `model/helpers.py`, and `PredictionFrame` is the `views_frames` leaf (pipeline-core ≥3.0.0, #188). `build_prediction_grid()` — previously "retained for reference, called by nothing" — has been **deleted** (it was the last vestige of the DataFrame output path).
+
+There is **no DataFrame output path**.
 
 ---
 

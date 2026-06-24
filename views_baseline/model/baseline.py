@@ -11,6 +11,8 @@ from views_baseline.model.helpers import (
     build_time_grid,
     filter_entities,
     require_entities,
+    resolve_level,
+    to_prediction_frames,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,12 +56,14 @@ class ZeroModel:
         )
         require_entities(entity_ids, "ZeroModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
+        level = resolve_level(self.loa, df.index.names)
 
         return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: 0.0,
+            level=level,
         )
 
 
@@ -111,12 +115,14 @@ class LocfModel:
         entity_ids = filter_entities(entity_ids, self.last_observations.index, "LocfModel")
         require_entities(entity_ids, "LocfModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
+        level = resolve_level(self.loa, df.index.names)
 
         return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: self.last_observations.loc[cid, target],
+            level=level,
         )
 
 
@@ -177,12 +183,14 @@ class AverageModel:
         entity_ids = filter_entities(entity_ids, self.mean.index, "AverageModel")
         require_entities(entity_ids, "AverageModel")
         time_ids = build_time_grid(test_start, sequence_number, output_length)
+        level = resolve_level(self.loa, df.index.names)
 
         return build_prediction_frame(
             entity_ids=entity_ids,
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: self.mean.loc[cid, target],
+            level=level,
         )
 
 
@@ -254,9 +262,8 @@ class ConflictologyModel:
         Return predictions as Dict[str, PredictionFrame] — one PF per target.
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
-        from views_pipeline_core.data.prediction_frame import PredictionFrame
-
         test_start = self.partition_dict["test"][0]
+        level = resolve_level(self.loa, df.index.names)
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         entities_with_history = filter_entities(
@@ -280,14 +287,7 @@ class ConflictologyModel:
                     )
                 idx += 1
 
-        result = {}
-        for t in self.targets:
-            result[t] = PredictionFrame(
-                y_pred=y_preds[t],
-                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
-            )
-
-        return result
+        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)
 
 
 class MixtureBaseline:
@@ -373,9 +373,8 @@ class MixtureBaseline:
     def predict(
         self, df: pd.DataFrame, sequence_number: int, output_length: int
     ) -> dict:
-        from views_pipeline_core.data.prediction_frame import PredictionFrame
-
         test_start = self.partition_dict["test"][0]
+        level = resolve_level(self.loa, df.index.names)
         time_ids = build_time_grid(test_start, sequence_number, output_length)
 
         entities_with_pool = filter_entities(
@@ -397,11 +396,4 @@ class MixtureBaseline:
                     y_preds[t][idx] = self._sample(cid, t, rng)
                 idx += 1
 
-        result = {}
-        for t in self.targets:
-            result[t] = PredictionFrame(
-                y_pred=y_preds[t],
-                identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
-            )
-
-        return result
+        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)

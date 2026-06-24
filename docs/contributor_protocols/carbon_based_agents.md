@@ -46,9 +46,9 @@ helpers.py  →  baseline.py  →  catalog.py  →  manager/
                                 protocol.py  ↗
 ```
 
-The `model/` layer must not import from `manager/`. `PredictionFrame` from
-`views-pipeline-core` is lazy-imported inside distributional `predict()` methods only —
-not at the top of the file.
+The `model/` layer must not import from `manager/`. `PredictionFrame` (the `views_frames`
+leaf, re-exported by views-pipeline-core ≥3.0.0) is lazy-imported inside the single
+`to_prediction_frames` seam in `helpers.py` (ADR-020) — not at the top of any module.
 
 ### Declarations, not inference
 
@@ -175,6 +175,6 @@ in a way that breaks the documented contract:
   is the reproducibility contract (ADR-004). Do not "fix" this without first resolving the
   open question in ADR-004 and writing ADR-011.
 
-- **`PredictionFrame` lazy import.** The deferred `from views_pipeline_core...` import inside
-  distributional `predict()` methods is intentional (ADR-002). Do not move it to the top of
-  `baseline.py` as a cleanup.
+- **`PredictionFrame` lazy import.** The deferred `from views_frames import ...` lives in the
+  single `to_prediction_frames` seam in `helpers.py` (ADR-002 as amended by ADR-020). Do not move
+  it to module level, and do not add a second `PredictionFrame` construction site.
