@@ -183,8 +183,12 @@ def build_prediction_frame(
         values = np.empty((n_rows, 1), dtype=np.float64)
         idx = 0
         for cid in entity_ids:
+            # Point baselines are constant across the horizon: evaluate value_fn
+            # once per (entity, target) and fill every horizon step. Preserves the
+            # entity→time→target fill order (ADR-011); resolves C-23.
+            value = value_fn(cid, target)
             for _ in time_ids:
-                values[idx, 0] = value_fn(cid, target)
+                values[idx, 0] = value
                 idx += 1
         y_pred_by_target[target] = values
 

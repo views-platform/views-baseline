@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-06-24                           |
-| Total Concerns    | 21                                   |
-| Open Concerns     | 18                                   |
+| Total Concerns    | 23                                   |
+| Open Concerns     | 20                                   |
 | Resolved Concerns | 3                                    |
 
 ---
@@ -326,6 +326,36 @@ See also C-13 (the related sample-axis validation gap in PFE concat aggregation)
 ADR-017 unified all models onto `dict[str, PredictionFrame]` output and removed the `isinstance(model, DistributionalBaselineModel)` dispatch from the manager (`_generate_predictions`); `distributional = True` is now a semantic marker only. ADR-010 itself records the removal, yet several other governance documents still describe the dispatch as live. This is **pre-existing drift** (it predates the views-frames epic #22) and is documentation-only — no code impact — but it misleads contributors, which matters under the silicon-agent protocol (ADR-007) where stale docs are treated as authoritative. Epic #22 corrected this where it already touched docs (silicon protocol, ADR-003, the two distributional CICs); the remaining sites are listed above. Out of scope for #22 (a bounded migration, not a doc sweep); tracked here for a dedicated governance-doc pass.
 
 See also C-16 / ADR-020 (the epic that corrected the adjacent construction-site drift).
+
+---
+
+### C-22: Baseline PredictionFrames carry no provenance metadata
+
+| Field | Value |
+|-------|-------|
+| ID | C-22 |
+| Tier | 4 |
+| Source | pr-review (2026-06-24) |
+| Trigger | When a downstream consumer needs run identity (`model`, `run_type`, `seed`, `run_id`, `data_version`) attached to a baseline forecast — the frames built by `to_prediction_frames` carry an empty `FrameMetadata`, so provenance must be reconstructed from outside the frame |
+| Location | `views_baseline/model/helpers.py` `to_prediction_frames` — `PredictionFrame(y_pred, index)` is constructed with no `metadata` argument |
+
+`to_prediction_frames` is the single construction chokepoint (ADR-020), which makes it the natural — and only — place to stamp `FrameMetadata` (views-frames v1.4.0 added `run_id`/`data_version`) if downstream ever wants run identity carried on the frame itself. Not required for the #21 migration and not a correctness issue; recorded as an enhancement opportunity that the seam makes trivial to add later. No current consumer requests it.
+
+---
+
+### C-23: `value_fn` invoked once per horizon step though point baselines are constant across the horizon
+
+| Field | Value |
+|-------|-------|
+| ID | C-23 |
+| Tier | 4 |
+| Source | pr-review (2026-06-24) |
+| Trigger | When a point model's `value_fn` becomes non-trivial (e.g. a per-cell computation rather than a constant or a `.loc` lookup) — `build_prediction_frame` calls it `output_length` times per entity even though the value is identical across the forecast horizon, so the redundancy becomes a real cost |
+| Location | `views_baseline/model/helpers.py` `build_prediction_frame` inner loop (`for _ in time_ids: values[idx, 0] = value_fn(cid, target)`) |
+
+Point baselines are constant across the horizon, so `value_fn(cid, target)` returns the same value for every `tid`; calling it once per `(cid, target)` and broadcasting across `time_ids` would be equivalent. Correct as written and negligible today (the `value_fn`s are constants or single `.loc` lookups); flagged only so it is revisited if a point model with an expensive `value_fn` is ever added. Any change must preserve the entity→time→target fill order (ADR-011).
+
+> **Status (2026-06-25):** resolved in the working tree by tech-debt-cleanup — `value_fn` is now evaluated once per `(entity, target)` and filled across the horizon (helpers.py `build_prediction_frame`), preserving the ADR-011 order and all values (104 tests green). Stays Open until merge.
 
 ---
 
