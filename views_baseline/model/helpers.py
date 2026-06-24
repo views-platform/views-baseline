@@ -1,51 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
-import pandas as pd
+
+if TYPE_CHECKING:
+    from views_frames import PredictionFrame, SpatialLevel
 
 logger = logging.getLogger(__name__)
-
-
-def build_prediction_grid(
-    time_idx: str,
-    entity_idx: str,
-    entity_ids,
-    time_ids: list[int],
-    targets: list[str],
-    value_fn: Callable[[Any, str], Any],
-) -> pd.DataFrame:
-    """
-    Build a prediction DataFrame on the (time, entity) grid.
-
-    Args:
-        time_idx: Name of the time index level.
-        entity_idx: Name of the entity index level.
-        entity_ids: Entity IDs to include.
-        time_ids: Time IDs to include.
-        targets: Target variable names (without 'pred_' prefix).
-        value_fn: Called as value_fn(entity_id, target) to get the prediction value.
-
-    Returns:
-        DataFrame with MultiIndex [time_idx, entity_idx] and columns pred_{target}.
-    """
-    records = []
-    for cid in entity_ids:
-        for tid in time_ids:
-            row = {time_idx: tid, entity_idx: cid}
-            row.update({f"pred_{target}": value_fn(cid, target) for target in targets})
-            records.append(row)
-
-    if not records:
-        df = pd.DataFrame(columns=[f"pred_{target}" for target in targets])
-        df.index = pd.MultiIndex.from_arrays([[] for _ in range(2)], names=[time_idx, entity_idx])
-        return df
-
-    df = pd.DataFrame(records)
-    df = df.set_index([time_idx, entity_idx]).sort_index()
-    return df[[f"pred_{target}" for target in targets]]
 
 
 def build_time_grid(
@@ -54,6 +17,52 @@ def build_time_grid(
     """Build the list of prediction time IDs starting from test_start + sequence_number."""
     prediction_start = test_start + sequence_number
     return list(range(prediction_start, prediction_start + output_length))
+
+
+def resolve_level(loa: str, index_names) -> "SpatialLevel":
+    """Resolve the declared level-of-analysis to a views-frames ``SpatialLevel``.
+
+    The declared ``loa`` is authoritative (ADR-003); the DataFrame index is a
+    cross-check that must agree. ``views_frames.SpatialLevel`` is the single
+    source of truth for the ``(time, entity)`` index vocabulary per level, so we
+    validate against ``level.index_names`` rather than hardcoding column names.
+    This makes the required spatial ``level`` (carried into every output
+    ``PredictionFrame``) a declared-and-validated quantity, not an inference from
+    the positional entity index (ADR-020; closes risk C-18, mitigates C-05).
+
+    Args:
+        loa: Declared level of analysis — the ``SpatialLevel`` value (``"cm"`` or
+            ``"pgm"``), as carried in ``config["level"]``.
+        index_names: The DataFrame's ``index.names`` — expected ``(time, entity)``.
+
+    Returns:
+        The resolved ``SpatialLevel``.
+
+    Raises:
+        ValueError: if ``loa`` is not a known level, or the index names do not
+            match the declared level's ``(time, entity)`` vocabulary.
+    """
+    from views_frames import SpatialLevel
+
+    try:
+        level = SpatialLevel(loa)
+    except ValueError:
+        valid = [lvl.value for lvl in SpatialLevel]
+        raise ValueError(
+            f"Unknown level of analysis loa={loa!r}; expected one of {valid} "
+            f"(ADR-020 spatial-level contract)."
+        ) from None
+
+    expected = level.index_names
+    actual = tuple(index_names)
+    if actual != expected:
+        raise ValueError(
+            f"Index does not match declared level: loa={loa!r} -> {level.name} "
+            f"expects index names {expected}, but the DataFrame index is {actual}. "
+            f"Declarations are authoritative (ADR-003); the input does not match "
+            f"the declared spatial level."
+        )
+    return level
 
 
 def filter_entities(entity_ids, valid_set, model_name: str) -> list:
@@ -107,25 +116,69 @@ def build_identifier_arrays(
     return np.array(time_arr), np.array(unit_arr)
 
 
+def to_prediction_frames(
+    y_pred_by_target: dict[str, np.ndarray],
+    time: np.ndarray,
+    unit: np.ndarray,
+    level: "SpatialLevel",
+) -> dict[str, "PredictionFrame"]:
+    """Build a ``dict[str, PredictionFrame]`` from precomputed arrays.
+
+    This is the **single** ``views_frames`` construction site for the whole
+    package (ADR-020). Both point models (via :func:`build_prediction_frame`)
+    and distributional models route their output through here, so the platform
+    leaf is imported and constructed in exactly one place. A single
+    ``SpatioTemporalIndex`` (carrying the validated spatial ``level``) backs every
+    per-target frame.
+
+    Args:
+        y_pred_by_target: One array per target, each shape ``(N, S)`` — ``S == 1``
+            for point models, ``S == n_samples`` for distributional models.
+        time: Row time identifiers, shape ``(N,)``.
+        unit: Row unit identifiers, shape ``(N,)``.
+        level: The validated :class:`views_frames.SpatialLevel` (see
+            :func:`resolve_level`).
+
+    Returns:
+        One ``PredictionFrame`` per target, sharing one ``SpatioTemporalIndex``.
+    """
+    from views_frames import PredictionFrame, SpatioTemporalIndex
+
+    for target, y_pred in y_pred_by_target.items():
+        if y_pred.shape[1] == 0:
+            raise ValueError(
+                f"{target}: y_pred has 0 sample columns; a PredictionFrame must have "
+                f"at least one sample column (got shape {y_pred.shape}). This guards a "
+                f"degenerate n_samples=0 — views_frames no longer rejects it (ADR-020)."
+            )
+
+    index = SpatioTemporalIndex(
+        time=time.astype(np.int64),
+        unit=unit.astype(np.int64),
+        level=level,
+    )
+    return {target: PredictionFrame(y_pred, index) for target, y_pred in y_pred_by_target.items()}
+
+
 def build_prediction_frame(
     entity_ids,
     time_ids: list[int],
     targets: list[str],
     value_fn: Callable[[Any, str], Any],
-) -> dict:
-    """Build a dict[str, PredictionFrame] on the (entity, time) grid.
+    level: "SpatialLevel",
+) -> dict[str, "PredictionFrame"]:
+    """Build a dict[str, PredictionFrame] on the (entity, time) grid for point models.
 
-    Point-model counterpart of build_prediction_grid(). Returns one
-    PredictionFrame per target with y_pred shape (N, 1).
+    Returns one PredictionFrame per target with y_pred shape (N, 1). Builds the
+    per-target value arrays and delegates construction to the single seam
+    :func:`to_prediction_frames` (ADR-020).
 
     Iterates entity→time to match distributional model ordering (ADR-011).
     """
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
-
     time_arr, unit_arr = build_identifier_arrays(entity_ids, time_ids)
     n_rows = len(time_arr)
 
-    result = {}
+    y_pred_by_target = {}
     for target in targets:
         values = np.empty((n_rows, 1), dtype=np.float64)
         idx = 0
@@ -133,8 +186,6 @@ def build_prediction_frame(
             for _ in time_ids:
                 values[idx, 0] = value_fn(cid, target)
                 idx += 1
-        result[target] = PredictionFrame(
-            y_pred=values,
-            identifiers={"time": time_arr.copy(), "unit": unit_arr.copy()},
-        )
-    return result
+        y_pred_by_target[target] = values
+
+    return to_prediction_frames(y_pred_by_target, time=time_arr, unit=unit_arr, level=level)

@@ -44,6 +44,13 @@ from views_pipeline_core.data.prediction_frame import PredictionFrame
 
 These are the only points where `model/` touches views-pipeline-core. Since ADR-010/ADR-017 unified all models onto PredictionFrame output, the point models reach pipeline-core too — via `build_prediction_frame()` in `helpers.py`. All three sites are still lazy (inside function bodies), so `model/` remains importable without views-pipeline-core; the dependency is incurred only when `predict()` is actually called.
 
+> **Status update (ADR-020, 2026-06-24):** the three lazy sites are now **one**. All
+> `PredictionFrame` construction is consolidated into `to_prediction_frames` in
+> `model/helpers.py`, which lazy-imports the **`views_frames`** leaf (`PredictionFrame`,
+> `SpatioTemporalIndex`) — re-exported by views-pipeline-core ≥3.0.0 (#188). `model/` still
+> carries no module-level frame import; the single-site rule supersedes the three-site
+> description above, and `build_prediction_grid()` was deleted.
+
 #### `manager/baseline_manager.py` — 4 module-level imports
 
 ```python

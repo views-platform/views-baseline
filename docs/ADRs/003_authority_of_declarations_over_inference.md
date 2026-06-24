@@ -48,6 +48,14 @@ The catalog never infers what a model needs by inspecting the model's constructo
 
 #### 2. Protocol Dispatch — `distributional` class attribute
 
+> **Status note (ADR-017, ADR-020):** Since PR #15 all five models return `dict[str, PredictionFrame]`
+> and the manager has a **single, type-uniform path** — it no longer dispatches on
+> `isinstance(model, DistributionalBaselineModel)`. The `distributional` attribute is retained as a
+> **semantic marker** (declaration of intent per ADR-012), which keeps this section's "declare, don't
+> infer" principle intact even though the runtime dispatch it describes has been removed. ADR-020 adds
+> a second declared quantity to this list: the spatial **`level`**, derived from the declared `loa`
+> and validated against the observed `entity_idx` (never inferred as the sole source).
+
 Whether a model returns a `dict[str, PredictionFrame]` or a `pd.DataFrame` is declared by the model class via a class attribute:
 
 ```python

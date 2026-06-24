@@ -80,10 +80,9 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 ## Boundaries and Interactions
 
 - **Depends on:** `numpy` (`np.random.default_rng`, `np.array`, `rng.choice`).
-- **Lazy import:** `views_pipeline_core.data.prediction_frame.PredictionFrame` — imported inside `predict()`, not at module load time. This means import failures surface at prediction time, not construction time.
-- **Does not depend on** `build_prediction_grid`; output construction is inline.
+- **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/helpers.py`, which lazy-imports the `views_frames` leaf (`PredictionFrame`, `SpatioTemporalIndex`) inside the function — not at module load. No inline construction; `build_prediction_grid` is deleted.
 - **Instantiated by:** `BaselineModelCatalog._get_conflictology_model()`.
-- **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` via `isinstance(model, DistributionalBaselineModel)`.
+- **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` — a single type-uniform path since ADR-017; `distributional = True` is a semantic marker, not an `isinstance` dispatch discriminator.
 - **Pool equivalence:** `hist_per_entity` is constructed identically to `MixtureBaseline.local_pool`. This equivalence is verified by `test_conflictology_matches_mixture_lambda_zero`.
 
 ---
@@ -155,7 +154,7 @@ File: `tests/test_baseline.py`
 ## Evolution Notes
 
 - If temporal weighting within the window is required, a new class (e.g., `WeightedClimatologyModel`) is preferable to adding optional parameters here. This preserves the "pure i.i.d. resample from flat history" semantics.
-- The lazy `PredictionFrame` import could be moved to module level if `views_pipeline_core` becomes a hard install-time dependency. Currently, the lazy import avoids requiring the package when only point models are used.
+- The `views_frames` import lives in the single `to_prediction_frames` seam (ADR-020); `model/` stays importable without the frame library, the dependency incurred only when `predict()` runs.
 - Adding `sequence_number` as an input to the RNG seed (i.e., `default_rng(seed + sequence_number)`) would make samples vary across sequence steps. This is a design choice currently left to the caller to work around via different seeds.
 
 ---

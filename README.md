@@ -26,7 +26,7 @@ Models are fitted automatically via `fit()` before generating predictions. Fitte
 
 ## Implemented Models
 
-All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`. ("unit" is the term used in `PredictionFrame.identifiers`; the input index calls the same axis the *entity*.)
+All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`. ("unit" is the term used in a `PredictionFrame`'s `SpatioTemporalIndex`; the input index calls the same axis the *entity*.)
 
 **Causal split (no leakage).** Every model is fit using only observations strictly before the test period. The last training month is `train_end = test_start − 1`; no value at or after `test_start` enters any fitted quantity. (The point models and `MixtureBaseline` filter `t < test_start`; `ConflictologyModel` filters `t ≤ train_end` — the same boundary, written two ways.)
 
@@ -35,7 +35,7 @@ Two output families:
 - **Point forecasts** — one deterministic value per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, 1)`.
 - **Distributional forecasts** — `n_samples` Monte-Carlo draws per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, n_samples)`.
 
-In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries `identifiers` with the `time` and `unit` of every row.
+In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries a `SpatioTemporalIndex` with the `time`, `unit`, and spatial `level` (CM/PGM) of every row. All frames are built through a single construction seam, `to_prediction_frames` in `model/helpers.py` (ADR-020), and the `level` is derived from the declared `loa` and validated against the input index (ADR-003).
 
 ### Point Forecast Models
 

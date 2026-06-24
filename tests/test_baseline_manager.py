@@ -18,7 +18,7 @@ def test_manager_evaluate_uses_zero_model(
 ):
     config = {
         "run_type": "eval",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ZeroModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -44,7 +44,7 @@ def test_manager_evaluate_uses_locf_model(
 ):
     config = {
         "run_type": "eval",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "LocfModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -72,11 +72,11 @@ def test_manager_evaluate_uses_locf_model(
 def test_manager_forecast_uses_baseline_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
+    from views_frames import PredictionFrame
 
     config = {
         "run_type": "forecast",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "LocfModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -100,7 +100,7 @@ def test_manager_forecast_respects_algorithm_choice(
 ):
     config_zero = {
         "run_type": "forecast",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ZeroModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -113,7 +113,7 @@ def test_manager_forecast_respects_algorithm_choice(
 
     config_locf = {
         "run_type": "forecast",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "LocfModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -124,8 +124,8 @@ def test_manager_forecast_respects_algorithm_choice(
     forecasts_locf = manager_locf._forecast_model_artifact()
 
     target = targets[0]
-    assert forecasts_zero[target].y_pred.shape == forecasts_locf[target].y_pred.shape
-    assert not np.array_equal(forecasts_zero[target].y_pred, forecasts_locf[target].y_pred)
+    assert forecasts_zero[target].values.shape == forecasts_locf[target].values.shape
+    assert not np.array_equal(forecasts_zero[target].values, forecasts_locf[target].values)
 
 
 # ---------------------------------------------------------------------
@@ -138,7 +138,7 @@ def test_manager_setup_returns_model_and_data(
 ):
     config = {
         "run_type": "eval",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ZeroModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -164,7 +164,7 @@ def test_manager_train_saves_artifact(
 ):
     config = {
         "run_type": "calibration",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ZeroModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -202,7 +202,7 @@ def test_manager_evaluate_distributional_model(
 ):
     config = {
         "run_type": "eval",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ConflictologyModel",
         "targets": targets,
         "window_months": 6,
@@ -230,7 +230,7 @@ def test_manager_evaluate_sweep(
 ):
     config = {
         "run_type": "eval",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "LocfModel",
         "targets": targets,
         "steps": [*range(1, 37)],
@@ -255,11 +255,11 @@ def test_manager_evaluate_sweep(
 def test_manager_forecast_distributional_model(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    from views_pipeline_core.data.prediction_frame import PredictionFrame
+    from views_frames import PredictionFrame
 
     config = {
         "run_type": "forecast",
-        "level": "pg_id",
+        "level": "pgm",
         "algorithm": "ConflictologyModel",
         "targets": targets,
         "window_months": 6,

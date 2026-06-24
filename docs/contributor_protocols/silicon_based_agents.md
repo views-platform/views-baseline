@@ -62,7 +62,7 @@ not something omitted to obscure provenance).
 
 ## The Anti-Truncation Rule
 
-`views_baseline/model/baseline.py` is 449 lines and contains five closely related model
+`views_baseline/model/baseline.py` contains five closely related model
 classes. When asked to modify one class, do not truncate the file. Do not emit `# ... rest
 of file unchanged ...` or equivalent. The full file must be preserved. Use the Edit tool
 (targeted string replacement) rather than a full-file rewrite wherever possible.
@@ -91,27 +91,35 @@ reproducibility contract. The test `test_mixture_predict_reproducible` validates
 - Splitting the entity loop into parallel or batched calls that change RNG draw order
 - Changing `np.random.default_rng(self.seed)` to any other RNG initialisation pattern
 
-### Protocol dispatch sensitivity
+### Protocol marker sensitivity
 
-The manager routes models through point-forecast or distributional code paths using
-`isinstance(model, DistributionalBaselineModel)`. This check passes if and only if the model
-object has a `distributional` attribute (per the `@runtime_checkable` Protocol definition).
+> **Status note (ADR-017, ADR-020):** Since PR #15 the manager has a **single, type-uniform
+> prediction path** — it no longer dispatches via `isinstance(model, DistributionalBaselineModel)`.
+> The `distributional = True` attribute is now a **semantic marker** (it still satisfies the
+> `DistributionalBaselineModel` protocol and documents intent per ADR-012), not a dispatch
+> discriminator. Earlier revisions of this protocol described an `isinstance` dispatch in the
+> manager that no longer exists.
 
 **Forbidden:**
 - Removing the `distributional = True` class attribute from `ConflictologyModel` or
-  `MixtureBaseline` (even as a "cleanup" — the attribute is the protocol discriminator)
-- Replacing the `isinstance` check with output-shape inspection or `hasattr` alone
+  `MixtureBaseline` (even as a "cleanup" — it is the semantic marker and protocol discriminator)
 - Adding a `distributional` attribute to any point-forecast model class
 
 ### Lazy import fragility
 
-The `from views_pipeline_core.data.prediction_frame import PredictionFrame` import lives
-inside the `predict()` methods of both distributional models, not at the top of `baseline.py`.
-This is intentional (ADR-002).
+> **Status note (ADR-020):** `PredictionFrame` now comes from the `views_frames` leaf
+> (`from views_frames import PredictionFrame, SpatioTemporalIndex`), re-exported by
+> `views-pipeline-core` ≥3.0.0 (#188). Per ADR-020 the construction is **consolidated into a
+> single function-scoped import site**, `to_prediction_frames` in `model/helpers.py`. The
+> distributional models no longer construct `PredictionFrame` inline.
+
+The `views_frames` import lives inside `to_prediction_frames`, not at module top-level. This is
+intentional (ADR-002, as amended by ADR-020).
 
 **Forbidden:**
 - Moving this import to the module top-level of `baseline.py` or `helpers.py`
-- Adding any other `views_pipeline_core` import to `model/baseline.py` at module level
+- Adding any other `views_frames` / `views_pipeline_core` import to `model/` at module level
+- Re-introducing a second `PredictionFrame` construction site outside `to_prediction_frames`
 
 ### Entity-drop warnings
 
@@ -142,13 +150,17 @@ Beyond the sensitive areas above, the following operations are absolutely forbid
 AI-generated changes without an explicit human decision recorded in an ADR or PR:
 
 1. Introducing any import from `manager/` into any file under `model/`
-2. Adding a module-level `views_pipeline_core` import to `model/baseline.py`
-3. Changing the output type of any point-forecast model's `predict()` from `pd.DataFrame`
-4. Changing the output type of any distributional model's `predict()` from `dict[str, PredictionFrame]`
+2. Adding a module-level `views_frames` / `views_pipeline_core` import to any `model/` file
+3. Changing the output type of **any** model's `predict()` from `dict[str, PredictionFrame]`
+   (all five models return this since PR #15 / ADR-017 — point models `(N, 1)`, distributional
+   `(N, n_samples)`)
+4. Constructing a `PredictionFrame` anywhere other than the single seam `to_prediction_frames`
+   (`model/helpers.py`), or reintroducing the `identifiers=` constructor (ADR-020)
 5. Modifying the `MODEL_GENOMES` dict without a corresponding change to a model constructor
 6. Adding state-mutation side effects to `predict()` methods (predict must be side-effect-free
    beyond logging)
-7. Changing column naming from `pred_{target}` in `build_prediction_grid`
+7. Deriving the spatial `level` by inference alone instead of from the declared `loa` validated
+   against `entity_idx` (ADR-003, ADR-020)
 8. Replacing `partition_dict["test"][0]` lookups with index-derived train/test boundary inference
 
 ---
