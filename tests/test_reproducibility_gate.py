@@ -44,8 +44,25 @@ def test_audit_manifest_accepts_valid_mixture_config():
         "window_months": 18,
         "lambda_mix": 0.05,
         "n_samples": 256,
+        "seed": 42,
     }
     ReproducibilityGate.Config.audit_manifest(config)
+
+
+def test_audit_manifest_rejects_missing_seed_for_distributional():
+    """ADR-021: `seed` is a required, audited genome key for distributional models."""
+    config = {
+        "algorithm": "ConflictologyModel",
+        "targets": ["y1"],
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "window_months": 18,
+        "n_samples": 256,
+        # "seed" is missing
+    }
+    with pytest.raises(MissingHyperparameterError, match="seed"):
+        ReproducibilityGate.Config.audit_manifest(config)
 
 
 def test_audit_manifest_rejects_missing_core_key():

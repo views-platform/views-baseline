@@ -75,6 +75,7 @@ class BaselineModelCatalog:
             partition_dict=self.partition_dict,
             loa=self.loa,
             n_samples=self.config["n_samples"],
+            seed=self.config["seed"],  # required + audited genome key (ADR-021); no silent default
         )
 
     def _get_mixture_model(self):
@@ -85,4 +86,5 @@ class BaselineModelCatalog:
             n_samples=self.config["n_samples"],
             partition_dict=self.partition_dict,
             loa=self.loa,
+            seed=self.config["seed"],  # required + audited genome key (ADR-021); no silent default
         )

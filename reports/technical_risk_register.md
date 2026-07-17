@@ -4,9 +4,9 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-06-24                           |
-| Total Concerns    | 23                                   |
-| Open Concerns     | 20                                   |
+| Last Updated      | 2026-06-25                           |
+| Total Concerns    | 25                                   |
+| Open Concerns     | 22                                   |
 | Resolved Concerns | 3                                    |
 
 ---
@@ -140,17 +140,21 @@ ADR-002 and ADR-013 define strict dependency topology rules: `model/` must have 
 
 ---
 
-### C-10: `seed` parameter not included in ReproducibilityGate audit
+### C-10: `seed` is never forwarded from config to the distributional models (config/sweep seed silently ignored)
 
 | Field | Value |
 |-------|-------|
 | ID | C-10 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-06-01) |
-| Trigger | When a downstream config in views-models intends to use a specific seed but omits or misspells the `seed` key — the model silently uses default `seed=42`, producing valid but non-reproducible-relative-to-intent predictions with no warning |
-| Location | `views_baseline/infrastructure/reproducibility_gate.py:27-33` (ALGORITHM_GENOMES), `views_baseline/model/baseline.py:201,309` (default seed=42 in constructors) |
+| Tier | 2 |
+| Source | repo-assimilation (2026-06-01); mechanism corrected + re-tiered via model-review of white_ranger (2026-06-25) |
+| Trigger | When any config or WandB sweep sets `seed` for `ConflictologyModel`/`MixtureBaseline` (e.g. white_ranger's sweep over `[42, 123, 456]`) — the value is silently dropped and the model always uses the hardcoded default `seed=42`. Seed sweeps are therefore inert (every leg identical), and any config-declared non-42 seed produces results that differ from the declared config with no warning |
+| Location | `views_baseline/model/catalog.py` `_get_conflictology_model` / `_get_mixture_model` — **neither factory passes `seed=` to the constructor**; `views_baseline/model/baseline.py` (`seed: int = 42` default; `np.random.default_rng(self.seed)`); `views_baseline/infrastructure/reproducibility_gate.py` `ALGORITHM_GENOMES` (`seed` absent → not audited). Evidence: `views-models/models/white_ranger/configs/config_sweep.py` (inert `seed` sweep) |
 
-The `seed` parameter for `ConflictologyModel` and `MixtureBaseline` has a default value of `42` in the constructor, following ADR-011's RNG determinism contract. However, `seed` is not listed in `ALGORITHM_GENOMES` and therefore not audited by `audit_manifest()`. If a downstream config intends `seed: 123` but misspells it as `seeed: 123`, the model silently falls back to `seed=42`. The predictions are internally consistent (same seed → same output) but differ from the intended config, violating the reproducibility guarantee at the experiment level. The `ReproducibilityGate` was designed to catch exactly this class of "present but wrong" configuration errors (see ADR-014 §4: None-value rejection), but `seed` was excluded because it has a sensible default.
+**Mechanism corrected (2026-06-25):** the original entry framed this as "seed is not *audited*, so a *misspelled* key defaults." The actual defect is stronger — the catalog factory methods for both distributional models omit `seed` entirely, so `config["seed"]` **never reaches the model constructor**; both models always use the hardcoded default `42` regardless of what the config (correctly spelled or not) declares. Consequences: (1) a WandB **seed sweep is a no-op** — white_ranger sweeps `seed ∈ {42, 123, 456}` and every leg produces identical draws, which can support a false "results are seed-robust" conclusion; (2) any deployed baseline that declares `seed != 42` silently diverges from its own config. white_ranger is correct only by accident (its `seed: 42` equals the default). Re-tiered from 3 to 2: the failure is **silent** (no error), **already realized** (the sweep is inert now), and can produce **misleading experimental conclusions** about seed sensitivity. Fix is small: forward `seed=self.config.get("seed", 42)` in both factories, and add `seed` to `ALGORITHM_GENOMES` so it is audited (ADR-014 §4). Under investigation on a dedicated fix branch (2026-06-25).
+
+See also C-14/ADR-014 (the reproducibility-gate contract this should extend to `seed`).
+
+> **Status (2026-06-25):** fixed in the working tree (`fix/distributional-seed-not-forwarded`) under **ADR-021** — the catalog forwards `config["seed"]` strictly, `seed` is a required+audited `ALGORITHM_GENOMES` key, and a single `DEFAULT_SEED` sentinel backs direct construction. Enforced by `tests/test_falsification_seed_wiring.py`, catalog forwarding + param-completeness tests, and a gate rejects-missing-seed test (114 green). Stays Open until the **coordinated merge** with views-models #233 (declare `seed` in the 9 configs) lands together.
 
 ---
 
@@ -359,6 +363,38 @@ Point baselines are constant across the horizon, so `value_fn(cid, target)` retu
 
 ---
 
+### C-24: Promoting `seed` to a required genome key without updating downstream configs is a config-time outage
+
+| Field | Value |
+|-------|-------|
+| ID | C-24 |
+| Tier | 3 |
+| Source | expert-review (2026-06-25) |
+| Trigger | When the C-10 fix promotes `seed` to a **required** key in `ALGORITHM_GENOMES` (the ADR-003-correct end state) and ships **before** the distributional views-models configs that omit `seed` are updated — `audit_manifest` raises `MissingHyperparameterError` for every one of them, converting the silent C-10 bug into a hard config-time failure of all distributional baseline runs |
+| Location | `views_baseline/infrastructure/reproducibility_gate.py` (`ALGORITHM_GENOMES` for `ConflictologyModel`/`MixtureBaseline`); downstream `views-models/models/{lucid_dream + the 8 MixtureBaseline models}/configs/config_hyperparameters.py` (currently omit `seed`) |
+
+The correct long-term resolution of C-10 is to *declare* `seed` in the genome so `audit_manifest` validates it (ADR-003 declarations-over-inference; ADR-014 gate). But `seed` is currently optional-with-default, and ~9 distributional configs don't set it — making it required raises the gate for all of them at config time. This is a sequencing hazard, not a reason to avoid the genome change: forward `seed` as optional-with-default first (the C-10 code fix), then promote it to required only in a **coordinated views-baseline + views-models PR pair** after every distributional config sets `seed`. See also C-10 (the bug), C-14/ADR-014 (the gate contract), D-07.
+
+> **Status (2026-06-25):** ADR-021 chose the declared-required end state directly (no optional-with-default interim), so the sequencing is now live: **views-models #233** filed to declare `seed` in the 9 configs that omit it; the views-baseline side (genome + strict forward) is ready on `fix/distributional-seed-not-forwarded`. **Must land together** — if views-baseline merges first, `audit_manifest` rejects those 9 configs (the intended loud failure, but only wanted post-config-update).
+
+---
+
+### C-25: Fix that re-hardcodes the default seed `42` creates a third divergent copy
+
+| Field | Value |
+|-------|-------|
+| ID | C-25 |
+| Tier | 4 |
+| Source | expert-review (2026-06-25) |
+| Trigger | When the C-10 fix forwards `seed=self.config.get("seed", 42)` in the catalog and a later change alters the constructor default (`seed: int = 42` in `baseline.py`) without updating the catalog literal — catalog-built models silently use a different default than directly-built ones |
+| Location | `views_baseline/model/baseline.py` (`seed: int = 42` in `ConflictologyModel.__init__` and `MixtureBaseline.__init__`) + the proposed `catalog.py` `get("seed", 42)` |
+
+The default `42` already appears twice in `baseline.py`; the naive C-10 fix would add a third copy in `catalog.py`. Mitigation is trivial and should be part of the fix: introduce one module-level `DEFAULT_SEED = 42` referenced by both constructors and the catalog, so the default has a single source. See also C-10, D-09.
+
+> **Status (2026-06-25):** resolved in the working tree — a single `DEFAULT_SEED = 42` in `baseline.py` backs both constructor defaults; the catalog reads `config["seed"]` strictly (no duplicated literal). `grep '= 42' views_baseline/model/` returns only the one definition.
+
+---
+
 ## Disagreements
 
 ### D-01: Clean break vs. gradual dual-format migration for PredictionFrame adoption
@@ -424,6 +460,39 @@ Point baselines are constant across the horizon, so `value_fn(cid, target)` retu
 | Source | expert-review (2026-06-24) |
 | Perspectives | Ousterhout/Hickey (the trivial size makes the clean restructure *cheap* — that is the argument *for* doing the full boundary + one-class-per-file restructure now, not against), YAGNI counter (it is a benchmark library; recurring small edits at each platform change may be an acceptable tax rather than a restructure) |
 | Resolution | **Resolved by the maintainer (2026-06-24)** toward the full principle-driven restructure (SOLID + REP/CCP/CRP/ADP/SDP/SAP + screaming architecture / one-concept-per-file). Scoped as the views-frames-boundary epic. |
+
+---
+
+### D-07: `seed` optional-with-default now vs required-in-genome now (the C-10 fix)
+
+| Field | Value |
+|-------|-------|
+| ID | D-07 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Kleppmann / ADR-003 (declare `seed` in the genome and validate it — a reproducibility knob must not silently default), Feathers / Nygard (making it required breaks the ~9 downstream configs that omit `seed` → a config-time outage, C-24 → ship optional-with-default first and coordinate the required change separately), Hickey (both are lesser evils; give the gate an explicit "optional-with-default" notion to dissolve the dilemma) |
+| Resolution | Recommend **optional-with-default now** (forward `seed` + single default), **required-in-genome later** via a coordinated views-baseline + views-models PR pair. See C-10, C-24. |
+
+---
+
+### D-08: Patch the one dropped param vs fix the parallel-list root (C-19 registry)
+
+| Field | Value |
+|-------|-------|
+| ID | D-08 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Martin / GoF / Ousterhout (the dropped `seed` is a symptom of three hand-maintained parallel param lists — constructor signature ↔ `MODEL_GENOMES` ↔ factory body; the durable fix is the C-19 registration table that makes "audited" and "forwarded" one list), Feathers / Beck + the bounded mandate (patch `seed` now with a param-completeness test; don't balloon into the registry) |
+| Resolution | Recommend **patch + param-completeness test now**; the C-19 registry remains the deferred durable fix (ADR-012 threshold). See C-19, C-10. |
+
+---
+
+### D-09: Where the default seed `42` lives
+
+| Field | Value |
+|-------|-------|
+| ID | D-09 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Hickey / Kleppmann / Ousterhout (one module-level `DEFAULT_SEED` constant — single source of truth), minimal-diff view (inline `get("seed", 42)` is an acceptable two-line fix) |
+| Resolution | Recommend a single `DEFAULT_SEED` constant — trivial and forecloses C-25. |
 
 ---
 

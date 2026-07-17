@@ -64,6 +64,7 @@ update the old ADR's status to `Superseded by ADR-NNN`.
 | [ADR-018](018_predictionframe_use_in_views_baseline.md) | views-baseline's Use of PredictionFrame (Output) | **Implemented.** All models return `dict[str, PredictionFrame]`; output side done in this repo. |
 | [ADR-019](019_featureframe_use_in_views_baseline.md) | views-baseline's Use of FeatureFrame (Input) | **Proposed / NOT implemented.** Baseline still takes DataFrame input; blocked on pipeline-core FeatureFrame integration. |
 | [ADR-020](020_views_frames_adapter_and_level_contract.md) | Single views-frames Construction Seam and the Spatial-Level Contract | Consolidates all `PredictionFrame` construction into one seam (`to_prediction_frames`); `level` derived from declared `loa` and validated; adopts the `views_frames` leaf (pipeline-core 3.0.0, #188). Amends ADR-002. |
+| [ADR-021](021_zero_magic_and_explicit_defaults.md) | Zero-Magic and Explicit Defaults | Adopts hydranet ADR-003 Laws 1–2 for views-baseline: no magic default values for reproducibility/output-significant params (fail loud), no hardcoded strings/positional assumptions, single named constants for permitted defaults. Amends ADR-011 §2 (`seed` becomes declared/required). |
 
 ---
 

@@ -38,7 +38,7 @@ This ADR serves as the authoritative checklist for adding a new model.
 **File:** `views_baseline/model/catalog.py`
 
 1. Add an import for the new class at the top of the file.
-2. Add an entry to `MODEL_GENOMES` listing required config keys (beyond `targets`).
+2. Add an entry to `MODEL_GENOMES` listing required config keys (beyond `targets`). For a **stochastic** model this MUST include `seed` — it is a required, audited genome key with no magic default (ADR-021).
 3. Add a factory method `_get_<model_name>()` that reads config and constructs the model.
 4. Add the model name → factory method mapping in `self.models` inside `__init__`.
 
