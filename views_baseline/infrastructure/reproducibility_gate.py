@@ -28,8 +28,8 @@ class ReproducibilityGate:
             "ZeroModel": [],
             "LocfModel": [],
             "AverageModel": ["window_months"],
-            "ConflictologyModel": ["window_months", "n_samples"],
-            "MixtureBaseline": ["window_months", "lambda_mix", "n_samples"],
+            "ConflictologyModel": ["window_months", "n_samples", "seed"],
+            "MixtureBaseline": ["window_months", "lambda_mix", "n_samples", "seed"],
         }
 
         @staticmethod

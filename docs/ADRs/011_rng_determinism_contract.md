@@ -34,6 +34,15 @@ This means: calling `predict()` twice with the same arguments produces identical
 
 ### 2. Fixed seed, not sequence-dependent
 
+> **Amended by ADR-021 (2026-06-25):** the "silent default of 42" described below is a *magic
+> default value* and is retired. Under the Zero-Magic / Explicit-Defaults rule, `seed` is
+> reproducibility-critical and must be **declared in config and audited** (a required
+> `ALGORITHM_GENOMES` key); the catalog forwards `config["seed"]`. A module-level `DEFAULT_SEED`
+> constant may remain as a single-sourced sentinel for direct/test construction, but it is not the
+> production source of truth. This resolves the contradiction with ADR-014 ("implicit defaults are
+> forbidden"). The rest of this section (fresh RNG per call, seed independent of `sequence_number`)
+> stands.
+
 The seed is a constructor parameter (default `42`), passed at model instantiation:
 
 ```python

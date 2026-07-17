@@ -17,6 +17,12 @@ from views_baseline.model.helpers import (
 
 logger = logging.getLogger(__name__)
 
+# Zero-Magic / Explicit-Defaults (ADR-021): the single source of truth for the
+# default RNG seed. It is a **sentinel for direct/test construction only** — production
+# configs MUST declare `seed` (a required, audited genome key). The catalog reads
+# ``config["seed"]`` strictly and never falls back to this constant.
+DEFAULT_SEED = 42
+
 
 class ZeroModel:
     def __init__(self, targets: list[str], partition_dict: dict, loa: str):
@@ -204,7 +210,7 @@ class ConflictologyModel:
         partition_dict: dict,
         loa: str,
         n_samples: int,
-        seed: int = 42,
+        seed: int = DEFAULT_SEED,
     ):
         """
         Climatology baseline that resamples with replacement from the last window_months
@@ -301,7 +307,7 @@ class MixtureBaseline:
         n_samples: int,
         partition_dict: dict,
         loa: str,
-        seed: int = 42,
+        seed: int = DEFAULT_SEED,
     ):
         """
         Mixture empirical baseline that combines local history with a global

@@ -45,7 +45,7 @@ The class attribute `distributional = True` is used by `BaselineForecastingModel
 | `partition_dict` | `dict` | Must contain `"test"` key with tuple `(test_start, test_end)`. |
 | `loa` | `str` | Stored; not used in computation. |
 | `n_samples` | `int` | Number of bootstrap draws per prediction cell. Required — no default. |
-| `seed` | `int` | Base seed for `np.random.default_rng`. Default: 42. |
+| `seed` | `int` | Base seed for `np.random.default_rng`. **Required, audited genome key** (ADR-021 / C-10): the catalog forwards `config["seed"]` and it must be declared in config. `DEFAULT_SEED` (42) is a single-sourced sentinel for direct/test construction only, never the production path. |
 | `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; level 0 = time, level 1 = entity. |
 | `sequence_number` | `int` | Offset from `test_start` for the prediction window start. |
 | `output_length` | `int` | Number of forecast timesteps. Required — no default; passed from `config["time_steps"]` by the manager. |

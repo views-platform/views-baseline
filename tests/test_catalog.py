@@ -71,7 +71,7 @@ def test_catalog_returns_average_model():
 
 
 def test_catalog_returns_conflictology_model():
-    config = {"targets": ["y1", "y2"], "window_months": 5, "n_samples": 128}
+    config = {"targets": ["y1", "y2"], "window_months": 5, "n_samples": 128, "seed": 7}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -84,6 +84,7 @@ def test_catalog_returns_conflictology_model():
     assert model.loa == loa
     assert model.window_months == config["window_months"]
     assert model.n_samples == 128
+    assert model.seed == 7  # forwarded from config, not the default (ADR-021, C-10)
 
 
 def test_catalog_missing_n_samples_for_conflictology_raises():
@@ -118,7 +119,10 @@ def test_catalog_raises_for_unknown_model():
 
 
 def test_catalog_returns_mixture_model():
-    config = {"targets": ["y1"], "window_months": 18, "lambda_mix": 0.05, "n_samples": 256}
+    config = {
+        "targets": ["y1"], "window_months": 18, "lambda_mix": 0.05,
+        "n_samples": 256, "seed": 11,
+    }
     partition_dict = {"test": (493, 540)}
     loa = "pg_id"
 
@@ -132,3 +136,42 @@ def test_catalog_returns_mixture_model():
     assert model.window_months == 18
     assert model.lambda_mix == 0.05
     assert model.n_samples == 256
+    assert model.seed == 11  # forwarded from config, not the default (ADR-021, C-10)
+
+
+# -----------------------------------------------------------------------
+# Param-completeness (ADR-021 / SOLID-OCP): the factory must forward EVERY
+# config-supplied constructor parameter. Generic guard so the next added
+# parameter cannot be silently dropped the way `seed` was (C-10, C-19/FM-3).
+# -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "algo, cls",
+    [("ConflictologyModel", ConflictologyModel), ("MixtureBaseline", MixtureBaseline)],
+)
+def test_catalog_forwards_all_config_params(algo, cls):
+    import inspect
+
+    # Distinct, non-default values for every possible constructor param.
+    config = {
+        "targets": ["y1"],
+        "window_months": 7,
+        "n_samples": 13,
+        "lambda_mix": 0.3,
+        "seed": 99,
+    }
+    partition_dict = {"test": (445, 492)}
+    catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
+    model = catalog.get_model(algo)
+
+    # partition_dict and loa are injected by the catalog itself, not from config.
+    injected = {"self", "partition_dict", "loa"}
+    for pname in inspect.signature(cls.__init__).parameters:
+        if pname in injected or pname not in config:
+            continue
+        assert getattr(model, pname) == config[pname], (
+            f"{algo}: constructor param '{pname}' was not forwarded from config "
+            f"(got {getattr(model, pname)!r}, expected {config[pname]!r}) — a silently "
+            f"dropped parameter (C-10 class)."
+        )

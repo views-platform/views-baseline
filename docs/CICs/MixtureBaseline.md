@@ -56,7 +56,7 @@ The class attribute `distributional = True` routes the output through the distri
 | `n_samples` | `int` | Number of draws per prediction cell. Must be positive (not validated). |
 | `partition_dict` | `dict` | Must contain `"test"` with tuple `(test_start, test_end)`. |
 | `loa` | `str` | Stored; not used in computation. |
-| `seed` | `int` | Base seed for `np.random.default_rng`. Default: 42. |
+| `seed` | `int` | Base seed for `np.random.default_rng`. **Required, audited genome key** (ADR-021 / C-10): the catalog forwards `config["seed"]` and it must be declared in config. `DEFAULT_SEED` (42) is a single-sourced sentinel for direct/test construction only, never the production path. |
 | `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; level 0 = time, level 1 = entity. |
 | `sequence_number` | `int` | Forecast window start offset. |
 | `output_length` | `int` | Number of forecast timesteps. Required — no default; passed from `config["time_steps"]` by the manager. |
