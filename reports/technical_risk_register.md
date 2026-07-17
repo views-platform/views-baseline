@@ -4,10 +4,10 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-06-25                           |
+| Last Updated      | 2026-07-17                           |
 | Total Concerns    | 25                                   |
-| Open Concerns     | 22                                   |
-| Resolved Concerns | 3                                    |
+| Open Concerns     | 19                                   |
+| Resolved Concerns | 6                                    |
 
 ---
 
@@ -155,6 +155,8 @@ ADR-002 and ADR-013 define strict dependency topology rules: `model/` must have 
 See also C-14/ADR-014 (the reproducibility-gate contract this should extend to `seed`).
 
 > **Status (2026-06-25):** fixed in the working tree (`fix/distributional-seed-not-forwarded`) under **ADR-021** — the catalog forwards `config["seed"]` strictly, `seed` is a required+audited `ALGORITHM_GENOMES` key, and a single `DEFAULT_SEED` sentinel backs direct construction. Enforced by `tests/test_falsification_seed_wiring.py`, catalog forwarding + param-completeness tests, and a gate rejects-missing-seed test (114 green). Stays Open until the **coordinated merge** with views-models #233 (declare `seed` in the 9 configs) lands together.
+>
+> **RESOLVED (2026-07-17):** merged — views-models#234 (declares `seed`, commit `d1187be`) then views-baseline#31 (genome + strict forward, merge `506523b`) landed on `development` in the safe order. All 20 distributional configs now declare `seed`; the fix is live.
 
 ---
 
@@ -376,6 +378,8 @@ Point baselines are constant across the horizon, so `value_fn(cid, target)` retu
 The correct long-term resolution of C-10 is to *declare* `seed` in the genome so `audit_manifest` validates it (ADR-003 declarations-over-inference; ADR-014 gate). But `seed` is currently optional-with-default, and ~9 distributional configs don't set it — making it required raises the gate for all of them at config time. This is a sequencing hazard, not a reason to avoid the genome change: forward `seed` as optional-with-default first (the C-10 code fix), then promote it to required only in a **coordinated views-baseline + views-models PR pair** after every distributional config sets `seed`. See also C-10 (the bug), C-14/ADR-014 (the gate contract), D-07.
 
 > **Status (2026-06-25):** ADR-021 chose the declared-required end state directly (no optional-with-default interim), so the sequencing is now live: **views-models #233** filed to declare `seed` in the 9 configs that omit it; the views-baseline side (genome + strict forward) is ready on `fix/distributional-seed-not-forwarded`. **Must land together** — if views-baseline merges first, `audit_manifest` rejects those 9 configs (the intended loud failure, but only wanted post-config-update).
+>
+> **DISCHARGED (2026-07-17):** the coordinated merge completed in the safe order (views-models#234 first, then views-baseline#31) — no config-audit outage occurred.
 
 ---
 
@@ -392,6 +396,8 @@ The correct long-term resolution of C-10 is to *declare* `seed` in the genome so
 The default `42` already appears twice in `baseline.py`; the naive C-10 fix would add a third copy in `catalog.py`. Mitigation is trivial and should be part of the fix: introduce one module-level `DEFAULT_SEED = 42` referenced by both constructors and the catalog, so the default has a single source. See also C-10, D-09.
 
 > **Status (2026-06-25):** resolved in the working tree — a single `DEFAULT_SEED = 42` in `baseline.py` backs both constructor defaults; the catalog reads `config["seed"]` strictly (no duplicated literal). `grep '= 42' views_baseline/model/` returns only the one definition.
+>
+> **RESOLVED (2026-07-17):** merged in views-baseline#31 (`506523b`).
 
 ---
 
