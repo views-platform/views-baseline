@@ -107,11 +107,11 @@ This dispatch is the primary type-safety mechanism at the model-to-pipeline boun
 
 ## Boundary 4: Data → Model
 
-**Location:** `fit()` and `predict()` methods of all five model classes
+**Location:** `fit()` and `predict()` methods of all seven model classes
 
 **What is assumed (not validated):**
 
-All five models assume without checking:
+All seven models assume without checking:
 
 1. The input `df` has a `MultiIndex` with at least two levels. `df.index.names[0]` is the time index, `df.index.names[1]` is the entity index.
 2. The time index values are integers (month IDs).

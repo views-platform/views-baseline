@@ -193,3 +193,49 @@ def build_prediction_frame(
         y_pred_by_target[target] = values
 
     return to_prediction_frames(y_pred_by_target, time=time_arr, unit=unit_arr, level=level)
+
+
+def sample_prediction_grid(
+    *,
+    entity_ids,
+    valid,
+    model_name: str,
+    targets: list[str],
+    n_samples: int,
+    loa: str,
+    index_names,
+    test_start: int,
+    sequence_number: int,
+    output_length: int,
+    seed: int,
+    draw_cell: Callable[..., np.ndarray],
+) -> dict[str, "PredictionFrame"]:
+    """Shared distributional-model predict scaffold (ADR-011/ADR-020).
+
+    Every distributional baseline shares one shell — resolve the level, build the
+    (entity, time) grid, drop entities without fitted state (``valid``), then fill an
+    ``(N, n_samples)`` array in **entity→time→target** order from a single seeded RNG —
+    differing only in the per-cell draw. ``draw_cell(cid, target, rng)`` returns the
+    ``(n_samples,)`` draw for one cell and is called once per (entity, time, target), so the
+    RNG advances identically for every model (the reproducibility contract, ADR-011). Output
+    routes through the single ``to_prediction_frames`` seam (ADR-020). The distributional
+    analogue of :func:`build_prediction_frame` (which fills constants for point models).
+    """
+    level = resolve_level(loa, index_names)
+    time_ids = build_time_grid(test_start, sequence_number, output_length)
+    entities = filter_entities(entity_ids, valid, model_name)
+    require_entities(entities, model_name)
+
+    time_arr, unit_arr = build_identifier_arrays(entities, time_ids)
+    n_rows = len(time_arr)
+    rng = np.random.default_rng(seed)
+
+    y_preds = {t: np.empty((n_rows, n_samples), dtype=np.float64) for t in targets}
+    idx = 0
+    for cid in entities:
+        for _ in time_ids:
+            for t in targets:
+                y_preds[t][idx] = draw_cell(cid, t, rng)
+            idx += 1
+
+    return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)

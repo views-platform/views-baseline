@@ -15,7 +15,7 @@ Use the [cic_template.md](cic_template.md) when writing a new CIC.
 
 ---
 
-## Active Contracts (8)
+## Active Contracts (10)
 
 | CIC | Class | One-line description |
 |-----|-------|----------------------|
@@ -24,6 +24,8 @@ Use the [cic_template.md](cic_template.md) when writing a new CIC.
 | [AverageModel.md](AverageModel.md) | `AverageModel` | Windowed mean baseline that stores per-entity trailing means over a declared `window_months` window and returns them as a flat constant prediction. |
 | [ConflictologyModel.md](ConflictologyModel.md) | `ConflictologyModel` | Distributional climatology resampler that draws `n_samples` bootstrap samples from each entity's historical window and returns a `dict[str, PredictionFrame]`. |
 | [MixtureBaseline.md](MixtureBaseline.md) | `MixtureBaseline` | Distributional local/global mixture baseline that addresses the zero-history trap by blending each entity's local empirical pool with a global positive pool at weight `lambda_mix`. |
+| [ParametricConflictology.md](ParametricConflictology.md) | `ParametricConflictology` | No-hurdle parametric climatology (ADR-022) that fits a native-zero family (`nb`) to conflictology's per-entity window and samples from it; `family`/`transform`/`seed` are audited genome keys. |
+| [ParametricHurdleConflictology.md](ParametricHurdleConflictology.md) | `ParametricHurdleConflictology` | Hurdle parametric climatology (ADR-022): empirical zero-spike + continuous positive-part family (`lognormal`/`gumbel`/`gamma`), per-sample detransform, non-negativity floor. |
 | [BaselineModelCatalog.md](BaselineModelCatalog.md) | `BaselineModelCatalog` | Config-validated model factory that maps algorithm names and config dicts to fully constructed model instances, enforcing required key presence via `MODEL_GENOMES`. |
 | [ReproducibilityGate.md](ReproducibilityGate.md) | `ReproducibilityGate` | Canonical hyperparameter contract that defines `CORE_GENOME` and `ALGORITHM_GENOMES` for all baseline models, enforced via `audit_manifest()` before model instantiation. |
 | [BaselineForecastingModelManager.md](BaselineForecastingModelManager.md) | `BaselineForecastingModelManager` | Pipeline integration orchestrator that extends `ForecastingModelManager` from views-pipeline-core, routing point-forecast and distributional models through separate prediction and artifact paths. |
@@ -35,7 +37,7 @@ Use the [cic_template.md](cic_template.md) when writing a new CIC.
 The CIC framework and its governance are grounded in the following ADRs:
 
 - **[ADR-006](../ADRs/006_intent_contracts_for_non_trivial_classes.md)** — Mandates CICs for
-  non-trivial classes; defines the seven covered classes; specifies what CICs are and are not.
+  non-trivial classes; defines the ten covered classes; specifies what CICs are and are not.
 
 - **[ADR-003](../ADRs/003_authority_of_declarations_over_inference.md)** — The principle that
   governs what invariants CICs must document (declared quantities, not inferred ones). CIC

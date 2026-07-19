@@ -4,6 +4,8 @@ from views_baseline.model.baseline import (
     ConflictologyModel,
     LocfModel,
     MixtureBaseline,
+    ParametricConflictology,
+    ParametricHurdleConflictology,
     ZeroModel,
 )
 
@@ -27,6 +29,8 @@ class BaselineModelCatalog:
             "AverageModel": self._get_average_model,
             "ConflictologyModel": self._get_conflictology_model,
             "MixtureBaseline": self._get_mixture_model,
+            "ParametricConflictology": self._get_parametric_conflictology,
+            "ParametricHurdleConflictology": self._get_parametric_hurdle,
         }
 
     def get_model(self, model_name: str):
@@ -87,4 +91,32 @@ class BaselineModelCatalog:
             partition_dict=self.partition_dict,
             loa=self.loa,
             seed=self.config["seed"],  # required + audited genome key (ADR-021); no silent default
+        )
+
+    def _get_parametric_conflictology(self):
+        # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
+        # constructor fails loud on an unsupported family or an illegal family×transform.
+        return ParametricConflictology(
+            targets=self.config["targets"],
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            family=self.config["family"],
+            transform=self.config["transform"],
+            seed=self.config["seed"],
+        )
+
+    def _get_parametric_hurdle(self):
+        # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
+        # constructor fails loud on a non-continuous family or an illegal family×transform.
+        return ParametricHurdleConflictology(
+            targets=self.config["targets"],
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            family=self.config["family"],
+            transform=self.config["transform"],
+            seed=self.config["seed"],
         )

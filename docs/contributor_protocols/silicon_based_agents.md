@@ -62,7 +62,7 @@ not something omitted to obscure provenance).
 
 ## The Anti-Truncation Rule
 
-`views_baseline/model/baseline.py` contains five closely related model
+`views_baseline/model/baseline.py` contains seven closely related model
 classes. When asked to modify one class, do not truncate the file. Do not emit `# ... rest
 of file unchanged ...` or equivalent. The full file must be preserved. Use the Edit tool
 (targeted string replacement) rather than a full-file rewrite wherever possible.
@@ -152,7 +152,7 @@ AI-generated changes without an explicit human decision recorded in an ADR or PR
 1. Introducing any import from `manager/` into any file under `model/`
 2. Adding a module-level `views_frames` / `views_pipeline_core` import to any `model/` file
 3. Changing the output type of **any** model's `predict()` from `dict[str, PredictionFrame]`
-   (all five models return this since PR #15 / ADR-017 — point models `(N, 1)`, distributional
+   (every baseline model returns this since PR #15 / ADR-017 — point models `(N, 1)`, distributional
    `(N, n_samples)`)
 4. Constructing a `PredictionFrame` anywhere other than the single seam `to_prediction_frames`
    (`model/helpers.py`), or reintroducing the `identifiers=` constructor (ADR-020)
@@ -178,7 +178,7 @@ standard human review gate applied:
 - **Draft ADRs and CICs:** AI can produce a well-structured draft that a human then reviews
   for accuracy and completeness. Documentation produced by AI is not subject to automated
   verification and relies entirely on human review.
-- **Identifying test gaps:** AI can enumerate code paths not covered by the existing 51 tests
+- **Identifying test gaps:** AI can enumerate code paths not covered by the existing test suite
   and suggest test cases; the test cases must be reviewed for tautology before merging
 
 ---

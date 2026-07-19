@@ -10,7 +10,7 @@
 
 views-baseline produces forecasts that feed into the VIEWS conflict prediction pipeline. Errors in baseline predictions propagate silently downstream: a miscalculated entity average or a broken distributional sample shape will not raise an exception at the pipeline boundary — it will produce wrong numbers. Because baselines serve as the correctness reference against which more complex models are benchmarked, an incorrect baseline is worse than no baseline.
 
-The project is also small enough that informal verification is tempting. The five model classes fit in a single file; the manager is a thin wrapper around a base class. Without a forcing function, testing would be treated as optional and deferred.
+The project is also small enough that informal verification is tempting. The seven model classes fit in a single file; the manager is a thin wrapper around a base class. Without a forcing function, testing would be treated as optional and deferred.
 
 This ADR records the decision that testing is not optional infrastructure but a first-class deliverable, defines the three-team testing model used in this project, and documents the current coverage state honestly, including known gaps.
 
@@ -30,7 +30,9 @@ Green team tests verify that each model produces the output it is specified to p
 
 **What is covered:**
 
-`tests/test_baseline.py` (36 tests) covers all five model classes:
+> **Note (epic #33, 2026-07-18):** the per-file counts and team breakdown below describe the coverage as-authored for the five original model classes. Epic #33 (and the follow-up ZINB family + a `sample_prediction_grid` dedup) added the two parametric baselines (`ParametricConflictology`, `ParametricHurdleConflictology`) with their own suites — `tests/test_parametric.py`, `tests/test_distributions.py`, `tests/test_pooling.py`, `tests/test_closeness.py`, and `tests/test_golden.py` (characterization tests pinning the exact distributional sampling output — the C-29 regression guard) — plus extensions to `test_catalog.py`/`test_protocol.py`/`test_reproducibility_gate.py`/`test_helpers.py`. The suite is now **185 tests across 15 files**; the three-team model applies to the new tests identically. The specific tallies in this section are not re-cataloged here.
+
+`tests/test_baseline.py` covers the five original model classes:
 
 - `ZeroModel`: verified to produce all-zero DataFrames at both `pg_id` and `country_id` levels of analysis; `sequence_number` offset is verified to shift the time index by the correct number of steps.
 - `LocfModel`: verified to carry the last training-period observation forward into every forecast step; explicitly tests that fit on unsorted time data still selects the temporally last value, not the positionally last value.
@@ -39,16 +41,16 @@ Green team tests verify that each model produces the output it is specified to p
 - `MixtureBaseline`: verified local pool extraction, global pool positivity and causality, `lambda_mix=0.0` produces only local samples, `lambda_mix=1.0` causes zero-history entities to receive positive samples from the global pool, reproducibility under identical seeds.
 - `build_prediction_grid` helper: shape, column names, and empty-input edge case tested directly.
 
-`tests/test_catalog.py` (9 tests) covers `BaselineModelCatalog`:
+`tests/test_catalog.py` covers `BaselineModelCatalog`:
 
-- All five model names return correctly typed and correctly parameterised instances (including `MixtureBaseline` with all three required params).
+- Every model name returns a correctly typed and correctly parameterised instance (including `MixtureBaseline` with all three required params, and the parametric models with `family`/`transform`/`seed`).
 - Unknown model name raises `ValueError` with the name in the message.
 - Missing required config key raises `ValueError` naming the key (tested for `ConflictologyModel` and `MixtureBaseline`).
 
-`tests/test_protocol.py` (10 tests) covers protocol conformance:
+`tests/test_protocol.py` covers protocol conformance:
 
-- All five model classes satisfy `isinstance(model, BaselineModel)`.
-- `ConflictologyModel` and `MixtureBaseline` satisfy `isinstance(model, DistributionalBaselineModel)`.
+- Every model class satisfies `isinstance(model, BaselineModel)`.
+- The distributional models (`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`) satisfy `isinstance(model, DistributionalBaselineModel)`.
 - `ZeroModel`, `LocfModel`, and `AverageModel` do not satisfy `DistributionalBaselineModel` (negative conformance).
 
 `tests/test_helpers.py` (5 tests) covers shared helper functions:
@@ -59,7 +61,7 @@ Green team tests verify that each model produces the output it is specified to p
 
 `tests/test_reproducibility_gate.py` (7 green team tests) covers `ReproducibilityGate`:
 
-- `CORE_GENOME` and `ALGORITHM_GENOMES` structural sanity (non-empty, all strings, all 5 models registered).
+- `CORE_GENOME` and `ALGORITHM_GENOMES` structural sanity (non-empty, all strings, all seven models registered).
 - `audit_manifest()` accepts valid configs for both minimal (ZeroModel) and maximal (MixtureBaseline) cases.
 - `audit_manifest()` rejects missing core keys, missing algorithm-specific keys, and unknown algorithm names.
 

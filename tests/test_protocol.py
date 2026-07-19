@@ -5,6 +5,8 @@ from views_baseline.model.baseline import (
     ConflictologyModel,
     LocfModel,
     MixtureBaseline,
+    ParametricConflictology,
+    ParametricHurdleConflictology,
     ZeroModel,
 )
 from views_baseline.model.protocol import BaselineModel, DistributionalBaselineModel
@@ -21,6 +23,14 @@ _POINT_MODELS = [
 _DISTRIBUTIONAL_MODELS = [
     (ConflictologyModel, {**_BASE, "window_months": 3, "n_samples": 10}),
     (MixtureBaseline, {**_BASE, "window_months": 3, "lambda_mix": 0.05, "n_samples": 10}),
+    (
+        ParametricConflictology,
+        {**_BASE, "window_months": 3, "n_samples": 10, "family": "nb", "transform": "none"},
+    ),
+    (
+        ParametricHurdleConflictology,
+        {**_BASE, "window_months": 3, "n_samples": 10, "family": "gumbel", "transform": "log1p"},
+    ),
 ]
 
 _ALL_MODELS = _POINT_MODELS + _DISTRIBUTIONAL_MODELS

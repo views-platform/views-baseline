@@ -8,6 +8,7 @@ from views_baseline.model.helpers import (
     build_time_grid,
     filter_entities,
     resolve_level,
+    sample_prediction_grid,
     to_prediction_frames,
 )
 
@@ -135,4 +136,54 @@ def test_to_prediction_frames_rejects_zero_sample_columns():
             time=np.array([1, 1]),
             unit=np.array([1, 2]),
             level=SpatialLevel.PGM,
+        )
+
+
+# -----------------------------------------------------------------------
+# sample_prediction_grid (shared distributional scaffold — C-19 dedup)
+# -----------------------------------------------------------------------
+
+
+def test_sample_prediction_grid_ordering_shape_and_call_count():
+    """The scaffold must fill entity→time→target (ADR-011), shape (N, n_samples), and
+    call draw_cell exactly once per (entity, time, target)."""
+    calls = []
+
+    def draw(cid, target, rng):
+        calls.append((cid, target))
+        return np.full(3, float(cid))  # marker = the entity id, n_samples=3
+
+    out = sample_prediction_grid(
+        entity_ids=[10, 20], valid={10: True, 20: True}, model_name="Stub",
+        targets=["a", "b"], n_samples=3, loa="pgm",
+        index_names=["month_id", "priogrid_id"], test_start=100,
+        sequence_number=0, output_length=2, seed=1, draw_cell=draw,
+    )
+
+    assert set(out) == {"a", "b"}
+    assert out["a"].values.shape == (2 * 2, 3)  # 2 entities × 2 timesteps
+    # each entity's rows carry its marker -> entity→time fill order preserved
+    assert (out["a"].values[np.asarray(out["a"].index.unit) == 10] == 10.0).all()
+    assert (out["a"].values[np.asarray(out["a"].index.unit) == 20] == 20.0).all()
+    # called once per (entity, time, target): 2 × 2 × 2 = 8
+    assert len(calls) == 8
+
+
+def test_sample_prediction_grid_drops_and_requires_entities():
+    """Entities absent from `valid` are dropped; if none remain it fails loud."""
+    # entity 20 has no fitted state -> dropped; 10 remains
+    out = sample_prediction_grid(
+        entity_ids=[10, 20], valid={10: True}, model_name="Stub", targets=["a"],
+        n_samples=2, loa="pgm", index_names=["month_id", "priogrid_id"],
+        test_start=100, sequence_number=0, output_length=1, seed=1,
+        draw_cell=lambda cid, t, rng: np.zeros(2),
+    )
+    assert set(np.asarray(out["a"].index.unit)) == {10}
+
+    with pytest.raises(ValueError, match="no entities to predict"):
+        sample_prediction_grid(
+            entity_ids=[10, 20], valid={}, model_name="Stub", targets=["a"], n_samples=2,
+            loa="pgm", index_names=["month_id", "priogrid_id"], test_start=100,
+            sequence_number=0, output_length=1, seed=1,
+            draw_cell=lambda cid, t, rng: np.zeros(2),
         )

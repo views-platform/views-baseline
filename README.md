@@ -90,6 +90,22 @@ Each of the `n_samples` draws is taken from the **global** pool with probability
 MixtureBaseline(targets, window_months, lambda_mix, n_samples, partition_dict, loa, seed=42)
 ```
 
+#### ParametricConflictology — no-hurdle parametric climatology
+
+The parametric counterpart of `ConflictologyModel`: instead of resampling each unit's window empirically, it **fits a single native-zero distribution** (`family`, e.g. `nb`) to that same window and draws `n_samples` per cell from the fitted law. `family`, `transform`, and `seed` are required, audited genome keys (ADR-021/ADR-022); `transform="log1p"` is illegal for count families and fails loud. In the closeness study (see `reports/closeness_experiment/`), `nb` is the family closest to conflictology on the C2ST indistinguishability metric.
+
+```python
+ParametricConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
+```
+
+#### ParametricHurdleConflictology — hurdle parametric climatology
+
+A two-part law per unit: a **zero-spike** (empirical zero-rate, Bernoulli) plus a **continuous positive-part family** (`lognormal`/`gumbel`/`gamma`) fit to the positive window values (mirrors Vesco et al. 2026's RVI mixture). `transform` (`none`/`log1p`) applies to the positive part and is inverted **per sample**; a non-negativity floor (`EMIT_FLOOR`) guarantees no negative magnitudes even for `gumbel`. Closeness study: `gamma`/`none` is closest on magnitude fidelity (Wasserstein/energy); `log1p` is worse on active cells. (Tweedie was evaluated and excluded — ADR-022.)
+
+```python
+ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
+```
+
 ---
 
 ## Model Catalog
@@ -107,7 +123,8 @@ Available models:
 
 ```python
 catalog.list_models()
-# ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline']
+# ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
+#  'ParametricConflictology', 'ParametricHurdleConflictology']
 ```
 
 ---

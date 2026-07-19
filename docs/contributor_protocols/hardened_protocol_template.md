@@ -11,7 +11,7 @@
 This protocol defines the hardened practices for contributing to the ML and numerical
 components of views-baseline. It applies specifically to:
 
-- The five model classes in `views_baseline/model/baseline.py`
+- The seven model classes in `views_baseline/model/baseline.py`
 - The `build_prediction_grid` helper in `views_baseline/model/helpers.py`
 - Any new distributional model that uses NumPy random number generation
 
@@ -117,14 +117,15 @@ validation without a PR discussion, as it adds maintenance surface.
 ## 3. File Structure — Known Deviation from 1-Class-1-File
 
 The standard software engineering practice of one class per file is **not followed** in
-views-baseline. All five model classes (`ZeroModel`, `LocfModel`, `AverageModel`,
-`ConflictologyModel`, `MixtureBaseline`) live in `views_baseline/model/baseline.py`
+views-baseline. All seven model classes (`ZeroModel`, `LocfModel`, `AverageModel`,
+`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`,
+`ParametricHurdleConflictology`) live in `views_baseline/model/baseline.py`
 (449 lines).
 
 This is a deliberate architectural decision recorded in ADR-001:
 
 > Separate files per model class would have made the ontological boundaries physically
-> visible. Rejected as over-engineered for five classes that are closely related and
+> visible. Rejected as over-engineered for seven classes that are closely related and
 > frequently read together.
 
 **Consequence for contributors:** When modifying `baseline.py`, read the full file before
@@ -143,7 +144,7 @@ The three-team testing model from ADR-005 maps to the codebase as follows:
 
 ### Green team — stability and correctness
 
-Covers: `test_baseline.py` (28 tests), `test_catalog.py` (7 tests), `test_protocol.py` (10 tests)
+Covers: `test_baseline.py`, `test_catalog.py`, `test_protocol.py`
 
 Every new model class must have Green team tests that verify:
 - Output shape and type (DataFrame vs `dict[str, PredictionFrame]`)
@@ -159,7 +160,7 @@ For distributional models, additionally verify:
 
 ### Beige team — realistic integration
 
-Covers: `test_baseline_manager.py` (6 tests)
+Covers: `test_baseline_manager.py`
 
 When adding a new model, consider whether a Beige team test is needed to verify the
 manager's dispatch path for the new model. The distributional manager dispatch path

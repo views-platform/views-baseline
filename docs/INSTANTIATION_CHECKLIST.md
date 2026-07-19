@@ -63,7 +63,7 @@ It tracks which template items have been completed, which are deferred, and why.
 
 - [x] ADR-005: No domain adaptation needed
 
-  Three-team model (Green/Beige/Red) applies directly. 51 tests documented. Coverage gaps
+  Three-team model (Green/Beige/Red) applies directly. Comprehensive suite documented. Coverage gaps
   recorded honestly: manager distributional path, _evaluate_sweep, entity-drop warnings,
   non-default output_length, single-target distributional edge case.
 
@@ -141,7 +141,7 @@ It tracks which template items have been completed, which are deferred, and why.
 - [ ] Review physical architecture standard (not included — multi-class files)
 
   Deferred. The physical architecture standard assumes 1-Class-1-File. views-baseline
-  intentionally deviates: all five model classes live in `baseline.py` (449 lines), a
+  intentionally deviates: all seven model classes live in `baseline.py`, a
   decision recorded in ADR-001. A physical architecture standard that documents this
   deviation as intentional and provides guidance for navigating multi-class files would
   be a valuable addition but is not part of this instantiation.

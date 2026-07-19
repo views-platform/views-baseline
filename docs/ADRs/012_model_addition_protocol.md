@@ -29,7 +29,7 @@ This ADR serves as the authoritative checklist for adding a new model.
   - **Point models:** build the result with `build_prediction_frame()` from `model/helpers.py`. Do **not** use `build_prediction_grid()` — it is retained for reference but no longer used by any model.
   - **Distributional models:** set `distributional = True` as a class attribute (semantic marker; no longer used for manager dispatch) and construct `PredictionFrame` objects directly.
 - `PredictionFrame` is lazy-imported inside the helper / `predict()` — never at module level (ADR-002, ADR-013). For point models this happens inside `build_prediction_frame()`.
-- **Call `require_entities(entity_ids, "<ModelName>")` before building output** — fail loud if no entities remain (ADR-008-style explicit failure; uniform across all five models).
+- **Call `require_entities(entity_ids, "<ModelName>")` before building output** — fail loud if no entities remain (ADR-008-style explicit failure; uniform across all seven models).
 - Accept `targets`, `partition_dict`, and `loa` as constructor parameters (universal). Accept model-specific parameters (e.g., `window_months`, `n_samples`, `seed`) as additional constructor parameters.
 - Follow the entity → time → target iteration order for any RNG-consuming loops (ADR-011).
 
@@ -38,7 +38,7 @@ This ADR serves as the authoritative checklist for adding a new model.
 **File:** `views_baseline/model/catalog.py`
 
 1. Add an import for the new class at the top of the file.
-2. Add an entry to `MODEL_GENOMES` listing required config keys (beyond `targets`). For a **stochastic** model this MUST include `seed` — it is a required, audited genome key with no magic default (ADR-021).
+2. Add an entry to `MODEL_GENOMES` listing required config keys (beyond `targets`). For a **stochastic** model this MUST include `seed` — it is a required, audited genome key with no magic default (ADR-021). For a **parametric-family** model (ADR-022) it MUST also include `family` and `transform`; the constructor is responsible for failing loud on an unsupported family or an illegal `family×transform` combination.
 3. Add a factory method `_get_<model_name>()` that reads config and constructs the model.
 4. Add the model name → factory method mapping in `self.models` inside `__init__`.
 
@@ -123,7 +123,7 @@ Define the model, its genome, and its factory in one file.
 
 ## Implementation Notes
 
-The current 5 models all follow this protocol:
+The current 7 models all follow this protocol:
 
 | Model | baseline.py | catalog.py | test_baseline.py | test_catalog.py | test_protocol.py | README.md |
 |---|---|---|---|---|---|---|
@@ -132,6 +132,8 @@ The current 5 models all follow this protocol:
 | AverageModel | yes | yes | yes | yes | yes | yes |
 | ConflictologyModel | yes | yes | yes | yes | yes | yes |
 | MixtureBaseline | yes | yes | yes | yes | yes | yes |
+| ParametricConflictology | yes | yes | yes (`test_parametric.py`) | yes | yes | yes |
+| ParametricHurdleConflictology | yes | yes | yes (`test_parametric.py`) | yes | yes | yes |
 
 No action is required beyond writing this ADR.
 

@@ -618,7 +618,10 @@ def test_catalog_list_models(partition_dict, targets):
     config = {"targets": targets}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     names = catalog.list_models()
-    expected = {"ZeroModel", "LocfModel", "AverageModel", "ConflictologyModel", "MixtureBaseline"}
+    expected = {
+        "ZeroModel", "LocfModel", "AverageModel", "ConflictologyModel", "MixtureBaseline",
+        "ParametricConflictology", "ParametricHurdleConflictology",
+    }
     assert set(names) == expected
 
 

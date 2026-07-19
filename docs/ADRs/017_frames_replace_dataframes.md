@@ -32,7 +32,7 @@ This ADR records the decision for views-baseline and names the platform-level di
 
 ### What this means concretely (views-baseline)
 
-- All five baseline models return `dict[str, PredictionFrame]` from `predict()` (ADR-010). Point models produce `(N, 1)`; distributional models produce `(N, n_samples)`.
+- Every baseline model returns `dict[str, PredictionFrame]` from `predict()` (ADR-010). Point models produce `(N, 1)`; distributional models produce `(N, n_samples)`.
 - The manager has a single, type-uniform path (no `isinstance` dispatch) — ADR-012, ADR-001, ADR-004.
 
 ---

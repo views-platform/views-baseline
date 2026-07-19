@@ -62,7 +62,7 @@ Two automated gates apply to every change, including AI-assisted changes:
 
 **Lint (ruff).** The ruff linter is run in GitHub Actions CI on every push and pull request. AI-generated code that introduces style violations, unused imports, or flagged patterns fails CI and is not merged.
 
-**Tests (pytest).** The full test suite (51 tests across 4 files) is run in GitHub Actions CI on every push and pull request. AI-generated code that breaks existing tests is not merged. AI-generated tests that fail on the current codebase are not accepted.
+**Tests (pytest).** The full test suite is run in GitHub Actions CI on every push and pull request. AI-generated code that breaks existing tests is not merged. AI-generated tests that fail on the current codebase are not accepted.
 
 These gates are necessary but not sufficient. Passing lint and tests confirms that the code is syntactically valid, style-conformant, and consistent with what the existing tests check. It does not confirm that the code is correct for cases not covered by tests, that the AI understood the intent of a change correctly, or that an AI-generated test is actually testing the right thing.
 

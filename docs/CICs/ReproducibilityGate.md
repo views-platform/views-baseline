@@ -131,7 +131,7 @@ File: `tests/test_reproducibility_gate.py`
 | Test | What it verifies |
 |---|---|
 | `test_core_genome_is_list_of_strings` | `CORE_GENOME` is a non-empty list of strings. |
-| `test_algorithm_genomes_covers_all_catalog_models` | All 5 model names are registered in `ALGORITHM_GENOMES`. |
+| `test_algorithm_genomes_covers_all_catalog_models` | All seven model names are registered in `ALGORITHM_GENOMES`. |
 | `test_audit_manifest_accepts_valid_zero_model_config` | Valid minimal config passes without error. |
 | `test_audit_manifest_accepts_valid_mixture_config` | Valid config with all algorithm-specific keys passes. |
 | `test_audit_manifest_rejects_missing_core_key` | Missing `steps` raises `MissingHyperparameterError`. |

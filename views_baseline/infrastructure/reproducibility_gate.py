@@ -30,6 +30,14 @@ class ReproducibilityGate:
             "AverageModel": ["window_months"],
             "ConflictologyModel": ["window_months", "n_samples", "seed"],
             "MixtureBaseline": ["window_months", "lambda_mix", "n_samples", "seed"],
+            # Parametric climatology (ADR-022): `family` and `transform` join `seed` as
+            # required, audited reproducibility keys — no magic defaults (ADR-021).
+            "ParametricConflictology": [
+                "window_months", "n_samples", "seed", "family", "transform",
+            ],
+            "ParametricHurdleConflictology": [
+                "window_months", "n_samples", "seed", "family", "transform",
+            ],
         }
 
         @staticmethod

@@ -9,7 +9,7 @@
 
 views-baseline is a focused library of interpretable forecasting baselines for the VIEWS
 conflict prediction pipeline. It is maintained by a small team of researchers and developers.
-The codebase is intentionally small (five model classes, one manager, 51 tests) and changes
+The codebase is intentionally small (seven model classes, one manager) and changes
 to it have downstream consequences in the pipeline ecosystem.
 
 This protocol describes how human contributors are expected to work in this project.
@@ -92,7 +92,7 @@ blocks the merge.
 The three-team testing model (from ADR-005) defines what must be tested:
 
 - **Green team:** Every model class needs tests for `fit()` and `predict()` correctness under
-  normal inputs. This is the CI backbone. All 51 existing tests are Green or Beige.
+  normal inputs. This is the CI backbone. All existing tests are Green or Beige.
 - **Beige team:** Integration tests that cross module boundaries with realistic mocks. The
   six `test_baseline_manager.py` tests are Beige.
 - **Red team:** Adversarial inputs (degenerate parameters, missing columns, wrong index

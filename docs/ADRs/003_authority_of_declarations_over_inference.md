@@ -48,7 +48,7 @@ The catalog never infers what a model needs by inspecting the model's constructo
 
 #### 2. Protocol Dispatch — `distributional` class attribute
 
-> **Status note (ADR-017, ADR-020):** Since PR #15 all five models return `dict[str, PredictionFrame]`
+> **Status note (ADR-017, ADR-020):** Since PR #15 every baseline model returns `dict[str, PredictionFrame]`
 > and the manager has a **single, type-uniform path** — it no longer dispatches on
 > `isinstance(model, DistributionalBaselineModel)`. The `distributional` attribute is retained as a
 > **semantic marker** (declaration of intent per ADR-012), which keeps this section's "declare, don't
