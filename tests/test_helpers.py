@@ -170,7 +170,7 @@ def test_sample_prediction_grid_ordering_shape_and_call_count():
 
 
 def test_sample_prediction_grid_drops_and_requires_entities():
-    """Entities absent from `valid` are dropped; if none remain it fails loud."""
+    """Entities absent from `fitted_state` are dropped; if none remain it fails loud."""
     # entity 20 has no fitted state -> dropped; 10 remains
     out = sample_prediction_grid(
         entity_ids=[10, 20], fitted_state={10: True}, model_name="Stub", targets=["a"],
