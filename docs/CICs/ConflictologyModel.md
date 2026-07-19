@@ -81,6 +81,7 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 
 - **Depends on:** `numpy` (`np.random.default_rng`, `np.array`, `rng.choice`).
 - **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/helpers.py`, which lazy-imports the `views_frames` leaf (`PredictionFrame`, `SpatioTemporalIndex`) inside the function — not at module load. No inline construction; `build_prediction_grid` is deleted.
+- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `helpers.sample_prediction_grid(..., draw_cell)`, supplying only the per-cell resample as `draw_cell` (`rng.choice(hist_per_entity[cid][t], size=n_samples, replace=True)`).
 - **Instantiated by:** `BaselineModelCatalog._get_conflictology_model()`.
 - **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` — a single type-uniform path since ADR-017; `distributional = True` is a semantic marker, not an `isinstance` dispatch discriminator.
 - **Pool equivalence:** `hist_per_entity` is constructed identically to `MixtureBaseline.local_pool`. This equivalence is verified by `test_conflictology_matches_mixture_lambda_zero`.

@@ -8,7 +8,7 @@
 
 ## Context
 
-views-baseline is a focused library of interpretable baseline forecasting models for the VIEWS conflict prediction pipeline. Although small in scope today (five model classes, one manager), the project sits at a junction of several pressures that make undocumented decisions costly:
+views-baseline is a focused library of interpretable baseline forecasting models for the VIEWS conflict prediction pipeline. Although small in scope today (seven model classes, one manager), the project sits at a junction of several pressures that make undocumented decisions costly:
 
 - **Evolving research baseline expectations.** The VIEWS pipeline treats these models as reference points against which more sophisticated models are evaluated. What counts as a valid baseline — a point estimate, a distributional sample, a mixture — has changed (e.g., the shift from DataFrame to PredictionFrame output for distributional models), and will change again. Decisions made during those transitions are lost without a record.
 
@@ -16,7 +16,7 @@ views-baseline is a focused library of interpretable baseline forecasting models
 
 - **Pipeline integration decisions have downstream consequences.** `BaselineForecastingModelManager` extends `ForecastingModelManager` from views-pipeline-core. Choices about which methods to override, how prediction output is shaped, and when artifacts are written interact with ensemble managers and evaluation tooling outside this repository. These coupling points need to be legible to maintainers who did not make the original decisions.
 
-- **Small test-and-iterate cycles obscure architecture drift.** With 51 tests across 4 files covering model behaviour, catalog validation, and protocol conformance, the mechanical behaviour of the code is well-protected. Architecture decisions — the shape of the dependency graph, the authority of explicit declarations, stability classifications — are not tested and can silently erode.
+- **Small test-and-iterate cycles obscure architecture drift.** With a comprehensive test suite covering model behaviour, catalog validation, and protocol conformance, the mechanical behaviour of the code is well-protected. Architecture decisions — the shape of the dependency graph, the authority of explicit declarations, stability classifications — are not tested and can silently erode.
 
 ADRs provide a lightweight, durable, human-readable record that fills this gap.
 

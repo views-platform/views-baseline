@@ -77,9 +77,9 @@ The catalog stores a reference to `config` (not a copy). Mutations to `config` a
 
 ## Boundaries and Interactions
 
-- **Imports:** `ZeroModel`, `LocfModel`, `AverageModel`, `ConflictologyModel`, `MixtureBaseline` from `views_baseline.model.baseline`.
+- **Imports:** `ZeroModel`, `LocfModel`, `AverageModel`, `ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology` from `views_baseline.model.baseline`.
 - **Imported by:** `BaselineForecastingModelManager._setup_model_and_data()`.
-- **No external runtime dependencies** beyond the five model classes.
+- **No external runtime dependencies** beyond the seven model classes.
 - The config key `"window_months"` maps directly to the constructor parameter `window_months` for all models that use it.
 
 ---
@@ -146,11 +146,11 @@ assert model.targets == []   # unexpected empty targets
 
 ## Test Alignment
 
-Files: `tests/test_catalog.py` (7 tests) and `tests/test_baseline.py` (5 tests)
+Files: `tests/test_catalog.py` and `tests/test_baseline.py` (the `list_models` coverage)
 
 | Test | File | What it verifies |
 |---|---|---|
-| `test_catalog_lists_all_models` | `test_catalog.py` | `list_models()` returns all 5 expected names. |
+| `test_catalog_lists_all_models` | `test_catalog.py` | `list_models()` returns all seven expected names. |
 | `test_catalog_returns_zero_model` | `test_catalog.py` | `get_model("ZeroModel")` returns correct type; `targets`, `partition_dict`, `loa` are wired correctly. |
 | `test_catalog_returns_locf_model` | `test_catalog.py` | Same structural check for `LocfModel`. |
 | `test_catalog_returns_average_model` | `test_catalog.py` | `window_months` wired from `config["window_months"]`. |
@@ -163,7 +163,7 @@ Files: `tests/test_catalog.py` (7 tests) and `tests/test_baseline.py` (5 tests)
 | `test_catalog_get_average_model` | `test_baseline.py` | `window_months` wired from `config["window_months"]`. |
 | `test_catalog_unknown_model_raises` | `test_baseline.py` | Error message contains the unknown name. |
 | `test_catalog_missing_required_key_raises` | `test_baseline.py` | `"window_months"` appears in error message when missing for `AverageModel`. |
-| `test_catalog_list_models` | `test_baseline.py` | Set of returned names matches expected 5 models. |
+| `test_catalog_list_models` | `test_baseline.py` | Set of returned names matches the seven expected models. |
 
 ---
 

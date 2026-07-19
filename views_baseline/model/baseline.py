@@ -5,15 +5,25 @@ import logging
 import numpy as np
 import pandas as pd
 
+from views_baseline.model.distributions import (
+    CONTINUOUS_FAMILIES,
+    NATIVE_ZERO_FAMILIES,
+    TRANSFORMS,
+    clamp_floor,
+    clamp_log,
+    fit_family,
+    sample_family,
+    validate_family_transform,
+)
 from views_baseline.model.helpers import (
-    build_identifier_arrays,
     build_prediction_frame,
     build_time_grid,
     filter_entities,
     require_entities,
     resolve_level,
-    to_prediction_frames,
+    sample_prediction_grid,
 )
+from views_baseline.model.pooling import window_pool
 
 logger = logging.getLogger(__name__)
 
@@ -234,30 +244,13 @@ class ConflictologyModel:
         test_start = self.partition_dict["test"][0]
         self.time_idx = df.index.names[0]
         self.entity_idx = df.index.names[1]
-
         train_end = test_start - 1
 
-        df = df[df.index.get_level_values(self.time_idx) <= train_end]
-        df = df.sort_index(level=[self.entity_idx, self.time_idx])
-
-        last_n_months = df.groupby(level=self.entity_idx, group_keys=False).apply(
-            lambda g: g.tail(self.window_months)
+        # Shared with the parametric climatology models so the per-entity pools are
+        # byte-identical (ADR-022). Behaviour unchanged from the previous inline form.
+        self.entity_ids, self.hist_per_entity = window_pool(
+            df, self.time_idx, self.entity_idx, self.targets, self.window_months, train_end
         )
-
-        self.entity_ids = (
-            df.loc[df.index.get_level_values(self.time_idx) == train_end]
-            .index.get_level_values(self.entity_idx)
-            .unique()
-        )
-
-        self.hist_per_entity = {}
-        for cid in self.entity_ids:
-            history = last_n_months.xs(cid, level=self.entity_idx, drop_level=False)
-            if history.empty:
-                continue
-            self.hist_per_entity[cid] = {
-                t: np.array(history[t].tolist(), dtype=np.float64) for t in self.targets
-            }
 
         return self
 
@@ -268,32 +261,15 @@ class ConflictologyModel:
         Return predictions as Dict[str, PredictionFrame] — one PF per target.
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
-        test_start = self.partition_dict["test"][0]
-        level = resolve_level(self.loa, df.index.names)
-        time_ids = build_time_grid(test_start, sequence_number, output_length)
-
-        entities_with_history = filter_entities(
-            self.entity_ids, self.hist_per_entity, "ConflictologyModel"
+        return sample_prediction_grid(
+            entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
+            model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,
+            loa=self.loa, index_names=df.index.names, test_start=self.partition_dict["test"][0],
+            sequence_number=sequence_number, output_length=output_length, seed=self.seed,
+            draw_cell=lambda cid, t, rng: rng.choice(
+                self.hist_per_entity[cid][t], size=self.n_samples, replace=True
+            ),
         )
-        require_entities(entities_with_history, "ConflictologyModel")
-
-        time_arr, unit_arr = build_identifier_arrays(entities_with_history, time_ids)
-        n_rows = len(time_arr)
-
-        rng = np.random.default_rng(self.seed)
-
-        # Iterate entity→time→target for consistent RNG ordering
-        y_preds = {t: np.empty((n_rows, self.n_samples), dtype=np.float64) for t in self.targets}
-        idx = 0
-        for cid in entities_with_history:
-            for _ in time_ids:
-                for t in self.targets:
-                    y_preds[t][idx] = rng.choice(
-                        self.hist_per_entity[cid][t], size=self.n_samples, replace=True
-                    )
-                idx += 1
-
-        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)
 
 
 class MixtureBaseline:
@@ -379,27 +355,176 @@ class MixtureBaseline:
     def predict(
         self, df: pd.DataFrame, sequence_number: int, output_length: int
     ) -> dict:
-        test_start = self.partition_dict["test"][0]
-        level = resolve_level(self.loa, df.index.names)
-        time_ids = build_time_grid(test_start, sequence_number, output_length)
-
-        entities_with_pool = filter_entities(
-            self.entity_ids, self.local_pool, "MixtureBaseline"
+        return sample_prediction_grid(
+            entity_ids=self.entity_ids, fitted_state=self.local_pool, model_name="MixtureBaseline",
+            targets=self.targets, n_samples=self.n_samples, loa=self.loa,
+            index_names=df.index.names, test_start=self.partition_dict["test"][0],
+            sequence_number=sequence_number, output_length=output_length, seed=self.seed,
+            draw_cell=self._sample,
         )
-        require_entities(entities_with_pool, "MixtureBaseline")
 
-        time_arr, unit_arr = build_identifier_arrays(entities_with_pool, time_ids)
-        n_rows = len(time_arr)
 
-        rng = np.random.default_rng(self.seed)
+class ParametricConflictology:
+    """No-hurdle parametric climatology (ADR-022).
 
-        # Iterate entity→time→target for consistent RNG ordering
-        y_preds = {t: np.empty((n_rows, self.n_samples), dtype=np.float64) for t in self.targets}
-        idx = 0
-        for cid in entities_with_pool:
-            for _ in time_ids:
-                for t in self.targets:
-                    y_preds[t][idx] = self._sample(cid, t, rng)
-                idx += 1
+    Fits a single native-zero distribution (`family` ∈ {"nb", "zinb"}) to each
+    entity's `window_pool` and samples `n_samples` i.i.d. per cell — a parametric analogue
+    of `ConflictologyModel` (same pool). `transform` must be "none" for count families
+    (`log1p` fails loud). Output via the single `to_prediction_frames` seam.
+    """
 
-        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)
+    distributional = True
+
+    def __init__(
+        self,
+        targets: list[str],
+        window_months: int,
+        partition_dict: dict,
+        loa: str,
+        n_samples: int,
+        family: str,
+        transform: str = "none",
+        seed: int = DEFAULT_SEED,
+    ):
+        if family not in NATIVE_ZERO_FAMILIES:
+            raise ValueError(
+                f"ParametricConflictology supports native-zero families "
+                f"{sorted(NATIVE_ZERO_FAMILIES)}, got {family!r}."
+            )
+        validate_family_transform(family, transform)
+        self.targets = targets
+        self.window_months = window_months
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.n_samples = n_samples
+        self.family = family
+        self.transform = transform
+        self.seed = seed
+        self.time_idx = None
+        self.entity_idx = None
+        self.entity_ids = None
+        self.pools = None
+        self.params = None
+
+    def fit(self, df: pd.DataFrame) -> "ParametricConflictology":
+        test_start = self.partition_dict["test"][0]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+        train_end = test_start - 1
+        self.entity_ids, self.pools = window_pool(
+            df, self.time_idx, self.entity_idx, self.targets, self.window_months, train_end
+        )
+        forward, _ = TRANSFORMS[self.transform]
+        self.params = {
+            cid: {t: fit_family(self.family, forward(self.pools[cid][t])) for t in self.targets}
+            for cid in self.entity_ids
+        }
+        return self
+
+    def predict(self, df: pd.DataFrame, sequence_number: int, output_length: int) -> dict:
+        _, inverse = TRANSFORMS[self.transform]
+
+        def draw(cid, t, rng):
+            draws = sample_family(self.family, self.params[cid][t], self.n_samples, rng)
+            return inverse(clamp_log(draws)) if self.transform != "none" else draws
+
+        return sample_prediction_grid(
+            entity_ids=self.entity_ids, fitted_state=self.params,
+            model_name="ParametricConflictology",
+            targets=self.targets, n_samples=self.n_samples, loa=self.loa,
+            index_names=df.index.names, test_start=self.partition_dict["test"][0],
+            sequence_number=sequence_number, output_length=output_length, seed=self.seed,
+            draw_cell=draw,
+        )
+
+
+class ParametricHurdleConflictology:
+    """Hurdle parametric climatology (ADR-022).
+
+    Per entity/target: a zero-spike (`w` = empirical zero-rate of the window, Bernoulli)
+    plus a continuous positive-part family (`family` ∈ {"lognormal","gumbel","gamma"})
+    fit to the *positive* window values. `transform` (`none`/`log1p`) is applied to the
+    positive part before fitting and **inverted per sampled draw** (Jensen-safe), then
+    clamped (`EMIT_LOG_CEIL`). Mirrors Vesco et al. 2026's RVI mixture (spike-at-0 here).
+    """
+
+    distributional = True
+
+    def __init__(
+        self,
+        targets: list[str],
+        window_months: int,
+        partition_dict: dict,
+        loa: str,
+        n_samples: int,
+        family: str,
+        transform: str = "none",
+        seed: int = DEFAULT_SEED,
+    ):
+        if family not in CONTINUOUS_FAMILIES:
+            raise ValueError(
+                f"ParametricHurdleConflictology supports continuous positive-part families "
+                f"{sorted(CONTINUOUS_FAMILIES)}, got {family!r}."
+            )
+        validate_family_transform(family, transform)
+        self.targets = targets
+        self.window_months = window_months
+        self.partition_dict = partition_dict
+        self.loa = loa
+        self.n_samples = n_samples
+        self.family = family
+        self.transform = transform
+        self.seed = seed
+        self.time_idx = None
+        self.entity_idx = None
+        self.entity_ids = None
+        self.pools = None
+        self.params = None  # per cid/target: {"zero_rate": w, "pos": params-or-None}
+
+    def fit(self, df: pd.DataFrame) -> "ParametricHurdleConflictology":
+        test_start = self.partition_dict["test"][0]
+        self.time_idx = df.index.names[0]
+        self.entity_idx = df.index.names[1]
+        train_end = test_start - 1
+        self.entity_ids, self.pools = window_pool(
+            df, self.time_idx, self.entity_idx, self.targets, self.window_months, train_end
+        )
+        forward, _ = TRANSFORMS[self.transform]
+        self.params = {}
+        for cid in self.entity_ids:
+            self.params[cid] = {}
+            for t in self.targets:
+                pool = self.pools[cid][t]
+                pos = pool[pool > 0]
+                if pos.size == 0:  # all-zero window -> point mass at 0 (w=1)
+                    self.params[cid][t] = {"zero_rate": 1.0, "pos": None}
+                else:
+                    self.params[cid][t] = {
+                        "zero_rate": float(np.mean(pool == 0.0)),
+                        "pos": fit_family(self.family, forward(pos)),
+                    }
+        return self
+
+    def predict(self, df: pd.DataFrame, sequence_number: int, output_length: int) -> dict:
+        _, inverse = TRANSFORMS[self.transform]
+
+        def draw(cid, t, rng):
+            hp = self.params[cid][t]
+            draws = np.zeros(self.n_samples, dtype=np.float64)
+            is_positive = rng.random(self.n_samples) >= hp["zero_rate"]
+            n_pos = int(is_positive.sum())
+            if n_pos > 0 and hp["pos"] is not None:
+                pos = sample_family(self.family, hp["pos"], n_pos, rng)
+                if self.transform != "none":
+                    pos = inverse(clamp_log(pos))
+                # gumbel_r has ℝ support — floor at 0 so no negative magnitude escapes
+                draws[is_positive] = clamp_floor(pos)
+            return draws
+
+        return sample_prediction_grid(
+            entity_ids=self.entity_ids, fitted_state=self.params,
+            model_name="ParametricHurdleConflictology", targets=self.targets,
+            n_samples=self.n_samples, loa=self.loa, index_names=df.index.names,
+            test_start=self.partition_dict["test"][0], sequence_number=sequence_number,
+            output_length=output_length, seed=self.seed, draw_cell=draw,
+        )

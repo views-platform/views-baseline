@@ -17,7 +17,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 
 ## Non-Goals
 
-- Does not implement any prediction algorithm. All model logic lives in the five model classes.
+- Does not implement any prediction algorithm. All model logic lives in the seven model classes.
 - Does not own data loading. Data is read from disk via `read_dataframe` (from `views_pipeline_core`) inside `_setup_model_and_data()`.
 - Does not define the configuration schema. Config structure is the responsibility of the pipeline configuration layer.
 - Does not sweep hyperparameters in any non-trivial way; `_evaluate_sweep` delegates entirely to `_generate_predictions`.

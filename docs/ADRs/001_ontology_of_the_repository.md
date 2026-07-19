@@ -8,7 +8,7 @@
 
 ## Context
 
-views-baseline contains five model classes, two protocols, one factory, one manager, and one helper module. Although that is a small surface area, the entities serve qualitatively different purposes and have different authority relationships, stability expectations, and dependency rules. Without a shared vocabulary for these categories, contributors must infer the ontology from file layout alone — which produces inconsistent mental models and leads to decisions (where to add a new model, what may depend on what) being made by analogy rather than by principle.
+views-baseline contains seven model classes, two protocols, one factory, one manager, and one helper module. Although that is a small surface area, the entities serve qualitatively different purposes and have different authority relationships, stability expectations, and dependency rules. Without a shared vocabulary for these categories, contributors must infer the ontology from file layout alone — which produces inconsistent mental models and leads to decisions (where to add a new model, what may depend on what) being made by analogy rather than by principle.
 
 A formal ontology provides the vocabulary. It does not constrain what the code can do; it names what the code already is.
 
@@ -34,9 +34,10 @@ The following six ontological categories are recognised in this repository. Ever
 #### 2. Distributional Forecast Models
 
 - **Purpose:** Probabilistic, multi-sample predictions. For each (entity, time) cell, produce `n_samples` draws per target.
-- **Classes:** `ConflictologyModel`, `MixtureBaseline`
+- **Classes:** `ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`
 - **File:** `views_baseline/model/baseline.py`
-- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, n_samples)`. Both carry the class attribute `distributional = True` — now a **semantic marker** (point vs sampled), no longer a manager dispatch discriminator (see Category 3 and ADR-017).
+- **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, n_samples)`. All carry the class attribute `distributional = True` — now a **semantic marker** (point vs sampled), no longer a manager dispatch discriminator (see Category 3 and ADR-017).
+- **Parametric climatology (ADR-022):** `ParametricConflictology` (no-hurdle, native-zero `family`) and `ParametricHurdleConflictology` (zero-spike + continuous positive-part `family`) fit a distribution to conflictology's per-entity `window_pool` and sample from it. They add `family`, `transform`, and `seed` as required, audited genome keys (ADR-021); illegal `family×transform` combinations fail loud. (Tweedie was evaluated and excluded — ADR-022.)
 - **Authority:** Authoritative — these classes produce the final prediction values for distributional use cases.
 - **Stability:** Evolving. The output format changed from `DataFrame` to `PredictionFrame` during development and may change again as the `PredictionFrame` schema evolves upstream.
 
@@ -106,7 +107,7 @@ Separating the ontology from the physical file layout makes the categories legib
 
 **Use abstract base classes instead of protocols.** Would have made the ontological categories explicit in code via inheritance. Rejected in favour of `@runtime_checkable` protocols because protocols allow structural subtyping — a model class satisfies `DistributionalBaselineModel` by having the right attributes and methods, without any base-class import in `model/`.
 
-**Separate files per model class.** Would have made the ontological boundaries physically visible. Rejected as over-engineered for five classes that are closely related and frequently read together.
+**Separate files per model class.** Would have made the ontological boundaries physically visible. Rejected as over-engineered for seven classes that are closely related and frequently read together.
 
 ---
 

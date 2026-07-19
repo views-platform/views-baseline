@@ -24,7 +24,7 @@ views-baseline produces forecasts that the VIEWS pipeline persists and ensembles
 
 ## Decision (what views-baseline does today)
 
-All five baseline models return `dict[str, PredictionFrame]` from `predict()` — one PredictionFrame per target.
+Every baseline model returns `dict[str, PredictionFrame]` from `predict()` — one PredictionFrame per target.
 
 - **Point models** (`ZeroModel`, `LocfModel`, `AverageModel`): `y_pred` shape `(N, 1)` — one deterministic value per cell — built by `build_prediction_frame()` in `model/helpers.py`. `N = (units at train_end) × output_length`.
 - **Distributional models** (`ConflictologyModel`, `MixtureBaseline`): `y_pred` shape `(N, n_samples)`, built inline in `predict()`.

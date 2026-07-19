@@ -19,8 +19,16 @@ def test_algorithm_genomes_covers_all_catalog_models():
     expected = {
         "ZeroModel", "LocfModel", "AverageModel",
         "ConflictologyModel", "MixtureBaseline",
+        "ParametricConflictology", "ParametricHurdleConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
+
+
+def test_parametric_genomes_require_family_transform_seed():
+    """ADR-022: family/transform/seed are required, audited keys for both parametric models."""
+    genomes = ReproducibilityGate.Config.ALGORITHM_GENOMES
+    for algo in ("ParametricConflictology", "ParametricHurdleConflictology"):
+        assert {"family", "transform", "seed"}.issubset(genomes[algo])
 
 
 def test_audit_manifest_accepts_valid_zero_model_config():
@@ -62,6 +70,42 @@ def test_audit_manifest_rejects_missing_seed_for_distributional():
         # "seed" is missing
     }
     with pytest.raises(MissingHyperparameterError, match="seed"):
+        ReproducibilityGate.Config.audit_manifest(config)
+
+
+def test_audit_manifest_accepts_valid_parametric_config():
+    config = {
+        "algorithm": "ParametricConflictology",
+        "targets": ["y1"],
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "window_months": 18,
+        "n_samples": 256,
+        "seed": 42,
+        "family": "nb",
+        "transform": "none",
+    }
+    ReproducibilityGate.Config.audit_manifest(config)
+
+
+@pytest.mark.parametrize("missing", ["family", "transform", "seed"])
+def test_audit_manifest_rejects_missing_parametric_key(missing):
+    """ADR-022: family/transform/seed are audited — omitting any one fails loud."""
+    config = {
+        "algorithm": "ParametricHurdleConflictology",
+        "targets": ["y1"],
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "window_months": 18,
+        "n_samples": 256,
+        "seed": 42,
+        "family": "gumbel",
+        "transform": "log1p",
+    }
+    del config[missing]
+    with pytest.raises(MissingHyperparameterError, match=missing):
         ReproducibilityGate.Config.audit_manifest(config)
 
 

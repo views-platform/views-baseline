@@ -90,6 +90,7 @@ The class attribute `distributional = True` routes the output through the distri
 
 - **Depends on:** `numpy` for RNG and array operations.
 - **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/helpers.py` (lazy `views_frames` leaf import inside the function). No inline construction; `build_prediction_grid` is deleted.
+- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `helpers.sample_prediction_grid(..., draw_cell)`, supplying `self._sample` (signature `(cid, target, rng)`) as the per-cell `draw_cell`.
 - **Instantiated by:** `BaselineModelCatalog._get_mixture_model()`. All model-specific params (`window_months`, `lambda_mix`, `n_samples`) are required config keys — the catalog reads them via `self.config[key]` with no defaults.
 - **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` — a single type-uniform path since ADR-017; `distributional = True` is a semantic marker, not an `isinstance` dispatch discriminator.
 - **Pool equivalence with `ConflictologyModel`:** When `lambda_mix=0.0`, all draws come from the local pool, which is constructed by the same logic as `ConflictologyModel.hist_per_entity`. This is verified by `test_conflictology_matches_mixture_lambda_zero`.

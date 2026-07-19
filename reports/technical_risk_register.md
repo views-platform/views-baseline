@@ -4,10 +4,11 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-06-25                           |
-| Total Concerns    | 25                                   |
-| Open Concerns     | 22                                   |
+| Last Updated      | 2026-07-19                           |
+| Total Concerns    | 30                                   |
+| Open Concerns     | 26                                   |
 | Resolved Concerns | 3                                    |
+| Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
 ---
 
@@ -59,6 +60,8 @@ Tiers reflect **expected risk** (impact × likelihood), not impact alone. A sile
 All five model classes (`ZeroModel`, `LocfModel`, `AverageModel`, `ConflictologyModel`, `MixtureBaseline`) independently extract `time_idx`, `entity_idx`, and `test_start` in their `fit()` and `predict()` methods. The pattern is identical in every case. This is a DRY violation but deliberately minimal — each model is intentionally self-contained. The risk is low because the pattern is simple and well-tested across all models. Could be extracted to a helper or base class if a sixth model is added.
 
 See also C-05 (related: same code locations, different problem — C-03 is duplication, C-05 is validation absence).
+
+> **Status (2026-07-19):** the distributional `predict()`-side duplication is reduced — the shared grid / RNG / entity→time→target fill scaffold now lives once in `helpers.sample_prediction_grid` (all four distributional models delegate; see C-19). **Still open:** the `fit()`-side `time_idx`/`entity_idx`/`test_start` extraction and the point-model (`ZeroModel`/`LocfModel`/`AverageModel`) `predict()` extraction remain duplicated — low value, deferred. (tech-debt-cleanup)
 
 ---
 
@@ -300,6 +303,8 @@ See also C-05 (acute new instance of the same positional-index root cause) and D
 
 See also C-08 (the duplicated lazy import the adapter subsumes), C-16 (the migration that exposes the three sites), D-04.
 
+> **Status (2026-07-19):** the **distributional output-construction / predict-scaffold** half is **resolved**. All four distributional models (`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`) now build output through one helper — `helpers.sample_prediction_grid(..., draw_cell)`, the distributional analogue of `build_prediction_frame` — which routes to the single `to_prediction_frames` seam; each `predict()` supplies only a per-cell `draw_cell(cid, target, rng)` closure. Behaviour-identical (byte-identity reproducibility tests, 174/174; ruff clean; `baseline.py` 586→529 LOC). The original half-migration trigger (`MixtureBaseline` old constructor) was already closed by the views-frames epic (ADR-020). **Still deferred:** the three-parallel-registries OCP half (catalog dispatch + `ALGORITHM_GENOMES` + `_get_*` factory) per ADR-012. (tech-debt-cleanup)
+
 ---
 
 ### C-20: `views_frames.PredictionFrame` silently accepts zero-sample `(N, 0)` arrays
@@ -392,6 +397,86 @@ The correct long-term resolution of C-10 is to *declare* `seed` in the genome so
 The default `42` already appears twice in `baseline.py`; the naive C-10 fix would add a third copy in `catalog.py`. Mitigation is trivial and should be part of the fix: introduce one module-level `DEFAULT_SEED = 42` referenced by both constructors and the catalog, so the default has a single source. See also C-10, D-09.
 
 > **Status (2026-06-25):** resolved in the working tree — a single `DEFAULT_SEED = 42` in `baseline.py` backs both constructor defaults; the catalog reads `config["seed"]` strictly (no duplicated literal). `grep '= 42' views_baseline/model/` returns only the one definition.
+
+---
+
+### C-26: `ParametricHurdleConflictology` positive-part family can emit negative magnitudes (ℝ-support gumbel, no floor)
+
+| Field | Value |
+|-------|-------|
+| ID | C-26 |
+| Tier | 2 |
+| Source | review-diff (2026-07-18, epic #33 S6) |
+| Trigger | When a positive-part family whose support includes negatives (today `gumbel`; tomorrow any new `CONTINUOUS_FAMILIES` member, or a negative-capable transform) is fit and its samples are routed to output **without** passing through `clamp_floor` — the model emits negative conflict magnitudes, which no error signals and which silently distort the S8 closeness metrics against (non-negative) conflictology |
+| Location | `views_baseline/model/baseline.py` (`ParametricHurdleConflictology.predict`, positive-part draw); `views_baseline/model/distributions.py` (`EMIT_FLOOR`/`clamp_floor`) |
+
+The hurdle model's docstring calls `family` a "continuous **positive-part** family", but `scipy`/`numpy` `gumbel_r` has support on all of ℝ: its left tail draws below zero directly for `transform="none"`, and via `expm1(x)∈(-1,0)` for `x<0` under `transform="log1p"` (the `clamp_log`/`EMIT_LOG_CEIL` guard bounds only the *upper* tail). For a window with a heavy outlier the fitted gumbel `loc` goes negative and ≈40% of positive-part draws are negative pre-floor. A distributional baseline emitting negative fatalities violates the implicit non-negativity contract and biases the very metrics S8 uses to rank families. It went undetected because `test_hurdle_log1p_round_trips_to_raw_scale` asserted non-negativity but passed only *probabilistically* (~0.15% flake at seed 42). This is Tier 2 not Tier 1: the impact is silent output incorrectness, but the trigger is confined to the ℝ-support families and the fix closes it deterministically. See also C-20 (zero-sample PF), C-13 (sample-count validation) as sibling numeric-boundary guards.
+
+> **Status (2026-07-18):** resolved in the working tree (same story, S6) — added a single-sourced `EMIT_FLOOR = 0.0` + `clamp_floor()` in `distributions.py` (mirror of `EMIT_LOG_CEIL`/`clamp_log`, WARN on floor), applied to the positive-part draws on the raw emitted scale in `ParametricHurdleConflictology.predict`. Guarded by `test_clamp_floor_*` unit tests and a deterministic `test_hurdle_gumbel_floors_negative_tail_to_nonnegative` (heavy-outlier window forces gumbel `loc<0` so the floor genuinely engages). Floor policy recorded in ADR-022 §3. 148 tests green, ruff clean.
+
+---
+
+### C-27: Tweedie `lam` is unbounded when the derived index `p` clamps to the ceiling (OOM + unclamped magnitude)
+
+| Field | Value |
+|-------|-------|
+| ID | C-27 |
+| Tier | 3 — **WITHDRAWN 2026-07-18** |
+| Source | review-diff (2026-07-18, epic #33 S9) |
+| Trigger | When `fit_tweedie` is called on a **low-zero-rate, low-dispersion** window (so the derived `p = 2 − m²/(var·lam0)` exceeds 2 and clamps to `2 − eps`), making `lam = m²/(var·(2−p)) ≈ 1000·m²/var` — e.g. a new/low-dispersion regression target routed to `ParametricConflictology(family="tweedie")` |
+| Location | `views_baseline/model/distributions.py` (`fit_tweedie` `lam` recompute; `sample_tweedie` `rng.gamma(..., size=total)` allocation); `views_baseline/model/baseline.py` (`ParametricConflictology.predict` native-zero path applies no clamp) |
+
+> **WITHDRAWN (2026-07-18):** the Tweedie family was **removed** from views-baseline in S9 (code deleted, not fixed), so this risk no longer exists. Diagnosis that drove the removal: on the real pgm data the OOM/ceiling case (`p≥2`) fired **zero** times (max clamped λ = 0.3); what actually occurred was the *benign* `p≤1` clamp on ~40% of active cells — windows with 1–2 events in 36 months that a continuous family fundamentally cannot represent. The only honest handling of that infeasibility was either clamp (hides misspecification) or empirical fallback (turns the parametric model back into conflictology) — neither acceptable — so Tweedie was excluded from the baseline. See ADR-022 (Tweedie exclusion record) and `reports/closeness_experiment/FINDINGS.md` §S9. Original narrative retained below for provenance.
+
+The Tweedie index `p` is derived from the window's mean/var/zero-rate and clamped to `(1+eps, 2−eps)` to stay in the compound Poisson-Gamma regime — but the clamp bounds only the *index*, not the rate. When `p` clamps to the ceiling, `lam` is recomputed as `1000·m²/var` and left unbounded. `sample_tweedie` then draws `rng.poisson(lam, size)` and allocates `rng.gamma(alpha, theta, size=total)` with `total = counts.sum()`; a pathological cell drives `lam` to 1e4–1e6 → a 1e7–1e9-element jump array → **OOM/hang**. Coupled second consequence: the native-zero path in `ParametricConflictology.predict` applies **neither** `clamp_log` **nor** `clamp_floor` (those guard the hurdle/log1p paths), so the same `lam` also yields an **unbounded emitted magnitude** — the failure class `EMIT_LOG_CEIL` exists to prevent. Did not fire in the S8 experiment because conflict windows are high-zero-rate/high-dispersion (`p` clamps toward 1, `lam` small); it is an atypical-but-realistic edge for a low-dispersion target. Tier 3 (not 2): needs an atypical window, no silent corruption in the intended zero-inflated regime, and the fix is a localized ceiling. **Not yet fixed** — a deliberate policy call: a single-sourced `_TWEEDIE_LAM_CEIL` (WARN on cap) bounds both the array size and the magnitude but under-preserves the mean in the already-approximate clamped-`p` regime. See also C-26 (the gumbel floor, fixed) as the sibling native-zero/positive-part numeric guard, and the `EMIT_LOG_CEIL` ceiling it mirrors.
+
+---
+
+### C-28: Governance-doc drift after the parametric-baseline epic (stale model/test counts + current-state claims)
+
+| Field | Value |
+|-------|-------|
+| ID | C-28 |
+| Tier | 3 |
+| Source | review-base-docs (2026-07-18, epic #33 close-out) |
+| Trigger | When a contributor or reviewer relies on a governance doc's current-state claim to scope work — e.g. reads `CICs/BaselineModelCatalog.md` to learn which classes the catalog imports/returns, or ADR-010/017/018 to confirm the return-type invariant, or a contributor-protocol "five model classes" enumeration — and acts on the stale count (under-tests a new model, mis-lists imports, mis-scopes a protocol touch) |
+| Location | `docs/ADRs/{000,005,009,010,017,018}`, `docs/CICs/{BaselineModelCatalog,ReproducibilityGate,BaselineForecastingModelManager}.md`, `docs/INSTANTIATION_CHECKLIST.md`, `docs/contributor_protocols/{carbon_based_agents,silicon_based_agents,hardened_protocol_template}.md` |
+
+Adding `ParametricConflictology` + `ParametricHurdleConflictology` (now **7** model classes, not 5) and running the epic (**165** tests across **14** files, not the documented "51 across 4") left standing current-state claims stale. **High** items are claims now factually wrong: "all 5/five baseline models return `dict[str, PredictionFrame]`" (ADR-010:27, ADR-017:35, ADR-018:27 — 7 do); the `BaselineModelCatalog` CIC's imports list (5 classes; code imports 7) and its "`list_models()` returns all 5" test-alignment rows; the `ReproducibilityGate` CIC's "All 5 model names are registered". **Medium** items are present-tense "five model classes" package descriptions and the (largely pre-existing) "51 tests across 4 files" counts. **Explicitly out of scope** (immutable per ADR-000): historical/decision records and dated snapshots that were accurate when written (ADR-002/003/008/011/020/021 model-pair references; ADR-010:11 "As of 2026-06-02…"; ADR-018:11 "98 tests"; ADR-020:18 "26/98 red"). See also C-21 (governance docs describing removed dispatch — the same drift class).
+
+> **Status (2026-07-18):** resolved in the working tree — current-state claims corrected and brittle counts reworded to be durable (e.g. "every baseline model" rather than a hardcoded count) in the same pass; historical/dated records left intact per ADR-000. `docs/validate_docs.sh` green.
+
+---
+
+### C-29: No golden/characterization test pins the distributional sampling output (reproducibility tests are determinism-only)
+
+| Field | Value |
+|-------|-------|
+| ID | C-29 |
+| Tier | 2 |
+| Source | test-review (2026-07-19) |
+| Trigger | When a future refactor alters the RNG draw order or per-cell draw logic in `helpers.sample_prediction_grid` or a model's `draw_cell` closure while preserving output shape and marginal distribution — the change ships silently because every existing test still passes |
+| Location | `tests/test_parametric.py`, `tests/test_baseline.py` (distributional predict tests); `views_baseline/model/helpers.py::sample_prediction_grid` |
+
+The "reproducibility" tests (`test_reproducible_under_seed`, `test_no_hurdle_zinb_reproducible`, `test_hurdle_reproducible_under_seed`, `test_mixture_predict_reproducible`) build **two instances of the current code with the same seed and assert they agree** — verifying **determinism, not regression**. Both runs use whatever the current sampling does, so a draw-path change that keeps shape + marginal distribution passes all 174 tests. This is exactly the risk class of the `sample_prediction_grid` extraction (C-03/C-19 fix): its real safety came from mechanical faithfulness + the shape/distribution tests, not these self-referential "byte-identity" tests. Fix: a golden/characterization test — fixed seed + fixed tiny window → assert the exact `y_pred` array (or hash) for `ConflictologyModel`/`MixtureBaseline`/`ParametricConflictology`/`ParametricHurdleConflictology`. See also C-03/C-19 (the refactor this would guard), C-25/C-10 (the seed contract these depend on).
+
+> **Status (2026-07-19):** **resolved in the working tree** — `tests/test_golden.py` added, pinning the exact `y_pred` of all four distributional models on a fixed seed + fixed window (`assert_array_equal` for the count families, `assert_allclose` for gamma). A draw-path change now fails loudly. Verified: 185 tests pass, ruff clean.
+
+---
+
+### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin)
+
+| Field | Value |
+|-------|-------|
+| ID | C-30 |
+| Tier | 4 |
+| Source | review (2026-07-19, PR #45) |
+| Trigger | When `numpy` is upgraded to a version whose `Generator` streams (`gamma`/`poisson`/`choice`) change, the hardcoded expected arrays in `tests/test_golden.py` fail — a maintenance false-positive requiring deliberate regeneration, not a code defect |
+| Location | `tests/test_golden.py`; `pyproject.toml` (no `numpy` version constraint) |
+
+The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
+
+> **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
 
 ---
 
