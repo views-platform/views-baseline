@@ -262,7 +262,7 @@ class ConflictologyModel:
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
         return sample_prediction_grid(
-            entity_ids=self.entity_ids, valid=self.hist_per_entity,
+            entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
             model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,
             loa=self.loa, index_names=df.index.names, test_start=self.partition_dict["test"][0],
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
@@ -356,7 +356,7 @@ class MixtureBaseline:
         self, df: pd.DataFrame, sequence_number: int, output_length: int
     ) -> dict:
         return sample_prediction_grid(
-            entity_ids=self.entity_ids, valid=self.local_pool, model_name="MixtureBaseline",
+            entity_ids=self.entity_ids, fitted_state=self.local_pool, model_name="MixtureBaseline",
             targets=self.targets, n_samples=self.n_samples, loa=self.loa,
             index_names=df.index.names, test_start=self.partition_dict["test"][0],
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
@@ -429,7 +429,8 @@ class ParametricConflictology:
             return inverse(clamp_log(draws)) if self.transform != "none" else draws
 
         return sample_prediction_grid(
-            entity_ids=self.entity_ids, valid=self.params, model_name="ParametricConflictology",
+            entity_ids=self.entity_ids, fitted_state=self.params,
+            model_name="ParametricConflictology",
             targets=self.targets, n_samples=self.n_samples, loa=self.loa,
             index_names=df.index.names, test_start=self.partition_dict["test"][0],
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
@@ -521,7 +522,7 @@ class ParametricHurdleConflictology:
             return draws
 
         return sample_prediction_grid(
-            entity_ids=self.entity_ids, valid=self.params,
+            entity_ids=self.entity_ids, fitted_state=self.params,
             model_name="ParametricHurdleConflictology", targets=self.targets,
             n_samples=self.n_samples, loa=self.loa, index_names=df.index.names,
             test_start=self.partition_dict["test"][0], sequence_number=sequence_number,

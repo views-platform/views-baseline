@@ -198,7 +198,7 @@ def build_prediction_frame(
 def sample_prediction_grid(
     *,
     entity_ids,
-    valid,
+    fitted_state,
     model_name: str,
     targets: list[str],
     n_samples: int,
@@ -213,7 +213,7 @@ def sample_prediction_grid(
     """Shared distributional-model predict scaffold (ADR-011/ADR-020).
 
     Every distributional baseline shares one shell — resolve the level, build the
-    (entity, time) grid, drop entities without fitted state (``valid``), then fill an
+    (entity, time) grid, drop entities without fitted state (``fitted_state``), then fill an
     ``(N, n_samples)`` array in **entity→time→target** order from a single seeded RNG —
     differing only in the per-cell draw. ``draw_cell(cid, target, rng)`` returns the
     ``(n_samples,)`` draw for one cell and is called once per (entity, time, target), so the
@@ -223,7 +223,7 @@ def sample_prediction_grid(
     """
     level = resolve_level(loa, index_names)
     time_ids = build_time_grid(test_start, sequence_number, output_length)
-    entities = filter_entities(entity_ids, valid, model_name)
+    entities = filter_entities(entity_ids, fitted_state, model_name)
     require_entities(entities, model_name)
 
     time_arr, unit_arr = build_identifier_arrays(entities, time_ids)

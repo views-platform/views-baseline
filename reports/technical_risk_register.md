@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-07-19                           |
-| Total Concerns    | 29                                   |
-| Open Concerns     | 25                                   |
+| Total Concerns    | 30                                   |
+| Open Concerns     | 26                                   |
 | Resolved Concerns | 3                                    |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -461,6 +461,22 @@ Adding `ParametricConflictology` + `ParametricHurdleConflictology` (now **7** mo
 The "reproducibility" tests (`test_reproducible_under_seed`, `test_no_hurdle_zinb_reproducible`, `test_hurdle_reproducible_under_seed`, `test_mixture_predict_reproducible`) build **two instances of the current code with the same seed and assert they agree** — verifying **determinism, not regression**. Both runs use whatever the current sampling does, so a draw-path change that keeps shape + marginal distribution passes all 174 tests. This is exactly the risk class of the `sample_prediction_grid` extraction (C-03/C-19 fix): its real safety came from mechanical faithfulness + the shape/distribution tests, not these self-referential "byte-identity" tests. Fix: a golden/characterization test — fixed seed + fixed tiny window → assert the exact `y_pred` array (or hash) for `ConflictologyModel`/`MixtureBaseline`/`ParametricConflictology`/`ParametricHurdleConflictology`. See also C-03/C-19 (the refactor this would guard), C-25/C-10 (the seed contract these depend on).
 
 > **Status (2026-07-19):** **resolved in the working tree** — `tests/test_golden.py` added, pinning the exact `y_pred` of all four distributional models on a fixed seed + fixed window (`assert_array_equal` for the count families, `assert_allclose` for gamma). A draw-path change now fails loudly. Verified: 185 tests pass, ruff clean.
+
+---
+
+### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin)
+
+| Field | Value |
+|-------|-------|
+| ID | C-30 |
+| Tier | 4 |
+| Source | review (2026-07-19, PR #45) |
+| Trigger | When `numpy` is upgraded to a version whose `Generator` streams (`gamma`/`poisson`/`choice`) change, the hardcoded expected arrays in `tests/test_golden.py` fail — a maintenance false-positive requiring deliberate regeneration, not a code defect |
+| Location | `tests/test_golden.py`; `pyproject.toml` (no `numpy` version constraint) |
+
+The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
+
+> **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
 
 ---
 

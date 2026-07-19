@@ -154,7 +154,7 @@ def test_sample_prediction_grid_ordering_shape_and_call_count():
         return np.full(3, float(cid))  # marker = the entity id, n_samples=3
 
     out = sample_prediction_grid(
-        entity_ids=[10, 20], valid={10: True, 20: True}, model_name="Stub",
+        entity_ids=[10, 20], fitted_state={10: True, 20: True}, model_name="Stub",
         targets=["a", "b"], n_samples=3, loa="pgm",
         index_names=["month_id", "priogrid_id"], test_start=100,
         sequence_number=0, output_length=2, seed=1, draw_cell=draw,
@@ -173,7 +173,7 @@ def test_sample_prediction_grid_drops_and_requires_entities():
     """Entities absent from `valid` are dropped; if none remain it fails loud."""
     # entity 20 has no fitted state -> dropped; 10 remains
     out = sample_prediction_grid(
-        entity_ids=[10, 20], valid={10: True}, model_name="Stub", targets=["a"],
+        entity_ids=[10, 20], fitted_state={10: True}, model_name="Stub", targets=["a"],
         n_samples=2, loa="pgm", index_names=["month_id", "priogrid_id"],
         test_start=100, sequence_number=0, output_length=1, seed=1,
         draw_cell=lambda cid, t, rng: np.zeros(2),
@@ -182,7 +182,7 @@ def test_sample_prediction_grid_drops_and_requires_entities():
 
     with pytest.raises(ValueError, match="no entities to predict"):
         sample_prediction_grid(
-            entity_ids=[10, 20], valid={}, model_name="Stub", targets=["a"], n_samples=2,
+            entity_ids=[10, 20], fitted_state={}, model_name="Stub", targets=["a"], n_samples=2,
             loa="pgm", index_names=["month_id", "priogrid_id"], test_start=100,
             sequence_number=0, output_length=1, seed=1,
             draw_cell=lambda cid, t, rng: np.zeros(2),

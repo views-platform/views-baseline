@@ -7,6 +7,11 @@ per-cell logic in ``sample_prediction_grid`` or a ``draw_cell`` closure) that pr
 and marginal distribution — the exact class of change the ``sample_prediction_grid`` refactor
 was — now fails loudly here. Regenerate the constants **deliberately** (never blindly) only
 when the sampling contract intentionally changes.
+
+Note (C-30): the constants are pinned to the current numpy ``Generator`` streams
+(``gamma``/``poisson``/``choice``). A numpy upgrade that changes those algorithms will fail
+these tests even with unchanged model code — that is a maintenance regeneration, not a defect.
+If ``pyproject.toml`` grows a numpy pin, keep it consistent with the version captured here.
 """
 
 import numpy as np
