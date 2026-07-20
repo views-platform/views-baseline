@@ -77,7 +77,7 @@ The catalog stores a reference to `config` (not a copy). Mutations to `config` a
 
 ## Boundaries and Interactions
 
-- **Imports:** `ZeroModel`, `LocfModel`, `AverageModel`, `ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology` from `views_baseline.model.baseline`.
+- **Imports:** `ZeroModel`, `LocfModel`, `AverageModel` from `views_baseline.model.models.point`, and `ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology` from `views_baseline.model.models.distributional`.
 - **Imported by:** `BaselineForecastingModelManager._setup_model_and_data()`.
 - **No external runtime dependencies** beyond the seven model classes.
 - The config key `"window_months"` maps directly to the constructor parameter `window_months` for all models that use it.

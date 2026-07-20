@@ -52,8 +52,8 @@ It tracks which template items have been completed, which are deferred, and why.
 
 - [x] ADR-002: Defined layering and forbidden patterns
 
-  Dependency graph: helpers → baseline → catalog → manager. Four forbidden import directions
-  documented. Lazy `PredictionFrame` import rule documented.
+  Dependency graph: frames/, distributions/, grid.py, spatial.py → models/ → catalog → manager.
+  Four forbidden import directions documented. Lazy `PredictionFrame` import rule documented.
 
 - [x] ADR-003: Adapted forbidden behavior examples
 
@@ -121,9 +121,9 @@ It tracks which template items have been completed, which are deferred, and why.
 - [x] Adapt hardened protocol
 
   `docs/contributor_protocols/hardened_protocol_template.md` written. Covers: RNG
-  determinism contract, MODEL_GENOMES validation, 1-Class-1-File known deviation (documented
-  as intentional), testing taxonomy map to Green/Beige/Red, point vs distributional model
-  checklists, no numerical airlock (no deep learning), logging conventions.
+  determinism contract, MODEL_GENOMES validation, one-class-per-file model layout, testing
+  taxonomy map to Green/Beige/Red, point vs distributional model checklists, no numerical
+  airlock (no deep learning), logging conventions.
 
   Removed: PyTorch Lightning, Darts, gradients, float32 downcasting, CUDA references.
 
@@ -138,13 +138,14 @@ It tracks which template items have been completed, which are deferred, and why.
   affected models), absence of ERROR/CRITICAL (documented as gap), no structured logging
   (documented as accepted debt), no run-level context, logging test gap, rules for new code.
 
-- [ ] Review physical architecture standard (not included — multi-class files)
+- [ ] Review physical architecture standard (not included)
 
-  Deferred. The physical architecture standard assumes 1-Class-1-File. views-baseline
-  intentionally deviates: all seven model classes live in `baseline.py`, a
-  decision recorded in ADR-001. A physical architecture standard that documents this
-  deviation as intentional and provides guidance for navigating multi-class files would
-  be a valuable addition but is not part of this instantiation.
+  Deferred. The physical architecture standard assumes 1-Class-1-File. At instantiation time
+  views-baseline deviated: all seven model classes lived in a single `baseline.py`, a decision
+  recorded in ADR-001. The PR-1 reorganization (issues #48–#51) has since adopted a
+  one-class-per-file layout under `views_baseline/model/models/point/` and
+  `views_baseline/model/models/distributional/`. A physical architecture standard documenting
+  the current layout would be a valuable addition but is not part of this instantiation.
 
 ---
 

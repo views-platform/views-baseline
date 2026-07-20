@@ -3,14 +3,19 @@ import logging
 import numpy as np
 import pytest
 
-from views_baseline.model.helpers import (
-    build_identifier_arrays,
-    build_time_grid,
-    filter_entities,
-    resolve_level,
+from views_baseline.model.frames.output import (
     sample_prediction_grid,
     to_prediction_frames,
 )
+from views_baseline.model.grid import (
+    build_identifier_arrays,
+    build_time_grid,
+    filter_entities,
+)
+from views_baseline.model.spatial import resolve_level
+
+pytest.importorskip("views_frames")
+from views_frames import SpatialLevel  # noqa: E402
 
 # -----------------------------------------------------------------------
 # build_time_grid
@@ -155,8 +160,7 @@ def test_sample_prediction_grid_ordering_shape_and_call_count():
 
     out = sample_prediction_grid(
         entity_ids=[10, 20], fitted_state={10: True, 20: True}, model_name="Stub",
-        targets=["a", "b"], n_samples=3, loa="pgm",
-        index_names=["month_id", "priogrid_id"], test_start=100,
+        targets=["a", "b"], n_samples=3, level=SpatialLevel.PGM, test_start=100,
         sequence_number=0, output_length=2, seed=1, draw_cell=draw,
     )
 
@@ -174,7 +178,7 @@ def test_sample_prediction_grid_drops_and_requires_entities():
     # entity 20 has no fitted state -> dropped; 10 remains
     out = sample_prediction_grid(
         entity_ids=[10, 20], fitted_state={10: True}, model_name="Stub", targets=["a"],
-        n_samples=2, loa="pgm", index_names=["month_id", "priogrid_id"],
+        n_samples=2, level=SpatialLevel.PGM,
         test_start=100, sequence_number=0, output_length=1, seed=1,
         draw_cell=lambda cid, t, rng: np.zeros(2),
     )
@@ -183,7 +187,7 @@ def test_sample_prediction_grid_drops_and_requires_entities():
     with pytest.raises(ValueError, match="no entities to predict"):
         sample_prediction_grid(
             entity_ids=[10, 20], fitted_state={}, model_name="Stub", targets=["a"], n_samples=2,
-            loa="pgm", index_names=["month_id", "priogrid_id"], test_start=100,
+            level=SpatialLevel.PGM, test_start=100,
             sequence_number=0, output_length=1, seed=1,
             draw_cell=lambda cid, t, rng: np.zeros(2),
         )

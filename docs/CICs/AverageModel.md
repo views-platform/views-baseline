@@ -3,7 +3,7 @@
 **Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
-**Related ADRs:** ADR-001, ADR-005, ADR-006, ADR-009
+**Related ADRs:** ADR-001, ADR-005, ADR-006, ADR-009, ADR-019, ADR-020
 
 ---
 
@@ -17,14 +17,14 @@
 
 - Does not weight observations by recency (e.g., no exponential weighting).
 - Does not produce distributional output. Returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` — a single deterministic value per cell, not multiple samples.
-- Does not validate that `window_months` is positive or that it is less than the available training history length.
+- Does not validate that `window_months` is less than the available training history length. (A non-positive `window_months` **is** now rejected — see Failure Modes.)
 
 ---
 
 ## Responsibilities and Guarantees
 
-- `fit(df)` filters to `time_idx < test_start`, sorts by `[entity_idx, time_idx]`, then applies `groupby(entity_idx).apply(lambda g: g.tail(window_months)[targets].mean())`. The result is stored as `self.mean` (a DataFrame indexed by entity, columns = targets). Returns `self`.
-- `predict(df, sequence_number, output_length)` determines `entity_ids` from rows at `train_end`, filters to those present in `self.mean`, and returns `dict[str, PredictionFrame]` via `build_prediction_frame` where every cell for entity `cid` and target `t` has the value `self.mean.loc[cid, t]`.
+- `fit(df)` normalizes the input via `to_feature_frame(df, loa, targets)` (the ADR-019 pandas boundary), records `time_idx`/`entity_idx` from `ff.index.level.index_names`, and computes the per-entity trailing-window mean as the **mean of the shared `window_pool(ff, targets, window_months, train_end)`** on the frame's numpy panel (no pandas). The result is stored as `self.mean`, a nested dict `{entity -> {target -> trailing-window mean}}` (not a pandas object). Returns `self`.
+- `predict(df, sequence_number, output_length)` normalizes the input, determines `entity_ids` via `entities_at(unit, time, train_end)` (first-appearance order), filters to those present in `self.mean` (`filter_entities`), and returns `dict[str, PredictionFrame]` via `build_prediction_frame` (with `level = ff.index.level`) where every cell for entity `cid` and target `t` has the value `self.mean[cid][t]`.
 - If entities in `entity_ids` are absent from `self.mean`, a `WARNING` is logged with the count of dropped entities.
 - Output structure contract is identical to all baseline models: one key per target, each value a `PredictionFrame` with `identifiers` dict containing `"time"` and `"unit"` arrays.
 
@@ -35,14 +35,14 @@
 | Parameter | Type | Notes |
 |---|---|---|
 | `targets` | `List[str]` | Must exist as columns in `df`. |
-| `window_months` | `int` | Number of trailing months to average. Must be positive (not validated). |
+| `window_months` | `int` | Number of trailing months to average. Must be `>= 1` — a non-positive value fails loud at fit (`window_pool`). |
 | `partition_dict` | `dict` | Must contain `"test"` key with tuple `(test_start, test_end)`. |
-| `loa` | `str` | Stored for logging; not used in computation. |
-| `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; level 0 = time, level 1 = entity. |
+| `loa` | `str` | Declared level of analysis; resolved to a `SpatialLevel` and validated against the index by `to_feature_frame`. |
+| `df` (fit/predict) | `pd.DataFrame \| FeatureFrame` | Normalized at entry via `to_feature_frame`. A DataFrame needs a 2-level MultiIndex (level 0 = time, level 1 = entity) matching `loa`; a `FeatureFrame` must carry the matching `level` and the `targets` features. |
 | `sequence_number` | `int` | Forecast window start offset from `test_start`. |
 | `output_length` | `int` | Number of forecast timesteps. Required — no default; passed from `config["time_steps"]` by the manager. |
 
-When `window_months` exceeds the number of training rows available for an entity, `tail()` silently returns all available rows. The mean is computed over fewer observations than requested without any warning.
+When `window_months` exceeds the number of training rows available for an entity, the numpy tail slice (`block[-window_months:]`) silently returns all available rows. The mean is computed over fewer observations than requested without any warning.
 
 ---
 
@@ -57,10 +57,10 @@ When `window_months` exceeds the number of training rows available for an entity
 
 | Failure | Loudness | Notes |
 |---|---|---|
-| Target column missing from `df` | `KeyError` (crash) | No validation. |
-| `df` missing 2-level MultiIndex | `IndexError` (crash) | No validation. |
+| Target column missing / feature absent from a `FeatureFrame` | `ValueError` (crash) | `to_feature_frame` checks target presence at the input boundary (ADR-019). |
+| DataFrame index names do not match `loa` (incl. non-2-level index) | `ValueError` (crash) | `to_feature_frame` → `resolve_level` raises at entry. |
 | `partition_dict` missing `"test"` | `KeyError` (crash) | No validation. |
-| `window_months <= 0` | Undefined behaviour | `tail(0)` returns empty; `.mean()` on empty returns `NaN`. Predictions silently become `NaN`. |
+| `window_months <= 0` | `ValueError` at **fit** (crash) | `window_pool` fails loud with `"window_months must be >= 1, got ..."`. Previously this was silent all-`NaN` predictions — now caught deliberately (ADR-019). |
 | `window_months` exceeds entity history length | Silent degradation | Mean computed over all available rows; no warning emitted. |
 | Entities absent from `self.mean` at predict time | `WARNING` log | Entity dropped from output. |
 | All entities dropped | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud: a prediction over zero entities cannot satisfy the evaluation contract (an empty result would otherwise surface as a `StopIteration` deep in pipeline-core). |
@@ -69,8 +69,8 @@ When `window_months` exceeds the number of training rows available for an entity
 
 ## Boundaries and Interactions
 
-- **Depends on:** `views_baseline.model.helpers.build_prediction_frame`. `PredictionFrame` is lazy-imported from `views-pipeline-core` inside the helper.
-- **External dependency:** `views-pipeline-core` (via `PredictionFrame`, lazy-imported at call time).
+- **Depends on:** `views_baseline.model.frames.input` (`to_feature_frame`, `panel` — the single pandas boundary, ADR-019), `views_baseline.model.frames.pooling.window_pool` (numpy windowing), `views_baseline.model.frames.output.build_prediction_frame`, and `views_baseline.model.grid` (`entities_at`, `filter_entities`, `require_entities`, `build_time_grid`). pandas is not a runtime dependency of this model — it is confined to `to_feature_frame` and imported only under `TYPE_CHECKING`.
+- **External dependency:** `views_frames` — `FeatureFrame`/`SpatioTemporalIndex` lazy-imported inside `to_feature_frame`; `PredictionFrame`/`SpatioTemporalIndex` inside the `to_prediction_frames` seam, at call time.
 - **Instantiated by:** `BaselineModelCatalog._get_average_model()`, which reads `config["window_months"]`.
 
 ---
@@ -78,23 +78,25 @@ When `window_months` exceeds the number of training rows available for an entity
 ## Examples of Correct Usage
 
 ```python
-from views_baseline.model.baseline import AverageModel
+from views_baseline.model.models.point import AverageModel
 
 partition_dict = {"test": (493, 528)}
 model = AverageModel(
     targets=["y1", "y2"],
     window_months=6,
     partition_dict=partition_dict,
-    loa="pg_id",
+    loa="pgm",
 )
-model.fit(df)
+model.fit(df)                # model.fit(ff) also works — dual input
 preds = model.predict(df=df, sequence_number=0, output_length=36)
 
-# Verify one cell
-train_df = df[df.index.get_level_values("month_id") < 493]
-train_df = train_df.sort_index(level=["pg_id", "month_id"])
-expected_mean = train_df.xs(1, level="pg_id").tail(6)["y1"].mean()
-assert preds.loc[(493, 1), "pred_y1"] == pytest.approx(expected_mean)
+# Fitted state is a nested dict of trailing-window means (float32-rounded via the
+# FeatureFrame — see C-32 note in Known Deviations).
+expected_mean = <mean of entity 1's last 6 y1 observations before test_start>
+assert model.mean[1]["y1"] == pytest.approx(expected_mean)
+
+# preds is dict[str, PredictionFrame]; every cell of entity 1's y1 frame carries that mean.
+pf = preds["y1"]
 ```
 
 ---
@@ -102,19 +104,17 @@ assert preds.loc[(493, 1), "pred_y1"] == pytest.approx(expected_mean)
 ## Examples of Incorrect Usage
 
 ```python
-# window_months=0 silently produces NaN predictions
-model = AverageModel(targets=["y1"], window_months=0, partition_dict=partition_dict, loa="pg_id")
-model.fit(df)
-preds = model.predict(df=df, sequence_number=0)
-# preds contains NaN — no error is raised
+# window_months=0 now fails loud at fit (previously it silently produced NaN predictions)
+model = AverageModel(targets=["y1"], window_months=0, partition_dict=partition_dict, loa="pgm")
+model.fit(df)   # ValueError: window_months must be >= 1, got 0.
 
 # window_months larger than training length: no error, just shorter window
-model = AverageModel(targets=["y1"], window_months=10000, partition_dict=partition_dict, loa="pg_id")
+model = AverageModel(targets=["y1"], window_months=10000, partition_dict=partition_dict, loa="pgm")
 model.fit(df)   # uses all available training rows; no warning
 
 # Target not in DataFrame
-model = AverageModel(targets=["nonexistent"], window_months=6, partition_dict=partition_dict, loa="pg_id")
-model.fit(df)   # KeyError: "nonexistent"
+model = AverageModel(targets=["nonexistent"], window_months=6, partition_dict=partition_dict, loa="pgm")
+model.fit(df)   # ValueError: DataFrame is missing required target column(s) ['nonexistent']
 ```
 
 ---
@@ -133,11 +133,12 @@ File: `tests/test_baseline.py`
 ## Evolution Notes
 
 - If recency-weighted averaging is added, it should be a separate class (e.g., `ExponentialAverageModel`) rather than a parameter on this class, to keep the `AverageModel` contract simple.
-- Adding a validation check `if window_months <= 0: raise ValueError(...)` in `__init__` or `fit()` would be a safe, backwards-compatible improvement with no behaviour change for valid inputs.
+- The `window_months <= 0` guard is now enforced centrally in `window_pool`/`window_pool_arrays` (raising `ValueError` at fit), shared by all pooling baselines — no per-class check needed.
 
 ---
 
 ## Known Deviations
 
-- No validation that `window_months > 0`. Passing `window_months=0` silently produces `NaN` predictions without any log message.
-- When `window_months` exceeds the available entity history, `tail()` silently returns fewer rows than requested. No warning is emitted, so callers have no way to detect that the window was truncated.
+- `window_months <= 0` now fails loud with a `ValueError` at fit (via `window_pool`). Previously it silently produced `NaN` predictions with no log message — that degenerate path was closed in PR-2 (ADR-019).
+- `FeatureFrame` storage is `float32` by design (C-32), so the pooled values (and thus the trailing-window mean) are `float32`-rounded relative to raw `float64`. The entity/tail selection **order** is preserved exactly, and a DataFrame and the `FeatureFrame` built from it produce identical output — an accepted precision trade-off.
+- When `window_months` exceeds the available entity history, the numpy tail slice silently returns fewer rows than requested. No warning is emitted, so callers have no way to detect that the window was truncated.

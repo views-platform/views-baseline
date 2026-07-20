@@ -3,13 +3,8 @@ import pandas as pd
 import pytest
 from conftest import assert_point_prediction_structure, make_dummy_df
 
-from views_baseline.model.baseline import (
-    AverageModel,
-    ConflictologyModel,
-    LocfModel,
-    MixtureBaseline,
-    ZeroModel,
-)
+from views_baseline.model.models.distributional import ConflictologyModel, MixtureBaseline
+from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
 
 @pytest.fixture
@@ -135,9 +130,10 @@ def test_locf_model_fit_handles_unsorted_data(partition_dict, targets):
 
     model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     model.fit(df)
-    # Must use month 492 (temporally last), not 491 (positionally last)
-    assert model.last_observations.loc[1, "y1"] == 492 * 10 + 1
-    assert model.last_observations.loc[1, "y2"] == 492 * 100 + 1
+    # Must use month 492 (temporally last), not 491 (positionally last).
+    # last_observations is now a numpy-backed dict {entity -> {target -> value}} (PR-2 S7).
+    assert model.last_observations[1]["y1"] == 492 * 10 + 1
+    assert model.last_observations[1]["y2"] == 492 * 100 + 1
 
 
 # -----------------------------------------------------------------------
@@ -630,37 +626,46 @@ def test_catalog_list_models(partition_dict, targets):
 # -----------------------------------------------------------------------
 
 
-def test_average_model_window_months_zero_produces_nan(base_df_pgm, partition_dict, targets):
-    """window_months=0 → tail(0) is empty → mean is NaN → all predictions NaN."""
+def test_average_model_window_months_zero_raises(base_df_pgm, partition_dict, targets):
+    """window_months=0 → window_pool fails loud with a ValueError during fit.
+
+    (Pre-PR-2 the empty pandas tail produced silent all-NaN predictions; the numpy port
+    validates the degenerate window explicitly, matching ConflictologyModel.)
+    """
     model = AverageModel(
         targets=targets, window_months=0, partition_dict=partition_dict, loa="pgm"
     )
-    model.fit(base_df_pgm)
-    result = model.predict(df=base_df_pgm, sequence_number=0, output_length=5)
-    for target in targets:
-        assert np.isnan(result[target].values).all()
+    with pytest.raises(ValueError, match="window_months must be >= 1"):
+        model.fit(base_df_pgm)
 
 
 def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, targets):
-    """window_months=0 → tail(0) empty → xs() raises KeyError during fit."""
+    """window_months=0 → window_pool fails loud with a ValueError during fit.
+
+    (Pre-PR-2 this raised an accidental KeyError from an empty pandas group; the numpy
+    port validates the degenerate window explicitly instead.)
+    """
     model = ConflictologyModel(
         targets=targets, window_months=0, partition_dict=partition_dict,
         loa="pgm", n_samples=10,
     )
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="window_months must be >= 1"):
         model.fit(base_df_pgm)
 
 
 def test_mixture_window_months_zero_raises(partition_dict, targets):
-    """window_months=0 → empty local pool → rng.choice raises ValueError."""
+    """window_months=0 → window_pool fails loud with a ValueError during fit.
+
+    (Pre-PR-2 the empty local pool surfaced later as a rng.choice ValueError in predict;
+    the shared numpy window_pool now validates the degenerate window at fit time.)
+    """
     df = make_mixture_df()
     model = MixtureBaseline(
         targets=targets, window_months=0, lambda_mix=0.0,
         n_samples=10, partition_dict=partition_dict, loa="pgm",
     )
-    model.fit(df)
-    with pytest.raises(ValueError):
-        model.predict(df=df, sequence_number=0, output_length=5)
+    with pytest.raises(ValueError, match="window_months must be >= 1"):
+        model.fit(df)
 
 
 def test_conflictology_n_samples_zero_raises(base_df_pgm, partition_dict, targets):
@@ -675,8 +680,13 @@ def test_conflictology_n_samples_zero_raises(base_df_pgm, partition_dict, target
 
 
 def test_predict_before_fit_raises(base_df_pgm, partition_dict, targets):
-    """predict() before fit() → self.time_idx is None → crash."""
-    model = ZeroModel(targets=targets, partition_dict=partition_dict, loa="pgm")
+    """predict() before fit() crashes for a model with fitted state.
+
+    Post-PR-2 (S7) `ZeroModel` is genuinely stateless — it needs no fit — so the
+    "predict before fit fails loud" contract is tested on `LocfModel`, whose predict reads
+    the (unset) `last_observations` fitted state.
+    """
+    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
     with pytest.raises((AttributeError, TypeError, KeyError)):
         model.predict(df=base_df_pgm, sequence_number=0, output_length=36)
 
@@ -741,14 +751,14 @@ def test_average_entity_drop_warning(caplog, base_df_pgm, partition_dict, target
 
 
 def test_require_entities_raises_on_empty():
-    from views_baseline.model.helpers import require_entities
+    from views_baseline.model.grid import require_entities
 
     with pytest.raises(ValueError, match="no entities to predict"):
         require_entities([], "TestModel")
 
 
 def test_require_entities_noop_when_present():
-    from views_baseline.model.helpers import require_entities
+    from views_baseline.model.grid import require_entities
 
     assert require_entities([1, 2], "TestModel") is None
 

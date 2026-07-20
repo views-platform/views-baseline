@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from views_frames import PredictionFrame
 
-from views_baseline.model.baseline import (
+from views_baseline.model.models.distributional import (
     ParametricConflictology,
     ParametricHurdleConflictology,
 )

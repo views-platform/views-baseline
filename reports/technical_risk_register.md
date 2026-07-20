@@ -4,9 +4,9 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-07-19                           |
-| Total Concerns    | 30                                   |
-| Open Concerns     | 26                                   |
+| Last Updated      | 2026-07-20                           |
+| Total Concerns    | 32                                   |
+| Open Concerns     | 28                                   |
 | Resolved Concerns | 3                                    |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -305,6 +305,8 @@ See also C-08 (the duplicated lazy import the adapter subsumes), C-16 (the migra
 
 > **Status (2026-07-19):** the **distributional output-construction / predict-scaffold** half is **resolved**. All four distributional models (`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`) now build output through one helper — `helpers.sample_prediction_grid(..., draw_cell)`, the distributional analogue of `build_prediction_frame` — which routes to the single `to_prediction_frames` seam; each `predict()` supplies only a per-cell `draw_cell(cid, target, rng)` closure. Behaviour-identical (byte-identity reproducibility tests, 174/174; ruff clean; `baseline.py` 586→529 LOC). The original half-migration trigger (`MixtureBaseline` old constructor) was already closed by the views-frames epic (ADR-020). **Still deferred:** the three-parallel-registries OCP half (catalog dispatch + `ALGORITHM_GENOMES` + `_get_*` factory) per ADR-012. (tech-debt-cleanup)
 
+> **Re-confirmed (2026-07-20, falsify probe P2):** the PR-1 reorg did not change the OCP posture — `catalog.py` still hardcodes a 7-entry dispatch dict + seven `_get_*` methods, so adding a model remains a modification of existing files plus an `ALGORITHM_GENOMES` edit (not a pure extension). Guarded by `tests/test_falsification_reorg_principles.py::test_ocp_catalog_does_not_hardcode_model_registry` (strict xfail — ratchets when a single registration table replaces the three registries). Consolidation stays deferred per ADR-012 (catalog < ~10 models).
+
 ---
 
 ### C-20: `views_frames.PredictionFrame` silently accepts zero-sample `(N, 0)` arrays
@@ -477,6 +479,53 @@ The "reproducibility" tests (`test_reproducible_under_seed`, `test_no_hurdle_zin
 The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
 
 > **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
+
+---
+
+### C-31: Model layer depends on concrete pandas on the INPUT path; no FeatureFrame boundary (DIP — input side)
+
+| Field | Value |
+|-------|-------|
+| ID | C-31 |
+| Tier | 3 |
+| Source | falsify (2026-07-20, PR-1 reorg principles audit — probe P1; folds P4) |
+| Trigger | When an upstream producer switches the model input from a pandas `DataFrame` to a `views_frames.FeatureFrame` (the ADR-019 / PR-2 migration, issues #52–#58), every model `fit()`/`predict()` breaks because they read the concrete `df.index`/`groupby`/`.loc` API directly — there is no boundary adapter to absorb the switch |
+| Location | `views_baseline/model/models/point/{zero,locf,average}.py`, `views_baseline/model/models/distributional/{conflictology,mixture,parametric_hurdle,parametric}.py`, `views_baseline/model/frames/pooling.py` — 8 modules `import pandas`; ~40 concrete-pandas call sites in `models/`. Guard: `tests/test_falsification_reorg_principles.py::test_dip_model_classes_do_not_import_pandas` (strict xfail) |
+
+The PR-1 reorg established the screaming-architecture layout but is behaviour-preserving — it did **not** invert the pandas dependency. High-level model logic still imports and operates on the concrete pandas `MultiIndex` (`df.index.get_level_values`, `groupby(...).tail`, `.xs`, `.loc`), so the model layer depends toward a concrete, external data representation rather than a baseline-owned abstraction (a DIP violation on the *input* side — the mirror of C-16's now-resolved *output*-side leaf coupling). Consequence: baseline is a **high-effort** consumer of any platform input-format change (unlike adapter-fronted engines). This is the architectural gap ADR-019 / PR-2 (`to_feature_frame` adapter + numpy-on-FeatureFrame internals) is designed to close; a `strict=True` xfail ratchets it — it flips to a hard failure the moment PR-2 removes pandas from the model classes, forcing conversion to a permanent guard. **Secondary (P4, screaming architecture, Tier-4 cosmetic):** `frames/pooling.py` currently takes a `pd.DataFrame` and returns numpy dicts — it never touches a `views_frames` Frame, so its placement under `frames/` (the frame-boundary folder) screams the wrong responsibility until PR-2 S6 makes `window_pool` Frame-native. Mitigation: the PR-2 `to_feature_frame` boundary adapter (issue #52) confines pandas to one module; internals run on the FeatureFrame's numpy arrays.
+
+See also C-16 (output-side DIP/SDP root cause, resolved via the `to_prediction_frames` seam), C-19 (the sibling OCP coupling), C-01 (direct MultiIndex consumption), ADR-019 (proposed → to be accepted in PR-2/S11). Same DIP/SDP root-cause family as C-16.
+
+> **Resolved (2026-07-20, PR-2 S5–S9).** The DIP boundary is built: `to_feature_frame`
+> (`model/frames/input.py`) is the single pandas reader; `window_pool` and every model
+> fit/predict run on the FeatureFrame's numpy panel. No model module imports pandas at
+> module scope (only under `TYPE_CHECKING`); pandas is confined to the lazy import inside
+> `to_feature_frame`. The ratcheting guard flipped to a permanent passing test
+> (`test_dip_model_layer_has_no_runtime_pandas_import`), and the folded P4 is resolved —
+> `frames/pooling.py` is now Frame-native (`test_screaming_frames_package_is_only_about_frames`).
+> ADR-019 accepted. Models accept `pd.DataFrame | FeatureFrame`; both routes are exactly
+> equivalent (`test_dual_input.py`). Residual: the pure-FeatureFrame path has no upstream
+> producer yet (architectural readiness, not a defect).
+
+---
+
+### C-32: Byte-identity risk of the PR-2 numpy-on-FeatureFrame migration (silent forecast drift)
+
+| Field | Value |
+|-------|-------|
+| ID | C-32 |
+| Tier | 2 |
+| Source | falsify (2026-07-20, PR-1 reorg audit — forward risk of the P1 remediation); plan (epic #47 PR-2) |
+| Trigger | When PR-2 S6–S8 (issues #53–#55) rewrite `window_pool` and the point/Mixture/parametric `fit` aggregations from pandas (`groupby(...).tail`, `.xs`, sort order) to numpy-on-FeatureFrame — any change to entity ordering, tail-selection order, or float dtype silently shifts the seeded RNG stream and therefore the sampled `y_pred` |
+| Location | `views_baseline/model/frames/pooling.py` (`window_pool`), the model `fit()` aggregations under `views_baseline/model/models/**`; gated by `tests/test_golden.py` (byte-identity) + `tests/test_pooling.py` |
+
+The distributional models' output is reproducible only because a single seeded `np.random.default_rng` is advanced in a fixed **entity→time→target** order over pandas-derived pools (ADR-011). Re-deriving those pools with numpy changes nothing *if and only if* the entity order, the per-entity tail (last `window_months`) order, and the emitted float dtype are bit-for-bit preserved. A subtle divergence (e.g. numpy sort vs pandas `sort_index` stability, `unique()` ordering, `float64` vs `float32`) produces **different draws with no error signal** — wrong forecasts that pass every structural test. Impact is high (silent forecast incorrectness); likelihood is real during the rewrite; it is **not Tier 1** only because the golden characterization tests (C-29) provide a loud, total catch *if run at every step*. Mitigation: port one model at a time, gate each step on `test_golden.py` + `test_pooling.py` byte-identity, and treat any golden diff as a stop-the-line defect (not a regenerate-the-baseline event) until the change is proven order-preserving.
+
+See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator coupling), C-31 (the DIP migration this executes), C-11/C-25 (the RNG-order reproducibility contract this must preserve).
+
+> **Decision (2026-07-20) — FeatureFrame is float32; golden regenerated once, deliberately.** S5 (the `to_feature_frame` adapter) surfaced that `views_frames.FeatureFrame` is a **float32** container by design (class contract; `coerce_values` casts; no float64 option), while the existing pools and golden tests are float64. Strict float64 byte-identity through a FeatureFrame is therefore impossible. The maintainer chose **FeatureFrame-canonical (float32)** with a **one-time, deliberate** golden regeneration to the platform's real precision (not a maintenance regen). To keep the migration safe despite the regen, the ordering/logic guard is **decoupled from the precision change**: (1) the ported numpy `window_pool` is proven byte-identical to the pandas `window_pool` on a **float64** panel (built directly from the df) — this pins entity order, tail order, and RNG advance independent of dtype (`test_pooling`, permanent); (2) only then is the model source switched to the float32 FeatureFrame and the model-level golden regenerated **once**, with the diff reviewed to confirm it is float32-rounding-only and nothing else. After the flip, `test_golden.py` pins the float32-canonical output and byte-identity holds going forward.
+
+> **Discharged (2026-07-20, PR-2 S6–S10).** The migration landed with the ordering guard intact and **no golden regeneration was actually required**: the distributional golden fixtures use small-integer data (`(t*3+u*7)%9`), which is float32-exact, so routing it through the float32 FeatureFrame is lossless and `test_golden.py` stayed **byte-identical unchanged** — confirming the numpy port preserved entity/tail/RNG order and per-cell logic. The float64 ordering guard (`test_pooling::test_window_pool_arrays_matches_pandas_reference_in_float64`, using non-float32-exact values) independently pins the order/logic. The float32 precision change is therefore invisible on the golden set and only affects non-integer production magnitudes (the accepted trade-off). One deliberate behaviour change shipped alongside: `window_months <= 0` now fails loud (`ValueError`) at fit for all windowing models, replacing the pre-PR-2 accidental KeyError / silent-NaN. Risk retained at Tier 2 as documentation of the precision boundary; the acute trigger (a non-order-preserving rewrite) has passed.
 
 ---
 

@@ -1,13 +1,11 @@
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
-from views_baseline.model.baseline import (
-    AverageModel,
+from views_baseline.model.models.distributional import (
     ConflictologyModel,
-    LocfModel,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
-    ZeroModel,
 )
+from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
 
 class BaselineModelCatalog:

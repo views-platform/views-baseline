@@ -42,13 +42,16 @@ This protocol describes how human contributors are expected to work in this proj
 The import topology is defined in ADR-002 and must not be violated:
 
 ```
-helpers.py  →  baseline.py  →  catalog.py  →  manager/
-                                protocol.py  ↗
+frames/, distributions/, grid.py, spatial.py  →  models/{point,distributional}/  →  catalog.py  →  manager/
+                                                                                     protocol.py  ↗
 ```
 
-The `model/` layer must not import from `manager/`. `PredictionFrame` (the `views_frames`
-leaf, re-exported by views-pipeline-core ≥3.0.0) is lazy-imported inside the single
-`to_prediction_frames` seam in `helpers.py` (ADR-020) — not at the top of any module.
+The model classes (one-per-file under `models/point/` and `models/distributional/`) depend on
+the shared support modules — `frames/` (output seam + pooling), `distributions/`, `grid.py`,
+and `spatial.py` — and the catalog imports the model sub-packages. The `model/` layer must not
+import from `manager/`. `PredictionFrame` (the `views_frames` leaf, re-exported by
+views-pipeline-core ≥3.0.0) is lazy-imported inside the single `to_prediction_frames` seam in
+`frames/output.py` (ADR-020) — not at the top of any module.
 
 ### Declarations, not inference
 
@@ -65,7 +68,7 @@ Declare explicitly and validate against the declaration.
 Adding a model class is a coordinated change. All of the following must be updated in the
 same PR:
 
-1. `views_baseline/model/baseline.py` — implement the class
+1. `views_baseline/model/models/point/` or `views_baseline/model/models/distributional/` — implement the class in its own one-class-per-file module and export it from the sub-package `__init__`
 2. `views_baseline/model/catalog.py` — add to `MODEL_GENOMES` and write a factory method
 3. `docs/CICs/` — write a new Class Intent Contract
 4. `docs/ADRs/001_ontology_of_the_repository.md` — add to the ontology (or write ADR-012)
@@ -176,5 +179,5 @@ in a way that breaks the documented contract:
   open question in ADR-004 and writing ADR-011.
 
 - **`PredictionFrame` lazy import.** The deferred `from views_frames import ...` lives in the
-  single `to_prediction_frames` seam in `helpers.py` (ADR-002 as amended by ADR-020). Do not move
+  single `to_prediction_frames` seam in `frames/output.py` (ADR-002 as amended by ADR-020). Do not move
   it to module level, and do not add a second `PredictionFrame` construction site.

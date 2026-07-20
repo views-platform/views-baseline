@@ -11,8 +11,8 @@
 This protocol defines the hardened practices for contributing to the ML and numerical
 components of views-baseline. It applies specifically to:
 
-- The seven model classes in `views_baseline/model/baseline.py`
-- The `build_prediction_grid` helper in `views_baseline/model/helpers.py`
+- The seven model classes under `views_baseline/model/models/point/` and `views_baseline/model/models/distributional/`
+- The output-construction helpers in `views_baseline/model/frames/output.py`
 - Any new distributional model that uses NumPy random number generation
 
 It extends the standard contributor protocols with additional requirements for
@@ -114,27 +114,27 @@ validation without a PR discussion, as it adds maintenance surface.
 
 ---
 
-## 3. File Structure — Known Deviation from 1-Class-1-File
+## 3. File Structure — One Class Per File
 
-The standard software engineering practice of one class per file is **not followed** in
-views-baseline. All seven model classes (`ZeroModel`, `LocfModel`, `AverageModel`,
-`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`,
-`ParametricHurdleConflictology`) live in `views_baseline/model/baseline.py`
-(449 lines).
+Since the PR-1 reorganization (issues #48–#51), each baseline model class lives in its own
+module. The point models (`ZeroModel`, `LocfModel`, `AverageModel`) live one-per-file under
+`views_baseline/model/models/point/`, and the distributional models (`ConflictologyModel`,
+`MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`) under
+`views_baseline/model/models/distributional/`. The shared support code lives in `frames/`
+(output seam + pooling), `distributions/`, `grid.py`, and `spatial.py`.
 
-This is a deliberate architectural decision recorded in ADR-001:
+This supersedes the earlier single-file layout, whose rationale was recorded in ADR-001:
 
 > Separate files per model class would have made the ontological boundaries physically
 > visible. Rejected as over-engineered for seven classes that are closely related and
 > frequently read together.
 
-**Consequence for contributors:** When modifying `baseline.py`, read the full file before
-making changes. Do not assume that a class can be edited in isolation without considering
-its neighbours. Use targeted edits (the Edit tool's string-replacement mode, not full-file
-rewrite) to avoid accidentally truncating adjacent class definitions.
+**Consequence for contributors:** When modifying a model module, read the full file before
+making changes. Use targeted edits (the Edit tool's string-replacement mode, not full-file
+rewrite) to avoid accidentally truncating class or function definitions.
 
 The Anti-Truncation Rule from the silicon protocol applies: any AI-generated change that
-shortens `baseline.py` by more than the lines being intentionally deleted is suspect.
+shortens a model module by more than the lines being intentionally deleted is suspect.
 
 ---
 
@@ -186,10 +186,10 @@ When adding a new model, use the appropriate checklist.
 
 ### Point forecast model checklist
 
-- [ ] Class in `views_baseline/model/baseline.py`
+- [ ] Class in its own module under `views_baseline/model/models/point/`
 - [ ] `fit(df) -> self` — stores index names and per-entity statistics
 - [ ] `predict(df, sequence_number, output_length) -> pd.DataFrame` with `MultiIndex(time, entity)` and `pred_{target}` columns
-- [ ] Uses `build_prediction_grid` from `helpers.py` (do not re-implement grid construction)
+- [ ] Uses `build_prediction_frame` from `frames/output.py` (do not re-implement grid construction)
 - [ ] No `distributional` class attribute
 - [ ] Emits `logger.info` on `fit()` and `predict()`
 - [ ] Emits `logger.warning` if entities are dropped at predict time
@@ -202,7 +202,7 @@ When adding a new model, use the appropriate checklist.
 
 ### Distributional model checklist
 
-All of the above, plus:
+All of the above (but the class module lives under `views_baseline/model/models/distributional/`, not `point/`), plus:
 - [ ] `distributional = True` class attribute
 - [ ] `predict()` returns `dict[str, PredictionFrame]` — one key per target
 - [ ] `PredictionFrame` imported lazily inside `predict()`, not at module top-level

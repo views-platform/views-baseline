@@ -3,7 +3,7 @@
 **Date:** 2026-03-17
 **Owner:** Project maintainers
 **Status:** Active
-**Related ADRs:** ADR-001, ADR-003, ADR-005, ADR-006, ADR-008, ADR-009
+**Related ADRs:** ADR-001, ADR-003, ADR-005, ADR-006, ADR-008, ADR-009, ADR-011, ADR-019, ADR-020
 
 ---
 
@@ -26,7 +26,7 @@ The class attribute `distributional = True` is used by `BaselineForecastingModel
 
 ## Responsibilities and Guarantees
 
-- `fit(df)` extracts the last `window_months` rows per entity from the training period (`time_idx <= train_end`), sorts by `[entity_idx, time_idx]`, and stores the result as `self.hist_per_entity`: a `dict[entity_id, dict[target, np.ndarray]]`. Also stores `self.entity_ids` (entities present at `train_end`). Returns `self`.
+- `fit(df)` normalizes the input via `to_feature_frame(df, loa, targets)` (the ADR-019 pandas boundary; `pd.DataFrame` or `FeatureFrame`), records `time_idx`/`entity_idx` from `ff.index.level.index_names`, and extracts the last `window_months` rows per entity up to `train_end` via `window_pool(ff, targets, window_months, train_end)` on the frame's numpy panel — a stable `(entity, time)` `np.lexsort`, no pandas. Stores the result as `self.hist_per_entity`: a `dict[entity_id, dict[target, np.ndarray]]`, plus `self.entity_ids` (entities present at `train_end`, ascending). Returns `self`.
 - `predict(df, sequence_number, output_length)` returns `dict[str, PredictionFrame]` — one `PredictionFrame` per target. Each PF has:
   - `y_pred` of shape `(N, n_samples)` where `N = len(entities_with_history) * output_length`.
   - `identifiers` dict with `"time"` and `"unit"` arrays of length `N`.
@@ -41,12 +41,12 @@ The class attribute `distributional = True` is used by `BaselineForecastingModel
 | Parameter | Type | Notes |
 |---|---|---|
 | `targets` | `List[str]` | Column names in `df`. Must exist at fit time. |
-| `window_months` | `int` | Number of trailing training months per entity to retain. Must be positive (not validated). |
+| `window_months` | `int` | Number of trailing training months per entity to retain. Must be `>= 1` — a non-positive value fails loud at fit (`window_pool`). |
 | `partition_dict` | `dict` | Must contain `"test"` key with tuple `(test_start, test_end)`. |
-| `loa` | `str` | Stored; not used in computation. |
+| `loa` | `str` | Declared level of analysis (`"cm"` or `"pgm"`). Now **used**, not just stored: `to_feature_frame` resolves it to a `SpatialLevel`, validates the input's spatial level against it, and carries it into every output `PredictionFrame` (ADR-003/ADR-020). |
 | `n_samples` | `int` | Number of bootstrap draws per prediction cell. Required — no default. |
 | `seed` | `int` | Base seed for `np.random.default_rng`. **Required, audited genome key** (ADR-021 / C-10): the catalog forwards `config["seed"]` and it must be declared in config. `DEFAULT_SEED` (42) is a single-sourced sentinel for direct/test construction only, never the production path. |
-| `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; level 0 = time, level 1 = entity. |
+| `df` (fit/predict) | `pd.DataFrame \| FeatureFrame` | Normalized at entry via `to_feature_frame`. A DataFrame needs a 2-level MultiIndex (level 0 = time, level 1 = entity) matching `loa`; a `FeatureFrame` must carry the matching `level` and the `targets` features. |
 | `sequence_number` | `int` | Offset from `test_start` for the prediction window start. |
 | `output_length` | `int` | Number of forecast timesteps. Required — no default; passed from `config["time_steps"]` by the manager. |
 
@@ -57,7 +57,7 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 ## Outputs and Side Effects
 
 - **`fit()`**: Returns `self`. Sets `self.time_idx`, `self.entity_idx`, `self.hist_per_entity`, `self.entity_ids`. No external side effects.
-- **`predict()`**: Returns `dict[str, PredictionFrame]`. Raises `ValueError` (via `require_entities`) if no entities have history. Emits `WARNING` on entity drops. No external side effects. `PredictionFrame` is imported lazily from `views_pipeline_core.data.prediction_frame` at call time.
+- **`predict()`**: Returns `dict[str, PredictionFrame]`. Raises `ValueError` (via `require_entities`) if no entities have history. Emits `WARNING` on entity drops. No external side effects. `PredictionFrame`/`SpatioTemporalIndex` are lazy-imported from `views_frames` inside the `to_prediction_frames` seam at call time.
 
 ---
 
@@ -65,23 +65,23 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 
 | Failure | Loudness | Notes |
 |---|---|---|
-| Target column missing from `df` | `KeyError` (crash) | No validation. |
-| `df` missing 2-level MultiIndex | `IndexError` (crash) | No validation. |
+| Target column missing / feature absent from a `FeatureFrame` | `ValueError` (crash) | `to_feature_frame` checks target presence at the input boundary (ADR-019). |
+| DataFrame index names do not match `loa` (incl. non-2-level index) | `ValueError` (crash) | `to_feature_frame` → `resolve_level` raises at entry. |
 | `partition_dict` missing `"test"` | `KeyError` (crash) | No validation. |
-| `window_months <= 0` | `tail(0)` returns empty arrays | Sampling from empty array raises `ValueError` inside numpy during `predict()`. |
-| `n_samples <= 0` | `ValueError` from numpy | `rng.choice(..., size=0)` succeeds but `size < 0` raises. |
-| Entities with empty history at fit time | Silently excluded from `hist_per_entity` | Only entities whose `xs()` call returns non-empty data are stored. |
+| `window_months <= 0` | `ValueError` at **fit** (crash) | `window_pool` fails loud with `"window_months must be >= 1, got ..."`. Previously this was an accidental empty-group `KeyError` — now caught deliberately (ADR-019). |
+| `n_samples <= 0` | `ValueError` from numpy | `rng.choice(..., size=0)` succeeds but `size < 0` raises during `predict()`. |
+| Entities with empty history at fit time | Silently excluded from `hist_per_entity` | `window_pool` skips entities whose windowed slice is empty. |
 | Entities absent from `hist_per_entity` at predict time | `WARNING` log | Dropped from output. |
 | No entities have history | `ValueError` (crash) | `require_entities` raises a descriptive error. Fail-loud — consistent with all baseline models; an empty result would otherwise surface as a `StopIteration` deep in pipeline-core's evaluation path. |
-| `views_pipeline_core` not installed | `ImportError` (crash at predict time) | Lazy import defers this to `predict()`. |
+| `views_frames` not installed | `ImportError` (crash at predict time) | Lazy import in the `to_prediction_frames` seam defers this to `predict()`. |
 
 ---
 
 ## Boundaries and Interactions
 
-- **Depends on:** `numpy` (`np.random.default_rng`, `np.array`, `rng.choice`).
-- **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/helpers.py`, which lazy-imports the `views_frames` leaf (`PredictionFrame`, `SpatioTemporalIndex`) inside the function — not at module load. No inline construction; `build_prediction_grid` is deleted.
-- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `helpers.sample_prediction_grid(..., draw_cell)`, supplying only the per-cell resample as `draw_cell` (`rng.choice(hist_per_entity[cid][t], size=n_samples, replace=True)`).
+- **Depends on:** `numpy` (`np.random.default_rng`, `rng.choice`); `views_baseline.model.frames.input` (`to_feature_frame` — the single pandas boundary, ADR-019); `views_baseline.model.frames.pooling.window_pool` (numpy windowing); `views_baseline.model.frames.output.sample_prediction_grid`; `views_baseline.model.spatial` (via the resolved `ff.index.level`). pandas is not a runtime dependency — confined to `to_feature_frame`, imported only under `TYPE_CHECKING`.
+- **Output construction (ADR-020):** routes through the single seam `to_prediction_frames` in `model/frames/output.py`, which lazy-imports the `views_frames` leaf (`PredictionFrame`, `SpatioTemporalIndex`) inside the function — not at module load. No inline construction; `build_prediction_grid` is deleted.
+- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `frames.output.sample_prediction_grid(..., draw_cell)`, supplying only the per-cell resample as `draw_cell` (`rng.choice(hist_per_entity[cid][t], size=n_samples, replace=True)`). The spatial `level` is resolved once at the input boundary and passed in as `level=ff.index.level` (since PR-2 `sample_prediction_grid`'s signature takes `level`, not `(loa, index_names)`).
 - **Instantiated by:** `BaselineModelCatalog._get_conflictology_model()`.
 - **Dispatched by:** `BaselineForecastingModelManager._generate_predictions()` — a single type-uniform path since ADR-017; `distributional = True` is a semantic marker, not an `isinstance` dispatch discriminator.
 - **Pool equivalence:** `hist_per_entity` is constructed identically to `MixtureBaseline.local_pool`. This equivalence is verified by `test_conflictology_matches_mixture_lambda_zero`.
@@ -91,14 +91,14 @@ Note: `fit()` uses `time_idx <= train_end` (inclusive) for the training filter, 
 ## Examples of Correct Usage
 
 ```python
-from views_baseline.model.baseline import ConflictologyModel
+from views_baseline.model.models.distributional import ConflictologyModel
 
 partition_dict = {"test": (493, 528)}
 model = ConflictologyModel(
     targets=["y1", "y2"],
     window_months=4,
     partition_dict=partition_dict,
-    loa="pg_id",
+    loa="pgm",
     n_samples=64,
     seed=42,
 )
@@ -121,10 +121,9 @@ for i in range(pf.y_pred.shape[0]):
 ## Examples of Incorrect Usage
 
 ```python
-# window_months=0: empty history arrays lead to numpy ValueError during predict
-model = ConflictologyModel(targets=["y1"], window_months=0, partition_dict=partition_dict, loa="pg_id")
-model.fit(df)
-model.predict(df=df, sequence_number=0, output_length=5)   # ValueError from rng.choice on empty array
+# window_months=0 now fails loud at fit (previously an accidental empty-group KeyError)
+model = ConflictologyModel(targets=["y1"], window_months=0, partition_dict=partition_dict, loa="pgm")
+model.fit(df)   # ValueError: window_months must be >= 1, got 0.
 
 # Expecting a DataFrame instead of dict
 result = model.predict(df=df, sequence_number=0, output_length=5)
@@ -162,6 +161,7 @@ File: `tests/test_baseline.py`
 
 ## Known Deviations
 
-- No validation of `window_months > 0` or `n_samples > 0`. Invalid values surface as numpy errors during `predict()`, not as descriptive `ValueError`s at construction or fit time.
-- `PredictionFrame` is imported inside `predict()`, not at module load time or construction time. Import failures (e.g., `views_pipeline_core` not installed) are deferred to prediction time.
-- `fit()` uses `time_idx <= train_end` (inclusive upper bound on training data) while the point models use `time_idx < test_start`. These are semantically equivalent but the inconsistency makes code comparison slightly harder.
+- `window_months <= 0` now fails loud with a descriptive `ValueError` at **fit** (via `window_pool`), no longer an accidental empty-group `KeyError` at predict. `n_samples > 0` is still unvalidated and surfaces as a numpy error during `predict()`.
+- `PredictionFrame`/`SpatioTemporalIndex` are imported lazily inside the `to_prediction_frames` seam at predict time, not at module load or construction. Import failures (e.g., `views_frames` not installed) are deferred to prediction time.
+- `FeatureFrame` storage is `float32` by design (C-32), so the resampled window values are `float32`-rounded relative to raw `float64`. The entity order, per-entity tail order, and RNG-advance order are preserved exactly (the byte-identity contract, ADR-011), and a DataFrame and the `FeatureFrame` built from it produce identical output — an accepted precision trade-off. This also preserves the byte-identical pool equivalence with `MixtureBaseline.local_pool`.
+- `fit()` windows on `time <= train_end` (inclusive upper bound on training data) while the point models frame it as `time < test_start`. These are semantically equivalent (`train_end = test_start - 1`) but the phrasing difference makes code comparison slightly harder.

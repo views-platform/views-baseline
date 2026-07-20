@@ -1,16 +1,13 @@
-"""Distribution family + transform registries for the parametric climatology models.
+"""Distribution family strategies for the parametric climatology models (ADR-022).
 
-A **strategy registry** (ADR-022): each family exposes `fit(values) -> params`
-(method-of-moments) and `sample(params, size, rng) -> ndarray`. The native-zero families
-(`nb`, `zinb`) model the full window; continuous families (`lognormal`, `gumbel`, `gamma`)
-are positive-part families for the hurdle model. (Tweedie was evaluated in S9 and excluded —
-see ADR-022 / `reports/closeness_experiment/FINDINGS.md`.)
+Each family exposes `fit(values) -> params` (method-of-moments) and
+`sample(params, size, rng) -> ndarray`. The native-zero families (`nb`, `zinb`) model
+the full window; continuous families (`lognormal`, `gumbel`, `gamma`) are positive-part
+families for the hurdle model. (Tweedie was evaluated in S9 and excluded — see ADR-022 /
+`reports/closeness_experiment/FINDINGS.md`.)
 
 Numeric edges **fail safe** (point-mass / Poisson fallback) with a WARN, never NaN.
-`TRANSFORMS` holds the `(forward, inverse)` pairs; `EMIT_LOG_CEIL` is the single-sourced
-clamp applied before `expm1` (overflow guard — mirrors hydranet C-113).
-
-Pure module: numpy + scipy only; no pandas, no views-frames, no model imports.
+Pure module: numpy only; no pandas, no views-frames, no model imports.
 """
 
 from __future__ import annotations
@@ -21,57 +18,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Single source of truth: cap log-space samples before expm1 so a heavy-tailed draw
-# cannot expm1 into astronomical counts / float overflow (ADR-022; hydranet C-113).
-EMIT_LOG_CEIL = 20.0  # expm1(20) ~ 4.85e8 — far above any real conflict count
-
-# Emitted magnitudes are non-negative, but some positive-part families (`gumbel_r`)
-# have support on all of ℝ — their lower tail can produce negative draws (directly, or
-# via expm1(x)∈(-1,0) for x<0). Floor the emitted raw scale at zero so the models never
-# emit a negative conflict magnitude (ADR-022; the ceiling's mirror-image guard).
-EMIT_FLOOR = 0.0
-
 _EULER_GAMMA = 0.5772156649015329
 
 # Native-zero families (no-hurdle); continuous positive-part families (hurdle).
 NATIVE_ZERO_FAMILIES = frozenset({"nb", "zinb"})
 CONTINUOUS_FAMILIES = frozenset({"lognormal", "gumbel", "gamma"})
-
-TRANSFORMS = {
-    "none": (lambda x: np.asarray(x, dtype=np.float64), lambda x: np.asarray(x, dtype=np.float64)),
-    "log1p": (np.log1p, np.expm1),
-}
-
-
-def clamp_log(x: np.ndarray) -> np.ndarray:
-    """Cap log-space samples at `EMIT_LOG_CEIL` (WARN if any are clamped)."""
-    x = np.asarray(x, dtype=np.float64)
-    over = x > EMIT_LOG_CEIL
-    if np.any(over):
-        logger.warning(
-            "parametric: clamped %d log-space sample(s) at EMIT_LOG_CEIL=%s",
-            int(over.sum()), EMIT_LOG_CEIL,
-        )
-        return np.minimum(x, EMIT_LOG_CEIL)
-    return x
-
-
-def clamp_floor(x: np.ndarray) -> np.ndarray:
-    """Floor emitted raw-scale samples at `EMIT_FLOOR` (WARN if any are floored).
-
-    Mirror of `clamp_log`: applied on the *raw* emitted scale (after any `expm1`) so a
-    left-tail draw from an ℝ-support positive-part family (`gumbel_r`) can never leave the
-    model as a negative magnitude.
-    """
-    x = np.asarray(x, dtype=np.float64)
-    under = x < EMIT_FLOOR
-    if np.any(under):
-        logger.warning(
-            "parametric: floored %d sample(s) at EMIT_FLOOR=%s",
-            int(under.sum()), EMIT_FLOOR,
-        )
-        return np.maximum(x, EMIT_FLOOR)
-    return x
 
 
 # ---------------------------------------------------------------------------
@@ -229,28 +180,3 @@ FAMILIES = {
     "gumbel": (fit_gumbel, sample_gumbel),
     "gamma": (fit_gamma, sample_gamma),
 }
-
-
-def fit_family(family: str, values: np.ndarray) -> dict:
-    if family not in FAMILIES:
-        raise ValueError(f"Unknown family {family!r}; available: {sorted(FAMILIES)}")
-    return FAMILIES[family][0](values)
-
-
-def sample_family(family: str, params: dict, size, rng) -> np.ndarray:
-    return FAMILIES[family][1](params, size, rng)
-
-
-def validate_family_transform(family: str, transform: str) -> None:
-    """ADR-021/ADR-022: `log1p` is only valid for continuous positive-part families.
-
-    A count/native-zero family with `log1p` is a contract violation (fails loud), not
-    a silent no-op.
-    """
-    if transform not in TRANSFORMS:
-        raise ValueError(f"Unknown transform {transform!r}; available: {sorted(TRANSFORMS)}")
-    if transform == "log1p" and family in NATIVE_ZERO_FAMILIES:
-        raise ValueError(
-            f"transform='log1p' is invalid for count family {family!r} — log1p of a "
-            f"count is not a count (ADR-021/ADR-022). Use transform='none'."
-        )
