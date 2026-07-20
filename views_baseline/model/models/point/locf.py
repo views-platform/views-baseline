@@ -11,6 +11,7 @@ from views_baseline.model.grid import (
     entities_at,
     filter_entities,
     require_entities,
+    train_test_boundary,
 )
 
 if TYPE_CHECKING:
@@ -34,8 +35,7 @@ class LocfModel:
         """
         Store the last available observation before the test period for each entity.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         logger.info(f"Fitting LocfModel on level: {self.loa}")
 
@@ -56,8 +56,7 @@ class LocfModel:
         """
         Repeats the last observed value for each target and entity over the forecast horizon.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         logger.info(f"Generating LOCF predictions on level: {self.loa}")
 

@@ -66,8 +66,13 @@ def to_feature_frame(x, *, loa: str, targets: list[str]) -> "FeatureFrame":
     )
 
 
-def _validate_feature_frame(ff: "FeatureFrame", *, loa: str, targets: list[str]) -> "FeatureFrame":
-    """Passthrough a ``FeatureFrame`` after checking loa↔level and target presence."""
+def _check_ff_level(ff: "FeatureFrame", loa: str):
+    """Raise unless a FeatureFrame's spatial ``level`` matches the declared ``loa`` (ADR-003).
+
+    The single loa↔level agreement check, shared by :func:`_validate_feature_frame` (fit
+    boundary) and :func:`to_index` / :func:`to_level` (predict boundary), so the two never
+    drift on what a valid frame is. Returns the resolved ``SpatialLevel``.
+    """
     expected = spatial_level(loa)
     if ff.index.level != expected:
         raise ValueError(
@@ -75,6 +80,12 @@ def _validate_feature_frame(ff: "FeatureFrame", *, loa: str, targets: list[str])
             f"({expected.name}). Declarations are authoritative (ADR-003); the input frame "
             f"does not match the declared spatial level."
         )
+    return ff.index.level
+
+
+def _validate_feature_frame(ff: "FeatureFrame", *, loa: str, targets: list[str]) -> "FeatureFrame":
+    """Passthrough a ``FeatureFrame`` after checking loa↔level and target presence."""
+    _check_ff_level(ff, loa)
     missing = [t for t in targets if t not in ff.feature_names]
     if missing:
         raise ValueError(
@@ -95,19 +106,34 @@ def _validate_feature_frame(ff: "FeatureFrame", *, loa: str, targets: list[str])
 def _index_arrays(df) -> tuple:
     """Extract ``(time, unit)`` int64 identifier arrays from a ``(time, entity)`` index.
 
-    Guards against a NaN in a float-typed index level silently casting to a garbage int64
-    id (e.g. ``-2**63``) that would mis-key the grid, bypassing views_frames' own identifier
-    validation which runs only after the cast (C-35).
+    Validates that each level is **exactly integer-valued** before the int64 cast — not just
+    non-NaN — so a NaN, a fractional float (``2.9 -> 2``), or an out-of-``int64``-range value
+    cannot silently produce a garbage id that mis-keys the grid, bypassing views_frames' own
+    identifier validation which runs only after the cast (C-35).
     """
-    time_level = df.index.get_level_values(0)
-    unit_level = df.index.get_level_values(1)
-    for name, lvl in zip(df.index.names, (time_level, unit_level)):
+    levels = (df.index.get_level_values(0), df.index.get_level_values(1))
+    out = []
+    for name, lvl in zip(df.index.names, levels):
+        raw = lvl.to_numpy()
         if lvl.hasnans:
             raise ValueError(
-                f"Index level {name!r} contains NaN; entity/time identifiers must be "
-                f"complete integers (a NaN would be cast to a garbage id)."
+                f"Index level {name!r} contains NaN; entity/time identifiers must be exact "
+                f"integers (a NaN would be cast to a garbage id)."
             )
-    return time_level.to_numpy(dtype=np.int64), unit_level.to_numpy(dtype=np.int64)
+        try:
+            casted = raw.astype(np.int64)
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Index level {name!r} is not integer-typed; entity/time identifiers must be "
+                f"integers."
+            ) from None
+        if not np.array_equal(casted, raw):
+            raise ValueError(
+                f"Index level {name!r} has non-integer or out-of-range values; entity/time "
+                f"identifiers must be exact integers (the int64 cast would corrupt them)."
+            )
+        out.append(casted)
+    return out[0], out[1]
 
 
 def _from_dataframe(df, *, loa: str, targets: list[str]) -> "FeatureFrame":
@@ -149,13 +175,7 @@ def to_index(x, *, loa: str) -> tuple:
     from views_frames import FeatureFrame
 
     if isinstance(x, FeatureFrame):
-        expected = spatial_level(loa)
-        if x.index.level != expected:
-            raise ValueError(
-                f"FeatureFrame level {x.index.level.name} disagrees with declared loa={loa!r} "
-                f"({expected.name}). Declarations are authoritative (ADR-003)."
-            )
-        return x.index.level, x.index.time, x.index.unit
+        return _check_ff_level(x, loa), x.index.time, x.index.unit
 
     import pandas as pd
 
@@ -166,6 +186,31 @@ def to_index(x, *, loa: str) -> tuple:
 
     raise TypeError(
         f"to_index expects a pandas.DataFrame or a views_frames.FeatureFrame, "
+        f"got {type(x).__name__}."
+    )
+
+
+def to_level(x, *, loa: str):
+    """Resolve just the spatial ``SpatialLevel`` from a df or FeatureFrame — no identifier
+    arrays, no value block.
+
+    The lightest input boundary: for **distributional** predicts, which need only the level
+    (they build their grid from fit-time ``entity_ids``). Point predicts, which need the
+    predict-frame entities, use :func:`to_index`. Avoids the two ``int64`` materializations
+    ``to_index`` would build and discard per distributional predict (C-34 efficiency).
+    """
+    from views_frames import FeatureFrame
+
+    if isinstance(x, FeatureFrame):
+        return _check_ff_level(x, loa)
+
+    import pandas as pd
+
+    if isinstance(x, pd.DataFrame):
+        return resolve_level(loa, x.index.names)
+
+    raise TypeError(
+        f"to_level expects a pandas.DataFrame or a views_frames.FeatureFrame, "
         f"got {type(x).__name__}."
     )
 

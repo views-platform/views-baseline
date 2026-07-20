@@ -73,6 +73,15 @@ def test_from_dataframe_rejects_nan_index():
         to_feature_frame(df, loa="pgm", targets=["y1"])
 
 
+def test_from_dataframe_rejects_fractional_index():
+    df = _df().reset_index()
+    df["month_id"] = df["month_id"].astype(float)
+    df.loc[0, "month_id"] = 490.5  # non-integer: would silently truncate to 490
+    df = df.set_index(["month_id", "priogrid_id"])
+    with pytest.raises(ValueError, match="non-integer or out-of-range"):
+        to_feature_frame(df, loa="pgm", targets=["y1"])
+
+
 def test_rejects_multisample_featureframe():
     from views_frames import SpatioTemporalIndex
 

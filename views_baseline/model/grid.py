@@ -7,6 +7,14 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def train_test_boundary(partition_dict: dict) -> tuple[int, int]:
+    """Return ``(test_start, train_end)`` from the partition dict — the single home of the
+    train/test boundary convention (``train_end = test_start - 1``), so the ~ten fit/predict
+    sites don't each re-encode it (C-37)."""
+    test_start = partition_dict["test"][0]
+    return test_start, test_start - 1
+
+
 def build_time_grid(
     test_start: int, sequence_number: int, output_length: int
 ) -> list[int]:

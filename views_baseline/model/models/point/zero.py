@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING
 
 from views_baseline.model.frames.input import to_index
 from views_baseline.model.frames.output import build_prediction_frame
-from views_baseline.model.grid import build_time_grid, entities_at, require_entities
+from views_baseline.model.grid import (
+    build_time_grid,
+    entities_at,
+    require_entities,
+    train_test_boundary,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -40,8 +45,7 @@ class ZeroModel:
         Predicts zero for each target variable over output_length time steps
         starting from test_start + sequence_number.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         logger.info(f"Generating ZeroModel predictions on level: {self.loa}")
 

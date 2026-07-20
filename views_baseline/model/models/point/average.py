@@ -11,6 +11,7 @@ from views_baseline.model.grid import (
     entities_at,
     filter_entities,
     require_entities,
+    train_test_boundary,
 )
 
 if TYPE_CHECKING:
@@ -36,8 +37,7 @@ class AverageModel:
         """
         Get the average of the last m observations before the test partition for each entity.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         logger.info(f"Fitting AverageModel on level: {self.loa}")
 
@@ -59,8 +59,7 @@ class AverageModel:
         Repeats the average over the last m months for each target
         and entity over the forecast horizon.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         logger.info(f"Generating average predictions on level: {self.loa}")
 

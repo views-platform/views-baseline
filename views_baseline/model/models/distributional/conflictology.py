@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from views_baseline.model.defaults import DEFAULT_SEED
-from views_baseline.model.frames.input import to_feature_frame, to_index
+from views_baseline.model.frames.input import to_feature_frame, to_level
 from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.frames.pooling import window_pool
+from views_baseline.model.grid import train_test_boundary
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -41,8 +42,7 @@ class ConflictologyModel:
         """
         Extract and store the last `window_months` of history per entity before the test period.
         """
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
 
         # Normalize to a FeatureFrame at the boundary (ADR-019); windowing runs on its
         # numpy panel, not pandas. Shared with the parametric climatology models so the
@@ -62,7 +62,7 @@ class ConflictologyModel:
         Return predictions as Dict[str, PredictionFrame] — one PF per target.
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
-        level, _, _ = to_index(df, loa=self.loa)
+        level = to_level(df, loa=self.loa)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
             model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,

@@ -11,9 +11,10 @@ from views_baseline.model.distributions import (
     sample_family,
     validate_family_transform,
 )
-from views_baseline.model.frames.input import to_feature_frame, to_index
+from views_baseline.model.frames.input import to_feature_frame, to_level
 from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.frames.pooling import window_pool
+from views_baseline.model.grid import train_test_boundary
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -60,8 +61,7 @@ class ParametricConflictology:
         self.params = None
 
     def fit(self, df: pd.DataFrame | FeatureFrame) -> "ParametricConflictology":
-        test_start = self.partition_dict["test"][0]
-        train_end = test_start - 1
+        test_start, train_end = train_test_boundary(self.partition_dict)
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
         # `pools` is local — predict reads only self.params, so retaining it would pin the
         # entities x window array on the fitted object for nothing (C-37).
@@ -84,7 +84,7 @@ class ParametricConflictology:
             draws = sample_family(self.family, self.params[cid][t], self.n_samples, rng)
             return inverse(clamp_log(draws)) if self.transform != "none" else draws
 
-        level, _, _ = to_index(df, loa=self.loa)
+        level = to_level(df, loa=self.loa)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.params,
             model_name="ParametricConflictology",

@@ -668,6 +668,21 @@ def test_nan_in_training_window_fails_loud(base_df_pgm, partition_dict, targets,
         model.fit(df)
 
 
+def test_mixture_nan_outside_window_fails_loud(base_df_pgm, partition_dict, targets):
+    """For MixtureBaseline a NaN OUTSIDE the tail window still fails loud — its global pool
+    consumes the whole train panel, so the fail-loud contract extends past the tail (C-33
+    re-review fix). tail_pools alone would miss this (NaN is not in the last-3 tail)."""
+    df = base_df_pgm.copy()
+    train_end = partition_dict["test"][0] - 1  # 492
+    df.loc[(train_end - 20, 1), "y1"] = np.nan  # month 472, well outside the 3-month tail
+    model = MixtureBaseline(
+        targets=targets, window_months=3, lambda_mix=0.1,
+        n_samples=8, partition_dict=partition_dict, loa="pgm",
+    )
+    with pytest.raises(ValueError, match="NaN target value in the training panel"):
+        model.fit(df)
+
+
 def test_mixture_window_months_zero_raises(partition_dict, targets):
     """window_months=0 → window_pool fails loud with a ValueError during fit.
 

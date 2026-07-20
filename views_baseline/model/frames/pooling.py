@@ -120,27 +120,29 @@ def tail_pools(
     """Per-entity last ``window_months`` values from a ``(entity, time)``-sorted panel.
 
     Fails loud on ``window_months <= 0`` (else the numpy ``block[-0:]`` slice returns the
-    whole history) and on a NaN in the pooled (used) values (C-33) — the pre-PR pandas path
-    silently skipna'd (``last()`` / ``mean(skipna=True)``); the numpy port surfaces it instead
-    of forward-filling / poisoning the forecast. Only the pooled tail is checked; NaN outside
-    the window is unused and not flagged.
+    whole history) and on a NaN in the pooled tail (C-33) — the pre-PR pandas path silently
+    skipna'd (``last()`` / ``mean(skipna=True)``); the numpy port surfaces it instead of
+    forward-filling / poisoning the forecast. This guards only the **tail** each pooling model
+    uses; a model that consumes non-tail rows (``MixtureBaseline``'s global pool) applies its
+    own NaN guard on the full panel.
     """
     if window_months <= 0:
         raise ValueError(f"window_months must be >= 1, got {window_months}.")
 
     pools = {}
     for cid in entity_ids:
+        # entity_ids come from rows present at train_end, so every block is non-empty.
         block = np.nonzero(s_unit == cid)[0]  # this entity's rows, already in time order
-        if block.size == 0:
-            continue
         tail = block[-window_months:]  # last window_months in time order
-        pool = {t: s_vals[t][tail].astype(np.float64) for t in targets}
+        pool = {}
         for t in targets:
-            if np.isnan(pool[t]).any():
+            vals = s_vals[t][tail].astype(np.float64)
+            if np.isnan(vals).any():
                 raise ValueError(
                     f"window_pool: NaN target value in the training window for entity {cid}, "
                     f"target {t!r}. Baseline models require complete target data in the "
                     f"training window; NaN is not silently forward-filled."
                 )
+            pool[t] = vals
         pools[cid] = pool
     return pools

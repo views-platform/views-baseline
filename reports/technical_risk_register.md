@@ -543,6 +543,8 @@ See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator cou
 
 The pandas→numpy port dropped the pre-PR NaN tolerance. OLD `LocfModel` used `groupby(entity)[targets].last()` (last **non-null** value per target); the numpy port takes `window_pool(...,1)` then `pools[cid][t][0]` — the literal last row, NaN or not (and forces all targets to one row). OLD `AverageModel` used pandas `.tail(w)[targets].mean()` (skipna, divides by non-NaN count); the numpy port uses `np.ndarray.mean()`, which propagates NaN and divides by the full window. By extension the Conflictology/parametric/Mixture pools resample/fit on NaN too. A single NaN in a training window therefore becomes a NaN (or garbage) forecast **with no error signal**. Not silent enough to be Tier 1 — a NaN forecast surfaces as NaN evaluation metrics downstream — and likelihood is gated (VIEWS target panels are mostly dense), hence Tier 2. The one NaN-window test was replaced by a `window_months=0` fail-loud test, so NaN-in-window is now covered by neither the old nor the new suite. **Remediation (chosen: fail-loud):** a shared NaN guard in `window_pool_arrays` raises `ValueError` when a pooled value is NaN (WS1). Cross-ref C-32 (same numpy-port cluster), C-31.
 
+> **Resolved (2026-07-20, re-review + fix).** A follow-up max-effort code-review found the WS1 guard was **incomplete**: `tail_pools` guarded only each entity's tail, but `MixtureBaseline`'s global pool consumes the *whole* train panel and silently dropped NaN there (`NaN > 0` is False) — empirically reproduced. Maintainer chose **fail-loud, whole-fit, everywhere**: the guard now also raises on any NaN in Mixture's global-pool source (`mixture.py` fit). Both tail and global paths fail loud; tested by `test_nan_in_training_window_fails_loud` (in-tail) + `test_mixture_nan_outside_window_fails_loud` (out-of-tail).
+
 ---
 
 ### C-34: predict/fit over-use the full input adapter — target-column precondition + wasted N×F lift
@@ -556,6 +558,8 @@ The pandas→numpy port dropped the pre-PR NaN tolerance. OLD `LocfModel` used `
 | Location | all 7 `views_baseline/model/models/**` predict/fit sites; `views_baseline/model/frames/input.py:_from_dataframe` |
 
 Every `predict()` calls `to_feature_frame(df, targets)` even though it uses only `ff.index.level` (distributional) or `level` + predict-frame entities (point) — never the target **values**. Two consequences: (a) `_from_dataframe` reads `df[targets]` and raises `ValueError: missing required target column(s)` if a target column is absent — a **new precondition** the old index-only predict didn't have, which is worst for `ZeroModel` (whose entire purpose is data-independence, now data-dependent at both fit and predict — empirically verified to raise); (b) an N×F float64 block + N×F float32 block is built and discarded on every predict, ×7 models. Fails loud (not silent) and the standard VIEWS queryset carries the columns, so Tier 3 (contract widening + wasted work + test gap), not Tier 2. **Remediation:** a light `to_index(x,*,loa) -> (level, time, unit)` boundary that reads only the index; predict uses it; `ZeroModel.fit` stops requiring target columns (WS2). Cross-ref C-31 (the DIP boundary), C-07.
+
+> **Resolved (2026-07-20, WS2 + re-review refinement).** `to_index` landed; point predict uses it, and the re-review added an even lighter `to_level(x,*,loa) -> SpatialLevel` for the 4 distributional predicts (they need only the level, not the identifier arrays `to_index` was building and discarding). Target-less predict is tested (`test_predict_does_not_require_target_columns`, now with a grid-shape assertion) and `ZeroModel` is data-independent again (`test_zero_model_is_data_independent`). Residual (accepted, C-34-adjacent): predict no longer errors on a *misnamed* target column — a silent-success where an error used to surface — the intended column-agnostic tradeoff.
 
 ---
 
@@ -571,6 +575,8 @@ Every `predict()` calls `to_feature_frame(df, targets)` even though it uses only
 
 Two silent boundary holes. (1) `_validate_feature_frame` checks loa↔level and target presence but **not** `sample_count`; `panel` then does `col[:, 0]`, so a multi-sample FeatureFrame is silently reduced to its first sample and every model fits/pools on sample 0 only — wrong result, no error. The df-lift path is always `S==1`, so only a directly-passed frame hits it. (2) `_from_dataframe` hard-casts both index levels with `.to_numpy(dtype=np.int64)` **before** views_frames' identifier validation runs, so a NaN in a float-typed index maps to a platform garbage id (e.g. `-9223372036854775808`) that flows into `entities_at`/`window_pool` and mis-keys the grid — bypassing the very NaN-rejection views_frames provides. Both are silent-corruption paths with low VIEWS likelihood (int ids, df path), hence Tier 2. **Remediation:** `S==1` guard in `_validate_feature_frame`; integer-dtype + NaN-free validation before the int64 cast in `_from_dataframe` (WS1).
 
+> **Resolved (2026-07-20, re-review + fix).** The WS1 index guard was **partial** — `lvl.hasnans` caught NaN but not a fractional float (`2.9 -> 2`) or an out-of-int64-range value, which still silently truncated to a garbage id (the exact thing the guard's message claimed to prevent). Now `_index_arrays` requires an **exact integer cast** (`np.array_equal(raw.astype(int64), raw)`), rejecting NaN, non-integer, and overflow. Tested by `test_from_dataframe_rejects_nan_index` + `test_from_dataframe_rejects_fractional_index` + `test_rejects_multisample_featureframe`.
+
 ---
 
 ### C-36: PR-2 reorg guard tests under-verify their claims
@@ -585,6 +591,8 @@ Two silent boundary holes. (1) `_validate_feature_frame` checks loa↔level and 
 
 Three guards give false confidence. (1) The headline df≡FF equivalence test is near-tautological — both branches converge to the same float32 lift (`to_feature_frame`) and the dummy data is float32-exact integers, so a float64 df fast-path divergence would still compare equal. (2) The DIP AST guard scans only `ast.parse(...).body` (module top-level), so an in-function `import pandas` in a model — a genuine runtime DIP violation — is invisible and `offenders==[]` stays green. (3) The OCP strict-xfail measures the max size of any top-level dict **literal** in `catalog.py`; a still-hardcoded registry built via a dict comprehension or `dict(...)` drops the count to 0, flipping the strict-xfail to a false XPASS ("OCP resolved"). Maintainability/false-confidence, hence Tier 3. **Remediation:** non-float32-exact equivalence case; DIP guard walks all `Import` nodes; OCP check robust to comprehensions (WS3).
 
+> **Re-review note (2026-07-20).** The WS3 float32-equivalence fix was itself **still tautological** — the re-review empirically proved the output `PredictionFrame` is always float32, so `out.values == np.float32(val)` holds regardless of the internal path. Fixed properly by asserting on the **fitted state** (`model.last_observations[cid][t]`, which carries the internal-path precision), not the output. The DIP-guard (now walks all `Import` nodes, excludes `frames/input.py`) and OCP-comprehension fixes stand; the OCP fix's residual limitation (a *legitimate* dict-comp OCP solution would also read as hardcoded, so the ratchet can't flip for that shape) is accepted since C-19 is deferred.
+
 ---
 
 ### C-37: pandas→numpy port residue (dead state, None-log, retained pool, double sort)
@@ -598,6 +606,8 @@ Three guards give false confidence. (1) The headline df≡FF equivalence test is
 | Location | all 7 `views_baseline/model/models/**`; `views_baseline/model/models/distributional/mixture.py:63`; `parametric.py:70`, `parametric_hurdle.py:74` |
 
 Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but read nowhere; `self.entity_idx` only feeds a fit-log line that — because the reorg moved the assignment below the log — now always reads `on level: None`; `ParametricConflictology`/`Hurdle` retain `self.pools` on the fitted object though only `self.params` is read at predict (needlessly pins the entities×window array, including in pickled artifacts); `MixtureBaseline.fit` re-`lexsort`s and re-masks the same panel that `window_pool_arrays` already sorted for the local pool. No correctness impact — Tier 4. **Remediation:** WS4.
+
+> **Resolved (2026-07-20, WS4 + re-review).** Dead `self.time_idx`/`self.entity_idx` deleted across all 7 models; fit logs now use `self.loa` (no more `on level: None`); parametric `self.pools` is a fit-local; `MixtureBaseline` derives local+global pools from one shared `sort_train_panel` (no re-sort). Re-review added: `tail_pools` builds+NaN-checks in one loop, the dead `block.size==0` guard removed, `_check_ff_level` dedups the loa↔level check across `to_index`/`to_feature_frame`, and a `train_test_boundary(partition_dict)` helper homes the `train_end = test_start-1` convention. Golden byte-identical throughout.
 
 ---
 
