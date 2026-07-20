@@ -17,7 +17,7 @@ If ``pyproject.toml`` grows a numpy pin, keep it consistent with the version cap
 import numpy as np
 import pandas as pd
 
-from views_baseline.model.baseline import (
+from views_baseline.model.models.distributional import (
     ConflictologyModel,
     MixtureBaseline,
     ParametricConflictology,

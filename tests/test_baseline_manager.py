@@ -6,7 +6,7 @@ import numpy as np
 from conftest import make_manager
 
 import views_baseline.manager.baseline_manager as bm
-from views_baseline.model.baseline import ZeroModel
+from views_baseline.model.models.point import ZeroModel
 
 # ---------------------------------------------------------------------
 # Tests: _evaluate_model_artifact

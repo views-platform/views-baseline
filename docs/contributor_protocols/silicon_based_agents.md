@@ -62,14 +62,15 @@ not something omitted to obscure provenance).
 
 ## The Anti-Truncation Rule
 
-`views_baseline/model/baseline.py` contains seven closely related model
-classes. When asked to modify one class, do not truncate the file. Do not emit `# ... rest
-of file unchanged ...` or equivalent. The full file must be preserved. Use the Edit tool
-(targeted string replacement) rather than a full-file rewrite wherever possible.
+The seven baseline model classes now live one-per-file under
+`views_baseline/model/models/point/` and `views_baseline/model/models/distributional/`. When
+asked to modify a class, do not truncate the file. Do not emit `# ... rest of file
+unchanged ...` or equivalent. The full file must be preserved. Use the Edit tool (targeted
+string replacement) rather than a full-file rewrite wherever possible.
 
 This rule exists because truncation has previously caused class definitions to be silently
-dropped in large files. Any AI output that shortens `baseline.py` significantly without a
-corresponding deletion of code is suspect and must be rejected.
+dropped. Any AI output that shortens a model module significantly without a corresponding
+deletion of code is suspect and must be rejected.
 
 ---
 
@@ -110,14 +111,14 @@ reproducibility contract. The test `test_mixture_predict_reproducible` validates
 > **Status note (ADR-020):** `PredictionFrame` now comes from the `views_frames` leaf
 > (`from views_frames import PredictionFrame, SpatioTemporalIndex`), re-exported by
 > `views-pipeline-core` ≥3.0.0 (#188). Per ADR-020 the construction is **consolidated into a
-> single function-scoped import site**, `to_prediction_frames` in `model/helpers.py`. The
+> single function-scoped import site**, `to_prediction_frames` in `model/frames/output.py`. The
 > distributional models no longer construct `PredictionFrame` inline.
 
 The `views_frames` import lives inside `to_prediction_frames`, not at module top-level. This is
 intentional (ADR-002, as amended by ADR-020).
 
 **Forbidden:**
-- Moving this import to the module top-level of `baseline.py` or `helpers.py`
+- Moving this import to the module top-level of `frames/output.py` (or any other `model/` module)
 - Adding any other `views_frames` / `views_pipeline_core` import to `model/` at module level
 - Re-introducing a second `PredictionFrame` construction site outside `to_prediction_frames`
 
@@ -155,7 +156,7 @@ AI-generated changes without an explicit human decision recorded in an ADR or PR
    (every baseline model returns this since PR #15 / ADR-017 — point models `(N, 1)`, distributional
    `(N, n_samples)`)
 4. Constructing a `PredictionFrame` anywhere other than the single seam `to_prediction_frames`
-   (`model/helpers.py`), or reintroducing the `identifiers=` constructor (ADR-020)
+   (`model/frames/output.py`), or reintroducing the `identifiers=` constructor (ADR-020)
 5. Modifying the `MODEL_GENOMES` dict without a corresponding change to a model constructor
 6. Adding state-mutation side effects to `predict()` methods (predict must be side-effect-free
    beyond logging)

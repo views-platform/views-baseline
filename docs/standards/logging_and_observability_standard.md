@@ -19,20 +19,22 @@ For the architectural principles behind these choices, see:
 
 ## Logger Instantiation
 
-Two modules create named loggers using the standard Python `logging` module:
+Several modules create named loggers using the standard Python `logging` module, each via
+`logger = logging.getLogger(__name__)`:
 
-```python
-# views_baseline/model/baseline.py
-logger = logging.getLogger(__name__)
-# → logger name: views_baseline.model.baseline
-
-# views_baseline/manager/baseline_manager.py
-logger = logging.getLogger(__name__)
-# → logger name: views_baseline.manager.baseline_manager
+```text
+views_baseline/model/models/point/zero.py         → views_baseline.model.models.point.zero
+views_baseline/model/models/point/locf.py         → views_baseline.model.models.point.locf
+views_baseline/model/models/point/average.py      → views_baseline.model.models.point.average
+views_baseline/model/grid.py                      → views_baseline.model.grid
+views_baseline/model/distributions/transforms.py  → views_baseline.model.distributions.transforms
+views_baseline/model/distributions/families.py    → views_baseline.model.distributions.families
+views_baseline/manager/baseline_manager.py        → views_baseline.manager.baseline_manager
 ```
 
-No other module in the package uses logging. `helpers.py`, `catalog.py`, and `protocol.py`
-do not log.
+The distributional model modules (`model/models/distributional/`), `catalog.py`,
+`protocol.py`, `spatial.py`, `frames/` (output seam + pooling), and
+`distributions/registry.py` do not log.
 
 **Rule:** Always use `logging.getLogger(__name__)` at module level. Do not use the root
 logger (`logging.getLogger()`). Do not create a logger with a hardcoded name string.
@@ -46,7 +48,7 @@ logger (`logging.getLogger()`). Do not create a logger with a hardcoded name str
 INFO messages confirm that control flow reached the expected code path. They carry the
 entity index name and algorithm name where relevant.
 
-**In `views_baseline/model/baseline.py`:**
+**In the point model modules (`views_baseline/model/models/point/zero.py`, `locf.py`, `average.py`):**
 
 | Location | Message pattern |
 |----------|----------------|
@@ -76,23 +78,25 @@ WARNING messages are the most operationally significant log output in the packag
 indicate that prediction output is incomplete because entities present in the input data
 were absent from the model's fitted state.
 
-**In `views_baseline/model/baseline.py`:**
+**Emitted by the shared `filter_entities` helper in `views_baseline/model/grid.py`** (logger
+`views_baseline.model.grid`), once per model that drops entities. The triggering model is
+identified by the `model_name` argument threaded through the call:
 
-| Location | Message pattern |
+| Triggering model | Message pattern |
 |----------|----------------|
-| `LocfModel.predict()` | `"LocfModel: {n} entities dropped (missing from last_observations)"` |
-| `AverageModel.predict()` | `"AverageModel: {n} entities dropped (missing from mean)"` |
-| `ConflictologyModel.predict()` | `"ConflictologyModel: {n} entities dropped (missing from hist_per_entity)"` |
-| `MixtureBaseline.predict()` | `"MixtureBaseline: {n} entities dropped (missing from local_pool)"` |
+| `LocfModel.predict()` | `"LocfModel: {n} entities dropped"` |
+| `AverageModel.predict()` | `"AverageModel: {n} entities dropped"` |
+| `ConflictologyModel.predict()` | `"ConflictologyModel: {n} entities dropped"` (via `sample_prediction_grid`) |
+| `MixtureBaseline.predict()` | `"MixtureBaseline: {n} entities dropped"` (via `sample_prediction_grid`) |
 
-Each message includes: the model class name, the count of dropped entities, and the name
-of the fitted-state attribute that was missing them. This provides enough information to
-identify whether the problem is in fitting (wrong train period), data (missing entities),
-or configuration (wrong partition boundary).
+Each message includes the model class name (the `model_name` argument) and the count of
+dropped entities — enough to tell whether the problem is in fitting (wrong train period),
+data (missing entities), or configuration (wrong partition boundary). The message is
+uniform across models: `filter_entities` is a single shared helper, so it does not name the
+per-model fitted-state attribute.
 
 **Rule:** Any model that can drop entities at predict time must emit a WARNING with the
-dropped count. The message must name the model and the storage attribute. Do not use INFO
-for entity drops.
+model name and the dropped count. Do not use INFO for entity drops.
 
 ### ERROR and CRITICAL
 
@@ -167,7 +171,7 @@ for adding run-level context if needed.
 The following logging calls must not be removed, downgraded, or replaced with silent
 continuations. They are the primary operational signals available to pipeline operators:
 
-1. All four entity-drop WARNING calls (one per model that can drop entities)
+1. The shared entity-drop WARNING call in `filter_entities` (`views_baseline/model/grid.py`), which fires for all four models that can drop entities
 2. The artifact-save INFO in `_train_model_artifact()` (confirms artifact was written)
 3. The algorithm INFO in `_setup_model_and_data()` (confirms which model is running)
 
@@ -189,7 +193,7 @@ A test that verifies warning emission would use `pytest`'s `caplog` fixture:
 ```python
 def test_locf_warns_on_entity_drop(caplog):
     # fit on a subset of entities, predict on the full set
-    with caplog.at_level(logging.WARNING, logger="views_baseline.model.baseline"):
+    with caplog.at_level(logging.WARNING, logger="views_baseline.model.grid"):
         model.predict(full_df, sequence_number=0)
     assert any("entities dropped" in r.message for r in caplog.records)
 ```

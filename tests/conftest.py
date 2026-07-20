@@ -56,6 +56,20 @@ def make_dummy_df(entity_id="priogrid_id", time_range=range(440, 540)):
     return df
 
 
+def make_dummy_ff(entity_id="priogrid_id", time_range=range(440, 540), targets=("y1", "y2"),
+                  loa="pgm"):
+    """Build a ``views_frames.FeatureFrame`` from :func:`make_dummy_df` via the input adapter.
+
+    The dual-input counterpart of ``make_dummy_df``. Note the FeatureFrame is float32 by
+    design (views_frames contract), so magnitudes are float32-rounded — the dummy targets
+    here are small integers, hence float32-exact (see C-32).
+    """
+    from views_baseline.model.frames.input import to_feature_frame
+
+    df = make_dummy_df(entity_id=entity_id, time_range=time_range)
+    return to_feature_frame(df, loa=loa, targets=list(targets))
+
+
 @pytest.fixture
 def targets():
     return ["y1", "y2"]

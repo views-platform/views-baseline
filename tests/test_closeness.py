@@ -14,7 +14,7 @@ from views_baseline.evaluation.closeness import (
     equivalence,
     summarize,
 )
-from views_baseline.model.baseline import ConflictologyModel
+from views_baseline.model.models.distributional import ConflictologyModel
 
 _PARTITION = {"test": (493, 540)}
 _DELTA = {"c2st": 0.05, "wasserstein": 0.5}

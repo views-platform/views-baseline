@@ -4,6 +4,18 @@
 **Date:** 2026-03-13
 **Deciders:** Project maintainers
 
+> **Amendment (PR-1 reorg, 2026-07, issues #48–#51):** the SOLID / screaming-architecture
+> reorganization refined the `model/` layer into responsibility-separated modules. The
+> **rules and their intent are unchanged** — the graph is still acyclic and directed
+> `leaf-utilities → construction-seam → models → catalog → manager`; only the file names and
+> their number grew. The single ex-`helpers.py` node is now the leaf utilities
+> (`spatial.py`, `grid.py`, `distributions/`, `frames/pooling.py`, `defaults.py`) plus the
+> construction seam (`frames/output.py`); `baseline.py` is now the per-class files under
+> `model/models/{point,distributional}/`. The Decision, Forbidden-Imports, and
+> Implementation-Notes sections below have been updated to the post-reorg paths; the
+> Rationale and Alternatives are unchanged. Acyclicity was re-verified after the reorg
+> (`import views_baseline.model.catalog` and the sub-packages import cleanly; no cycles).
+
 ---
 
 ## Context
@@ -23,13 +35,23 @@ This ADR records the dependency topology and the rules that enforce it.
 The allowed import relationships are:
 
 ```
-numpy, pandas
+numpy, pandas, scipy
       |
       v
-model/helpers.py
+leaf utilities:  model/spatial.py   model/grid.py   model/defaults.py
+                 model/distributions/{transforms,families → registry}
       |
       v
-model/baseline.py
+model/frames/input.py    (to_feature_frame — the ONE pandas reader; ADR-019/DIP boundary;
+                          pandas + views_frames imported lazily inside the functions)
+      |
+      v
+model/frames/pooling.py  (window_pool on a FeatureFrame; imports frames/input.panel)
+model/frames/output.py   (construction seam; imports grid + spatial)
+      |
+      v
+model/models/point/{zero,locf,average}.py
+model/models/distributional/{conflictology,mixture,parametric,parametric_hurdle}.py
       |
       v
 model/catalog.py          model/protocol.py
@@ -40,25 +62,27 @@ model/catalog.py          model/protocol.py
          manager/baseline_manager.py
                  |
                  v
-         views-pipeline-core
+         views-pipeline-core / views-frames
 ```
 
 Written as explicit rules:
 
-1. **`model/helpers.py`** imports only `numpy`, `pandas`, and the Python standard library. No imports from `model/` or `manager/`.
-2. **`model/baseline.py`** imports `model/helpers.py`, `numpy`, `pandas`, and the Python standard library. It does not import from `model/catalog.py`, `model/protocol.py`, or `manager/`.
-3. **`model/catalog.py`** imports from `model/baseline.py` only. It does not import from `model/protocol.py` or `manager/`.
-4. **`model/protocol.py`** imports `pandas` and the Python standard library only. It does not import from any other `model/` file or from `manager/`.
-5. **`manager/baseline_manager.py`** may import from `model/catalog.py`, `model/protocol.py`, and from `views-pipeline-core`. It does not import from `model/baseline.py` or `model/helpers.py` directly.
+1. **Leaf utilities** — `model/spatial.py`, `model/grid.py`, `model/defaults.py`, and the `model/distributions/` package — import only `numpy`/`scipy`, the Python standard library, and (within `distributions/`) each other in the direction `transforms, families → registry`. No `pandas`. No imports from `model/models/`, `model/frames/`, `model/catalog.py`, `model/protocol.py`, or `manager/`.
+2. **`model/frames/input.py`** is the **single pandas reader** (`to_feature_frame`, the ADR-019 / DIP boundary). It imports `model/spatial.py`, `numpy`, and — **lazily, inside the functions** — `pandas` and the `views_frames` leaf. Nothing else in `model/` imports `pandas` at module scope (guarded by a falsification test). `model/frames/pooling.py` imports `frames/input.panel`; `model/frames/output.py` imports `model/grid.py`, `model/spatial.py`, and lazily the `views_frames` leaf. None of these import from `model/models/`, `model/catalog.py`, `model/protocol.py`, or `manager/`.
+3. **Model classes** (`model/models/point/*`, `model/models/distributional/*`) import from `model/frames/{input,output,pooling}`, `model/distributions`, `model/grid.py`, `model/spatial.py`, `model/defaults.py`, `numpy`, and the standard library — **not `pandas`** (imported only under `TYPE_CHECKING` for the `pd.DataFrame | FeatureFrame` hint). They do not import from `model/catalog.py`, `model/protocol.py`, or `manager/`.
+4. **`model/catalog.py`** imports from the model sub-packages (`model/models/point`, `model/models/distributional`) and from `infrastructure/reproducibility_gate.py` (the genome source of truth). It does not import from `model/protocol.py` or `manager/`.
+5. **`model/protocol.py`** imports `pandas` and the Python standard library only. It does not import from any other `model/` file or from `manager/`.
+6. **`manager/baseline_manager.py`** may import from `model/catalog.py`, `model/protocol.py`, and from `views-pipeline-core`. It does not import from the model classes or the leaf utilities directly.
 
 ### The `PredictionFrame` Lazy Import Rule
 
 > **Amended by ADR-020 (2026-06-24):** `PredictionFrame` now comes from the `views_frames` leaf
 > (re-exported by `views-pipeline-core` ≥3.0.0, #188), and all construction is **consolidated into
-> a single function-scoped import site** — `to_prediction_frames` in `model/helpers.py`. The two
-> per-model lazy imports described below are replaced by that one site; the distributional models
-> no longer construct `PredictionFrame` inline. This answers the first Open Question at the foot of
-> this ADR. The rule that `model/` carries no module-level frame import is unchanged.
+> a single function-scoped import site** — `to_prediction_frames`, now in `model/frames/output.py`
+> (was `model/helpers.py` before the PR-1 reorg). The two per-model lazy imports described below
+> are replaced by that one site; the distributional models no longer construct `PredictionFrame`
+> inline. This answers the first Open Question at the foot of this ADR. The rule that `model/`
+> carries no module-level frame import is unchanged.
 
 `PredictionFrame` from `views-pipeline-core` is required inside the `predict()` methods of `ConflictologyModel` and `MixtureBaseline`, but `model/` must not carry `views-pipeline-core` as a hard module-level import. The resolution is:
 
@@ -76,8 +100,8 @@ The following import directions are explicitly forbidden:
 | Forbidden | Reason |
 |---|---|
 | `model/` importing from `manager/` | Would create an upward dependency; model layer must not know about pipeline infrastructure |
-| `model/helpers.py` importing from `model/baseline.py` | Helpers are utilities; importing from the models they serve inverts the hierarchy |
-| `model/protocol.py` importing from `model/baseline.py` | Protocols define structural contracts; knowing the concrete implementations would make them implementation-aware |
+| A leaf utility (`model/grid.py`, `model/spatial.py`, `model/distributions/*`, `model/frames/pooling.py`) or `model/frames/output.py` importing from `model/models/` | Utilities and the construction seam are serve-the-models code; importing from the models they serve inverts the hierarchy |
+| `model/protocol.py` importing from `model/models/` | Protocols define structural contracts; knowing the concrete implementations would make them implementation-aware |
 | `model/catalog.py` importing from `manager/` | Factory lives in the model layer; importing from the manager layer is an upward dependency |
 
 ---
@@ -122,7 +146,7 @@ The manager needs to instantiate models (via the catalog) and to dispatch on mod
 
 **Positive:**
 - The model layer (`model/`) can be imported and unit-tested without `views-pipeline-core` present (for point model tests).
-- The dependency graph is acyclic and has a clear direction of dependence: helpers → models → catalog → manager.
+- The dependency graph is acyclic and has a clear direction of dependence: leaf utilities → construction seam → models → catalog → manager.
 - The manager's imports (`catalog.py`, `protocol.py`, pipeline-core) are minimal and explicit, making the coupling surface visible.
 - Adding a new point forecast model requires no changes to the manager or the protocol.
 
@@ -137,37 +161,42 @@ The manager needs to instantiate models (via the catalog) and to dispatch on mod
 
 The actual import statements are:
 
-**`model/helpers.py` (top of file):**
-```python
-from typing import Any, Callable, List
-import pandas as pd
-```
-
-**`model/baseline.py` (top of file):**
+**`model/frames/output.py` (top of file — the construction seam):**
 ```python
 import numpy as np
-import pandas as pd
-from views_baseline.model.helpers import (
-    build_identifier_arrays, build_prediction_frame, build_time_grid,
-    filter_entities, require_entities,
+from views_baseline.model.grid import (
+    build_identifier_arrays, build_time_grid, filter_entities, require_entities,
 )
+from views_baseline.model.spatial import resolve_level
 ```
 
-**`model/baseline.py` (inside `ConflictologyModel.predict()` and `MixtureBaseline.predict()`):**
+**A point model, e.g. `model/models/point/locf.py` (top of file):**
 ```python
-from views_pipeline_core.data.prediction_frame import PredictionFrame
+import pandas as pd
+from views_baseline.model.frames.output import build_prediction_frame
+from views_baseline.model.grid import build_time_grid, filter_entities, require_entities
+from views_baseline.model.spatial import resolve_level
 ```
 
-**`model/helpers.py` (inside `build_prediction_frame()` — point-model PredictionFrame site, ADR-013):**
+**A distributional model, e.g. `model/models/distributional/conflictology.py` (top of file):**
 ```python
-from views_pipeline_core.data.prediction_frame import PredictionFrame
+import pandas as pd
+from views_baseline.model.defaults import DEFAULT_SEED
+from views_baseline.model.frames.output import sample_prediction_grid
+from views_baseline.model.frames.pooling import window_pool
+```
+
+**`model/frames/output.py` (inside `to_prediction_frames()` — the single `views_frames` construction site, ADR-020):**
+```python
+from views_frames import PredictionFrame, SpatioTemporalIndex
 ```
 
 **`model/catalog.py` (top of file):**
 ```python
-from views_baseline.model.baseline import (
-    AverageModel, ConflictologyModel, LocfModel, MixtureBaseline, ZeroModel,
+from views_baseline.model.models.distributional import (
+    ConflictologyModel, MixtureBaseline, ParametricConflictology, ParametricHurdleConflictology,
 )
+from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 ```
 
 **`manager/baseline_manager.py` (top of file):**
@@ -199,8 +228,10 @@ from views_baseline.model.catalog import BaselineModelCatalog
 
 - ADR 001: Ontology of the Repository
 - ADR 003: Authority of Declarations over Inference
-- `views_baseline/model/helpers.py`
-- `views_baseline/model/baseline.py`
+- `views_baseline/model/frames/output.py`, `views_baseline/model/frames/pooling.py`
+- `views_baseline/model/grid.py`, `views_baseline/model/spatial.py`, `views_baseline/model/defaults.py`
+- `views_baseline/model/distributions/` (package: `transforms.py`, `families.py`, `registry.py`)
+- `views_baseline/model/models/point/`, `views_baseline/model/models/distributional/`
 - `views_baseline/model/catalog.py`
 - `views_baseline/model/protocol.py`
 - `views_baseline/manager/baseline_manager.py`

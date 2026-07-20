@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from views_baseline.model.baseline import DEFAULT_SEED
 from views_baseline.model.catalog import BaselineModelCatalog
+from views_baseline.model.defaults import DEFAULT_SEED
 
 _PARTITION = {"test": (493, 540)}
 
@@ -84,7 +84,7 @@ def test_direct_construction_uses_default_seed_sentinel():
 
     This is the construction-ergonomics path, not the production path (which is the catalog).
     """
-    from views_baseline.model.baseline import ConflictologyModel, MixtureBaseline
+    from views_baseline.model.models.distributional import ConflictologyModel, MixtureBaseline
 
     conf = ConflictologyModel(
         targets=["y1"], window_months=6, partition_dict=_PARTITION, loa="pgm", n_samples=8

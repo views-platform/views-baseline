@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-import pandas as pd
-
 if TYPE_CHECKING:
-    from views_frames import PredictionFrame
+    import pandas as pd
+    from views_frames import FeatureFrame, PredictionFrame
 
 
 @runtime_checkable
@@ -16,11 +15,11 @@ class BaselineModel(Protocol):
     partition_dict: dict
     loa: str
 
-    def fit(self, df: pd.DataFrame) -> BaselineModel: ...
+    def fit(self, df: pd.DataFrame | FeatureFrame) -> BaselineModel: ...
 
     def predict(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | FeatureFrame,
         sequence_number: int,
         output_length: int,
     ) -> dict[str, PredictionFrame]: ...
@@ -35,11 +34,11 @@ class DistributionalBaselineModel(Protocol):
     loa: str
     distributional: bool
 
-    def fit(self, df: pd.DataFrame) -> DistributionalBaselineModel: ...
+    def fit(self, df: pd.DataFrame | FeatureFrame) -> DistributionalBaselineModel: ...
 
     def predict(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | FeatureFrame,
         sequence_number: int,
         output_length: int,
     ) -> dict[str, PredictionFrame]: ...

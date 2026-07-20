@@ -16,11 +16,11 @@ The package implements several common baseline strategies for **panel time-serie
 All models follow a common interface:
 
 ```python
-model.fit(df)
+model.fit(df)                       # df: a pandas DataFrame OR a views_frames FeatureFrame
 predictions = model.predict(df, sequence_number)
 ```
 
-Models are fitted automatically via `fit()` before generating predictions. Fitted model artifacts are pickled for ensemble compatibility.
+`fit()` / `predict()` accept **either** a pandas `DataFrame` **or** a `views_frames.FeatureFrame` (ADR-019): the input is normalized to a `FeatureFrame` once at the boundary (`to_feature_frame` in `model/frames/input.py`, the only place pandas is read), and all windowing/aggregation runs on its numpy arrays. Models are fitted automatically via `fit()` before generating predictions. Fitted model artifacts are pickled for ensemble compatibility.
 
 ---
 
@@ -35,7 +35,7 @@ Two output families:
 - **Point forecasts** — one deterministic value per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, 1)`.
 - **Distributional forecasts** — `n_samples` Monte-Carlo draws per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, n_samples)`.
 
-In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries a `SpatioTemporalIndex` with the `time`, `unit`, and spatial `level` (CM/PGM) of every row. All frames are built through a single construction seam, `to_prediction_frames` in `model/helpers.py` (ADR-020), and the `level` is derived from the declared `loa` and validated against the input index (ADR-003).
+In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries a `SpatioTemporalIndex` with the `time`, `unit`, and spatial `level` (CM/PGM) of every row. All frames are built through a single construction seam, `to_prediction_frames` in `model/frames/output.py` (ADR-020), and the `level` is derived from the declared `loa` and validated against the input index (ADR-003).
 
 ### Point Forecast Models
 

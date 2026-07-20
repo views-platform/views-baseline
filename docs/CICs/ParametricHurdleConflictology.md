@@ -28,12 +28,12 @@ The S8 closeness experiment found `gamma`/`none` the closest on **magnitude fide
 ## Responsibilities and Guarantees
 
 - `__init__` validates `family ∈ CONTINUOUS_FAMILIES` (`{"lognormal","gumbel","gamma"}`; else `ValueError`) and `validate_family_transform(family, transform)` (`log1p` is legal here, `none` too).
-- `fit(df)` extracts per-entity/per-target windows via the shared `window_pool(...)`. For each cell it stores `{"zero_rate": mean(pool == 0), "pos": fit_family(family, forward(positives))}`; an all-zero window stores `{"zero_rate": 1.0, "pos": None}` (point mass at 0). Returns `self`.
+- `fit(df)` normalizes the input via `to_feature_frame(df, loa, targets)` (the ADR-019 pandas boundary; `pd.DataFrame` or `FeatureFrame`), records `time_idx`/`entity_idx` from `ff.index.level.index_names`, and extracts per-entity/per-target windows via the shared `window_pool(ff, ...)` on the frame's numpy panel (no pandas). For each cell it stores `{"zero_rate": mean(pool == 0), "pos": fit_family(family, forward(positives))}`; an all-zero window stores `{"zero_rate": 1.0, "pos": None}` (point mass at 0). Returns `self`.
 - `predict(df, sequence_number, output_length)` returns `dict[str, PredictionFrame]`, `y_pred` shape `(N, n_samples)`, `N = len(entities_with_params) * output_length`.
 - Sampling uses a **fresh** `np.random.default_rng(self.seed)` per call, advancing in **entity→time→target** order (ADR-011). Per cell: `is_positive = rng.random(n_samples) >= zero_rate`; the positive draws come from `sample_family`, then (if `transform != "none"`) are detransformed **per sample** via `inverse(clamp_log(...))`, then **floored** via `clamp_floor` before being written into the output; the rest stay 0.
 - **Non-negativity is guaranteed** by `clamp_floor` (single-sourced `EMIT_FLOOR = 0.0`, WARN on floor) — the mirror image of the `EMIT_LOG_CEIL` ceiling. This closes the `gumbel` negative-emission path (register C-26).
-- Degenerate positive parts fail **safe and loud-ish** in `distributions.py` (single positive value → point-mass; etc.), never `NaN`.
-- Entities without params are dropped with a `WARNING`; none remaining → `require_entities` raises (fail-loud). Output is built only through `to_prediction_frames` (ADR-020); `level` via `resolve_level`.
+- Degenerate positive parts fail **safe and loud-ish** in `distributions/families.py` (single positive value → point-mass; etc.), never `NaN`.
+- Entities without params are dropped with a `WARNING`; none remaining → `require_entities` raises (fail-loud). Output is built only through `to_prediction_frames` (ADR-020); the spatial `level` is resolved and validated once at the `to_feature_frame` boundary (`resolve_level` for a DataFrame, or a `level`↔`loa` check for a `FeatureFrame`) and passed into `sample_prediction_grid` as `level=ff.index.level`.
 
 ---
 
@@ -49,7 +49,7 @@ The S8 closeness experiment found `gamma`/`none` the closest on **magnitude fide
 | `family` | `str` | Required, audited genome key. Must be in `CONTINUOUS_FAMILIES`. |
 | `transform` | `str` | Required, audited genome key. `"none"` or `"log1p"` (both legal for continuous families). |
 | `seed` | `int` | Required, audited genome key (ADR-021). `DEFAULT_SEED` (42) is a direct-construction sentinel only. |
-| `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; pandas confined to `window_pool`. |
+| `df` (fit/predict) | `pd.DataFrame \| FeatureFrame` | Normalized at entry via `to_feature_frame`. A DataFrame needs a 2-level MultiIndex (level 0 = time, level 1 = entity) matching `loa`; a `FeatureFrame` must carry the matching `level` and the `targets` features. pandas confined to the `to_feature_frame` boundary; `window_pool` runs on the numpy panel. |
 | `sequence_number` / `output_length` | `int` | Prediction-window offset / number of timesteps. Required. |
 
 ---
@@ -70,16 +70,19 @@ The S8 closeness experiment found `gamma`/`none` the closest on **magnitude fide
 | `gumbel` left-tail / `log1p` `expm1∈(-1,0)` draw | Floored to 0 + `WARNING` | `clamp_floor` guarantees non-negativity (C-26). |
 | Heavy-tail log-space draw | Capped at `EMIT_LOG_CEIL` + `WARNING` | `clamp_log` before `expm1` (overflow guard). |
 | All-zero window | `zero_rate = 1.0`, `pos = None` | Point mass at 0; `is_positive` always false. |
-| Target column missing / bad index / missing `"test"` | `KeyError`/`IndexError` (crash) | No boundary validation (consistent with the other baselines). |
+| `window_months <= 0` | `ValueError` at **fit** (crash) | `window_pool` fails loud with `"window_months must be >= 1, got ..."` (ADR-019). |
+| Target column missing / DataFrame index names not matching `loa` / `FeatureFrame` level or target mismatch | `ValueError` (crash) | `to_feature_frame` validates targets and level at the input boundary (ADR-019). |
+| `partition_dict` missing `"test"` | `KeyError` (crash) | No validation (consistent with the other baselines). |
 | No entities have params | `ValueError` (crash) | `require_entities`, fail-loud. |
 
 ---
 
 ## Boundaries and Interactions
 
-- **Depends on:** `numpy`; `views_baseline.model.distributions` (`fit_family`/`sample_family`, `CONTINUOUS_FAMILIES`, `TRANSFORMS`, `clamp_log`, `clamp_floor`, `validate_family_transform`); `window_pool`; `helpers` (`resolve_level`, `build_time_grid`, `filter_entities`, `require_entities`, `build_identifier_arrays`, `to_prediction_frames`).
-- **Output construction (ADR-020):** single `to_prediction_frames` seam; pandas confined to `window_pool`.
-- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `helpers.sample_prediction_grid(..., draw_cell)`, supplying only the per-cell hurdle draw (Bernoulli zero-gate + positive-part `sample_family` → per-sample detransform → `clamp_floor`) as `draw_cell`.
+- **Depends on:** `numpy`; `views_baseline.model.distributions` (`fit_family`/`sample_family`, `CONTINUOUS_FAMILIES`, `TRANSFORMS`, `clamp_log`, `clamp_floor`, `validate_family_transform`); `frames.input` (`to_feature_frame` — the single pandas boundary, ADR-019); `frames.pooling.window_pool` (numpy windowing); `spatial` (`resolve_level`, reached via `to_feature_frame`); `grid` (`build_time_grid`, `filter_entities`, `require_entities`, `build_identifier_arrays`); `frames.output` (`sample_prediction_grid` / `to_prediction_frames`). pandas is not a runtime dependency — confined to `to_feature_frame`, imported only under `TYPE_CHECKING`.
+- **Output construction (ADR-020):** single `to_prediction_frames` seam; pandas confined to the `to_feature_frame` boundary.
+- **Predict scaffold (ADR-011):** `predict()` delegates the shared distributional shell (entity→time→target fill, seeded RNG, entity drop/`require_entities`, seam construction) to `frames.output.sample_prediction_grid(..., draw_cell)`, supplying only the per-cell hurdle draw (Bernoulli zero-gate + positive-part `sample_family` → per-sample detransform → `clamp_floor`) as `draw_cell`, plus `level=ff.index.level` (PR-2 changed `sample_prediction_grid`'s signature to take `level`, not `(loa, index_names)`).
+- **Precision (C-32):** `views_frames.FeatureFrame` storage is `float32` by design, so the pooled window magnitudes (and thus the fitted zero-rate and positive-part params) are `float32`-rounded relative to raw `float64` (accepted trade-off). The entity/tail/RNG-advance **order** is preserved exactly (ADR-011), and a DataFrame and the `FeatureFrame` built from it produce identical output — so reproducibility holds bit-for-bit for both input types.
 - **Instantiated by:** `BaselineModelCatalog._get_parametric_hurdle()`.
 - **Genome:** `ALGORITHM_GENOMES["ParametricHurdleConflictology"] = ["window_months", "n_samples", "seed", "family", "transform"]`.
 
@@ -88,13 +91,13 @@ The S8 closeness experiment found `gamma`/`none` the closest on **magnitude fide
 ## Examples of Correct Usage
 
 ```python
-from views_baseline.model.baseline import ParametricHurdleConflictology
+from views_baseline.model.models.distributional import ParametricHurdleConflictology
 
 model = ParametricHurdleConflictology(
     targets=["y1"], window_months=36, partition_dict={"test": (457, 504)},
     loa="pgm", n_samples=1000, family="gamma", transform="none", seed=42,
 )
-model.fit(df)
+model.fit(df)                # model.fit(ff) also works — dual input (pd.DataFrame | FeatureFrame)
 pf = model.predict(df=df, sequence_number=0, output_length=1)["y1"]
 assert (pf.values >= 0).all()                # clamp_floor guarantee
 # sampled zero fraction ≈ the window's empirical zero-rate per cell
@@ -138,7 +141,7 @@ Files: `tests/test_parametric.py`, `tests/test_distributions.py`, `tests/test_ca
 
 ## Evolution Notes
 
-- Positive-part family set is a registry entry (`CONTINUOUS_FAMILIES`); adding one is a `distributions.py` change, not a change to this class.
+- Positive-part family set is a registry entry (`CONTINUOUS_FAMILIES`); adding one is a `distributions/families.py` change, not a change to this class.
 - A zero-truncated `nb`/`tweedie` positive part is a possible future extension (ADR-022 open question).
 - Non-negativity (`EMIT_FLOOR`) and overflow (`EMIT_LOG_CEIL`) are single-sourced policy constants; changing them is a deliberate, documented decision.
 - **Evolving** stability (ADR-004): the `views_frames` schema is upstream-owned.

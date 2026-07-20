@@ -1,18 +1,34 @@
 # ADR-019: views-baseline's Use of FeatureFrame (Input)
 
-**Status:** Proposed — **NOT IMPLEMENTED**
-**Date:** 2026-06-04
+**Status:** Accepted (implemented PR-2, issues #52–#58, 2026-07-20)
+**Date:** 2026-06-04 (proposed); 2026-07-20 (accepted)
 **Deciders:** Simon, VIEWS platform team
 
 ---
 
 ## Implementation status (read this first)
 
-> **NOTHING IN THIS ADR IS IMPLEMENTED.** views-baseline does **not** use FeatureFrame anywhere. It is not imported, not consumed, not referenced in any code path.
+> **IMPLEMENTED as a dual-input boundary.** Every model now accepts **either** a pandas
+> `DataFrame` **or** a `views_frames.FeatureFrame`, normalized once at entry by the single
+> adapter `to_feature_frame` (`views_baseline/model/frames/input.py`). Model internals —
+> windowing (`window_pool`), point/Mixture aggregations, and the distributional fits —
+> run on the FeatureFrame's numpy panel; **pandas is confined to the adapter** (a DIP
+> boundary; the model layer no longer imports pandas at runtime — guarded by
+> `tests/test_falsification_reorg_principles.py::test_dip_model_layer_has_no_runtime_pandas_import`).
 >
-> **What baseline actually does today:** every model receives a pandas **`DataFrame`** in `fit(self, df: pd.DataFrame)` and `predict(self, df, ...)`. It reads the time/entity axes from `df.index.names[0]` and `df.index.names[1]`, slices targets with `df[self.targets]`, and filters by `df.index.get_level_values(...)`. The input path is **100% DataFrame**.
+> **Why dual-input, not FeatureFrame-only:** pipeline-core still hands models a `DataFrame`
+> (blocker #1 below is unchanged — no FeatureFrame *producer* exists upstream). Rather than
+> wait, baseline **decouples its readiness**: it converts df→FeatureFrame at its own boundary,
+> so the pure-FeatureFrame path is live and tested now, and a future pipeline-core FeatureFrame
+> producer becomes a pass-through with no model change. In production the df→FF conversion runs;
+> the FF passthrough has no live upstream producer yet (forward-looking readiness).
 >
-> This ADR is a **proposal** describing how baseline *would* consume FeatureFrame **if and when** `views-pipeline-core` integrates it into the data-loading path. That integration **has not started** (see Dependencies). Until it does, this document is aspirational and must not be read as describing current behaviour.
+> **Precision (C-32):** `views_frames.FeatureFrame` is a **float32** container by design.
+> The chosen direction is FeatureFrame-canonical, so pooled magnitudes are float32-rounded.
+> The distributional golden tests use integer data (float32-exact) and stayed byte-identical;
+> the entity/tail/RNG **order** is preserved exactly (float64 guard in `test_pooling`). A
+> df and the FeatureFrame built from it converge to the *same* float32 frame inside the
+> boundary, so the two input routes are **exactly** equivalent (`tests/test_dual_input.py`).
 
 ---
 
@@ -24,30 +40,54 @@ ADR-017 records that the platform intends to phase out DataFrames using two cont
 
 ---
 
-## Proposed decision (conditional, not in effect)
+## Decision (in effect)
 
-**If** pipeline-core begins handing models a FeatureFrame on input, views-baseline models **should** consume it directly instead of a DataFrame. Anticipated shape of that change (to be designed when the dependency lands — not prescribed here):
+views-baseline models accept **`pd.DataFrame | views_frames.FeatureFrame`** and normalize to a
+`FeatureFrame` at entry. The implemented shape:
 
-- `fit()` / `predict()` would accept a `FeatureFrame` (or be fronted by a thin adapter), reading:
-  - time/unit from `FeatureFrame.identifiers["time"|"unit"]` instead of `df.index.names`;
-  - target/feature columns from `feature_names` instead of `df[targets]`.
-- The deterministic point baselines have **no input uncertainty**, so the FeatureFrame sample axis `S` would be `1` / absent (`(N, D)`); baseline would not exercise `(N, D, S)`.
-- FeatureFrame's built-in validation could **subsume** several current input-contract gaps that exist precisely because the DataFrame input is unvalidated — risks C-05 (MultiIndex assumption), C-06 (partition_dict), C-07 (targets-in-columns). This is a potential benefit to flag, not a committed design.
+- **One boundary adapter** — `to_feature_frame(x, *, loa, targets) -> FeatureFrame`
+  (`model/frames/input.py`): a DataFrame is lifted via `FeatureFrame.from_2d` +
+  `SpatioTemporalIndex` (pandas imported lazily inside this one function); a FeatureFrame passes
+  through after a declared-`loa` ↔ frame-`level` agreement check (ADR-003). `panel(ff, targets)`
+  is the numpy view (`(time, unit, {target -> (N,) values})`) the internals read.
+- **Internals are numpy-on-FeatureFrame** — `window_pool` consumes a FeatureFrame; the point
+  models (`Locf`=window-of-1, `Average`=window-mean) and `MixtureBaseline` reuse it; the
+  distributional fits/samples run on the numpy pools. No model reads `df.index` / `groupby` /
+  `.xs` any more.
+- **Protocol widened** — `BaselineModel` / `DistributionalBaselineModel` `fit`/`predict` hints are
+  `pd.DataFrame | FeatureFrame` (ISP-minimal).
+- **Sample axis** — baseline input is observed data, so `S == 1`; `panel` takes the `S=0` slice.
+- **Input validation** — `to_feature_frame` + `resolve_level` validate the declared level against
+  the index (DataFrame) or the frame's own `level` (FeatureFrame), partially subsuming C-05
+  (MultiIndex assumption) and C-07 (targets-in-columns) at the boundary.
 
-## Dependencies / blockers (why this is not implemented)
+## Dependencies / blockers (status)
 
-1. **pipeline-core has no FeatureFrame input path** — dataloaders produce DataFrames; no PR exists to make FeatureFrame the core's input (the datafactory-fetch roadmap PRs explicitly use `output_format="dataframe"`). This is the hard blocker.
-2. **Cross-repo format contract is fragile** — output-format string literals are duplicated between pipeline-core and datafactory (risk C-62), with no contract test (C-30). These should be resolved before/with any FeatureFrame input wiring.
-3. **Ownership** — the decision to emit FeatureFrame on input is pipeline-core's; baseline's role is to consume what it's given. A companion platform ADR in pipeline-core is the prerequisite for this one to become Accepted.
+1. **pipeline-core has no FeatureFrame *producer*** — dataloaders still produce DataFrames. This
+   is **no longer a blocker** for baseline: the dual-input boundary converts df→FeatureFrame
+   itself, so baseline is FeatureFrame-native internally regardless of upstream. The pure-FF
+   passthrough simply has no live producer yet (forward-looking).
+2. **Cross-repo format contract is fragile** — output-format string literals duplicated between
+   pipeline-core and datafactory (C-62). Unchanged; orthogonal to baseline's internal boundary.
+3. **Ownership** — emitting FeatureFrame on input remains pipeline-core's decision; baseline now
+   *accepts* it whenever it arrives, at zero further cost.
 
 ## Consequences
 
-- **Until the dependency lands, no change to baseline.** This ADR exists to (a) record the intended direction and (b) make explicit that the *input* half of the DataFrame phase-out is **not done** in baseline — unlike the output half (ADR-018).
-- When implemented, it would complete the DataFrame phase-out for baseline (input + output both frame-based) and potentially close C-05/C-06/C-07 via FeatureFrame validation.
+- Completes the DataFrame phase-out for baseline **on baseline's own terms**: input + output are
+  both frame-based (ADR-018 output; this ADR input), with pandas confined to one adapter.
+- **New risk accepted (C-32):** FeatureFrame float32 vs the historical float64 outputs — a
+  one-time, deliberate precision boundary; ordering/logic preserved and guarded.
+- The pure-FeatureFrame path is exercised by tests but has no upstream producer, so its
+  production value is architectural readiness until pipeline-core emits FeatureFrames.
 
 ## Status transition
 
-This ADR moves from **Proposed** to **Accepted** only when: (1) pipeline-core ships a FeatureFrame input path, and (2) a concrete baseline adapter/signature change is designed and merged. Revisit then.
+**Proposed → Accepted (2026-07-20).** Condition (2) — a concrete baseline adapter/signature change
+— is met (`to_feature_frame` + numpy internals + widened protocol, merged in PR-2). Condition (1)
+— a pipeline-core FeatureFrame producer — was **superseded** by the dual-input design: baseline no
+longer needs upstream to change in order to be FeatureFrame-native. Revisit if/when pipeline-core
+ships a producer (the passthrough branch then carries live data).
 
 ## References
 

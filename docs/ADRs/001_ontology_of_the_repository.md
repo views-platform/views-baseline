@@ -4,6 +4,18 @@
 **Date:** 2026-03-13
 **Deciders:** Project maintainers
 
+> **Amendment (PR-1 reorg, 2026-07, issues #48–#51):** the SOLID / screaming-architecture
+> reorganization split the former dumping-ground files into a one-concept-per-file layout.
+> The ontological **categories** below are unchanged — only their physical file locations
+> moved. `model/baseline.py` → `model/models/point/{zero,locf,average}.py` +
+> `model/models/distributional/{conflictology,mixture,parametric,parametric_hurdle}.py`;
+> `model/helpers.py` → `model/frames/output.py` (construction seam) + `model/grid.py` (grid
+> utilities) + `model/spatial.py` (`resolve_level`); `model/pooling.py` →
+> `model/frames/pooling.py`; `model/distributions.py` → the `model/distributions/` package.
+> The "Separate files per model class" alternative (previously rejected) is now **adopted**.
+> Behaviour was preserved (golden byte-identity tests green). Locations below reflect the
+> post-reorg state.
+
 ---
 
 ## Context
@@ -26,7 +38,7 @@ The following six ontological categories are recognised in this repository. Ever
 
 - **Purpose:** Deterministic, single-value predictions. For each (entity, time) cell in the forecast horizon, produce one scalar per target column.
 - **Classes:** `ZeroModel`, `LocfModel`, `AverageModel`
-- **File:** `views_baseline/model/baseline.py`
+- **Files:** `views_baseline/model/models/point/zero.py`, `locf.py`, `average.py` (one class per file)
 - **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)` (one deterministic value per cell) and `identifiers` `{"time", "unit"}`. Built via `build_prediction_frame` (ADR-010, ADR-017). *(Historically returned `pd.DataFrame`; unified onto PredictionFrame 2026-06.)*
 - **Authority:** Authoritative — these classes produce the final prediction values for point-forecast use cases.
 - **Stability:** Stable interface; output type changed once (DataFrame → `(N,1)` PredictionFrame) under ADR-017's universal-container decision.
@@ -35,7 +47,7 @@ The following six ontological categories are recognised in this repository. Ever
 
 - **Purpose:** Probabilistic, multi-sample predictions. For each (entity, time) cell, produce `n_samples` draws per target.
 - **Classes:** `ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`
-- **File:** `views_baseline/model/baseline.py`
+- **Files:** `views_baseline/model/models/distributional/conflictology.py`, `mixture.py`, `parametric.py`, `parametric_hurdle.py` (one class per file). `DEFAULT_SEED` (the RNG sentinel shared by these classes) lives in `views_baseline/model/defaults.py`.
 - **Interface contract:** `fit(df) -> self`, `predict(df, sequence_number, output_length) -> dict[str, PredictionFrame]` with `y_pred` shape `(N, n_samples)`. All carry the class attribute `distributional = True` — now a **semantic marker** (point vs sampled), no longer a manager dispatch discriminator (see Category 3 and ADR-017).
 - **Parametric climatology (ADR-022):** `ParametricConflictology` (no-hurdle, native-zero `family`) and `ParametricHurdleConflictology` (zero-spike + continuous positive-part `family`) fit a distribution to conflictology's per-entity `window_pool` and sample from it. They add `family`, `transform`, and `seed` as required, audited genome keys (ADR-021); illegal `family×transform` combinations fail loud. (Tweedie was evaluated and excluded — ADR-022.)
 - **Authority:** Authoritative — these classes produce the final prediction values for distributional use cases.
@@ -68,14 +80,14 @@ The following six ontological categories are recognised in this repository. Ever
 - **Authority:** Derived — the manager delegates all prediction logic to the model layer. It adds no domain knowledge; it only routes.
 - **Stability:** Evolving. Tightly coupled to `views-pipeline-core`; any breaking change there propagates here.
 
-#### 6. Prediction Builders
+#### 6. Prediction Builders, Grid & Spatial Utilities
 
-- **Purpose:** Shared output construction for point forecast models — the (entity × time) grid expansion so `ZeroModel`, `LocfModel`, and `AverageModel` do not each duplicate assembly logic.
-- **Functions:** `build_prediction_frame` (active), `build_identifier_arrays`, `filter_entities`, `require_entities`, `build_time_grid`. `build_prediction_grid` is **retained but no longer used** by any model (legacy DataFrame builder, kept for reference).
-- **File:** `views_baseline/model/helpers.py`
-- **Implementation detail:** `build_prediction_frame(entity_ids, time_ids, targets, value_fn)` returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)`, lazy-importing `PredictionFrame` (ADR-013). `require_entities` fails loud (descriptive `ValueError`) when no entities remain.
-- **Authority:** Derived — helpers serve the point forecast models, not the other way around.
-- **Stability:** Stable. `build_prediction_frame` is depended on by the three point model classes.
+- **Purpose:** Shared output construction and the grid/level utilities the models compose — the (entity × time) grid expansion so `ZeroModel`, `LocfModel`, and `AverageModel` do not each duplicate assembly logic, plus the distributional sampling scaffold and declared-level resolution.
+- **Functions:** the construction seam `to_prediction_frames` and its callers `build_prediction_frame` (point) and `sample_prediction_grid` (distributional); the grid utilities `build_identifier_arrays`, `filter_entities`, `require_entities`, `build_time_grid`; and `resolve_level` (declared `loa` ↔ `SpatialLevel`). The legacy `build_prediction_grid` DataFrame builder was **deleted** (ADR-020).
+- **Files:** `views_baseline/model/frames/output.py` (`to_prediction_frames`, `build_prediction_frame`, `sample_prediction_grid`), `views_baseline/model/grid.py` (grid utilities), `views_baseline/model/spatial.py` (`resolve_level`).
+- **Implementation detail:** `build_prediction_frame(entity_ids, time_ids, targets, value_fn, level)` returns `dict[str, PredictionFrame]` with `y_pred` shape `(N, 1)`, routing through the single `to_prediction_frames` seam that lazy-imports `PredictionFrame` (ADR-013/ADR-020). `require_entities` fails loud (descriptive `ValueError`) when no entities remain.
+- **Authority:** Derived — these utilities serve the models, not the other way around.
+- **Stability:** Stable. `build_prediction_frame`/`sample_prediction_grid` are depended on by the model classes.
 
 #### 7. Infrastructure and Validation
 
@@ -107,14 +119,14 @@ Separating the ontology from the physical file layout makes the categories legib
 
 **Use abstract base classes instead of protocols.** Would have made the ontological categories explicit in code via inheritance. Rejected in favour of `@runtime_checkable` protocols because protocols allow structural subtyping — a model class satisfies `DistributionalBaselineModel` by having the right attributes and methods, without any base-class import in `model/`.
 
-**Separate files per model class.** Would have made the ontological boundaries physically visible. Rejected as over-engineered for seven classes that are closely related and frequently read together.
+**Separate files per model class.** Would have made the ontological boundaries physically visible. Originally rejected as over-engineered for seven closely-related classes — but **adopted in the PR-1 reorg** (2026-07, issues #48–#51) once the FeatureFrame-input work (ADR-019) made the per-class evolution paths diverge; the one-class-per-file layout is now in force (see the amendment note at the top).
 
 ---
 
 ## Consequences
 
 **Positive:**
-- New model classes can be classified by referring to this document. A new distributional model goes in `model/baseline.py`; a new pipeline adapter goes in `manager/`.
+- New model classes can be classified by referring to this document. A new distributional model goes in its own file under `model/models/distributional/`; a new point model under `model/models/point/`; a new pipeline adapter goes in `manager/`.
 - The derived/authoritative split makes it clear that the manager should not grow domain logic.
 - The stability annotations set expectations about which changes require coordinated downstream updates.
 
@@ -131,10 +143,20 @@ The physical file layout maps to the ontological categories as follows:
 ```
 views_baseline/
   model/
-    baseline.py      → Point Forecast Models + Distributional Forecast Models
-    protocol.py      → Model Protocols
-    catalog.py       → Model Factory
-    helpers.py       → Prediction Builders
+    models/
+      point/          zero.py · locf.py · average.py    → Point Forecast Models
+      distributional/ conflictology.py · mixture.py ·
+                      parametric.py · parametric_hurdle.py → Distributional Forecast Models
+    protocol.py       → Model Protocols
+    catalog.py        → Model Factory
+    defaults.py       → DEFAULT_SEED sentinel (ADR-021)
+    frames/
+      input.py        → to_feature_frame boundary adapter (df|FeatureFrame → FeatureFrame; ADR-019)
+      output.py       → Prediction Builders (to_prediction_frames construction seam)
+      pooling.py      → window_pool (per-entity windowing on a FeatureFrame)
+    grid.py           → grid utilities (time grid, identifier arrays, entity filtering)
+    spatial.py        → resolve_level (declared loa ↔ SpatialLevel)
+    distributions/    → distribution family + transform registries (transforms · families · registry)
   manager/
     baseline_manager.py → Pipeline Integration
 ```
@@ -143,7 +165,7 @@ views_baseline/
 
 ## Validation & Monitoring
 
-- When a new class is added to `baseline.py`, the contributor should declare in the PR description which ontological category it belongs to and why.
+- When a new model class is added (a new file under `model/models/point/` or `model/models/distributional/`), the contributor should declare in the PR description which ontological category it belongs to and why.
 - If the manager begins to contain logic that belongs to a model category (e.g., computing a target column name, applying a threshold), that is a signal that the derived/authoritative split is eroding.
 - Protocol changes should trigger a review of all implementing classes to confirm continued conformance.
 
@@ -152,7 +174,7 @@ views_baseline/
 ## Open Questions
 
 - Should `PredictionFrame` (imported from `views-pipeline-core`) be considered a seventh category ("External Data Contracts") in this ontology, or is it sufficient to note it as an upstream dependency?
-- As distributional models evolve, should `ConflictologyModel` and `MixtureBaseline` be split into separate files to make their independent evolution paths clearer?
+- ~~As distributional models evolve, should `ConflictologyModel` and `MixtureBaseline` be split into separate files to make their independent evolution paths clearer?~~ **Resolved (PR-1, 2026-07):** yes — every model class now lives one-per-file under `model/models/`.
 
 ---
 
@@ -161,8 +183,8 @@ views_baseline/
 - ADR 000: Use of ADRs
 - ADR 002: Topology and Dependency Rules
 - ADR 003: Authority of Declarations over Inference
-- `views_baseline/model/baseline.py` — Point and Distributional model implementations
+- `views_baseline/model/models/point/`, `views_baseline/model/models/distributional/` — Point and Distributional model implementations (one class per file)
 - `views_baseline/model/protocol.py` — Protocol definitions
 - `views_baseline/model/catalog.py` — Factory implementation
-- `views_baseline/model/helpers.py` — Prediction builder
+- `views_baseline/model/frames/output.py`, `views_baseline/model/grid.py`, `views_baseline/model/spatial.py` — Prediction builders, grid & spatial utilities
 - `views_baseline/manager/baseline_manager.py` — Pipeline integration

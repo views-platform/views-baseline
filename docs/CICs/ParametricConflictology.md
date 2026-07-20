@@ -28,15 +28,15 @@ The shipped families are **`nb`** (negative binomial, Gamma-Poisson mixture) and
 
 ## Responsibilities and Guarantees
 
-- `__init__` validates `family ∈ NATIVE_ZERO_FAMILIES` (else `ValueError`) and `validate_family_transform(family, transform)` (rejects `log1p` on a count family). No numeric validation of `window_months`/`n_samples` (consistent with the other baselines).
-- `fit(df)` extracts per-entity/per-target windows via the shared `window_pool(...)` (identical to `ConflictologyModel`), forward-transforms each pool, and stores `self.params[entity][target] = fit_family(family, forward(pool))`. Returns `self`.
+- `__init__` validates `family ∈ NATIVE_ZERO_FAMILIES` (else `ValueError`) and `validate_family_transform(family, transform)` (rejects `log1p` on a count family). No numeric validation of `n_samples`; `window_months` is validated (`>= 1`) at fit by the shared `window_pool` (fail-loud, consistent with the other baselines).
+- `fit(df)` normalizes the input via `to_feature_frame(df, loa, targets)` (the ADR-019 pandas boundary; `pd.DataFrame` or `FeatureFrame`), records `time_idx`/`entity_idx` from `ff.index.level.index_names`, extracts per-entity/per-target windows via the shared `window_pool(ff, ...)` on the frame's numpy panel (identical to `ConflictologyModel`, no pandas), forward-transforms each pool, and stores `self.params[entity][target] = fit_family(family, forward(pool))`. Returns `self`.
 - `predict(df, sequence_number, output_length)` returns `dict[str, PredictionFrame]`, one PF per target, each with `y_pred` shape `(N, n_samples)` where `N = len(entities_with_params) * output_length`.
 - Sampling uses a **fresh** `np.random.default_rng(self.seed)` per `predict()` call; the RNG advances in **entity→time→target** order (ADR-011), making output deterministic given `seed`.
 - When `transform != "none"`, each drawn sample is detransformed **per sample** via `inverse(clamp_log(draw))` (`clamp_log` caps log-space at `EMIT_LOG_CEIL` before `expm1`; Jensen-safe). For the shipped `nb`/`none` configuration this path is inactive.
 - For `family="zinb"`, `fit_family` derives a structural zero-inflation `π` — fixing the NB dispersion from the window and solving the inflated NB mean so both the sample **mean** and the empirical **zero-rate** match exactly — and falls back to plain NB when the NB already explains the zeros (no magic `π`, ADR-021).
-- Degenerate windows fail **safe and loud-ish** inside `distributions.py`: an all-zero window → point-mass at 0 (matches conflictology exactly); an underdispersed window (`var ≤ mean`, which includes a single/constant positive value) → **Poisson fallback** for the NB (and the ZINB NB component) — note this has spread, so `nb` does *not* point-mass on a single positive value (that is a continuous/positive-part behaviour); all fallbacks emit a `WARNING`.
+- Degenerate windows fail **safe and loud-ish** inside `distributions/families.py`: an all-zero window → point-mass at 0 (matches conflictology exactly); an underdispersed window (`var ≤ mean`, which includes a single/constant positive value) → **Poisson fallback** for the NB (and the ZINB NB component) — note this has spread, so `nb` does *not* point-mass on a single positive value (that is a continuous/positive-part behaviour); all fallbacks emit a `WARNING`.
 - Entities without params are dropped with a `WARNING`; if none remain, `require_entities` raises a descriptive `ValueError` (fail-loud).
-- Output is constructed exclusively through the single `to_prediction_frames` seam (ADR-020); `level` is resolved and validated from the declared `loa` via `resolve_level`.
+- Output is constructed exclusively through the single `to_prediction_frames` seam (ADR-020); the spatial `level` is resolved and validated from the declared `loa` once at the `to_feature_frame` boundary (via `resolve_level` for a DataFrame, or a `level`↔`loa` check for a `FeatureFrame`) and passed into `sample_prediction_grid` as `level=ff.index.level`.
 
 ---
 
@@ -52,7 +52,7 @@ The shipped families are **`nb`** (negative binomial, Gamma-Poisson mixture) and
 | `family` | `str` | Required, audited genome key. Must be in `NATIVE_ZERO_FAMILIES` (`{"nb", "zinb"}`). |
 | `transform` | `str` | Required, audited genome key. `"none"` or `"log1p"`; `log1p` is illegal for count families. |
 | `seed` | `int` | Required, audited genome key (ADR-021). `DEFAULT_SEED` (42) is a direct-construction sentinel only, never the production path. |
-| `df` (fit/predict) | `pd.DataFrame` | 2-level MultiIndex; level 0 = time, level 1 = entity. Pandas is confined to the `window_pool`/input seam. |
+| `df` (fit/predict) | `pd.DataFrame \| FeatureFrame` | Normalized at entry via `to_feature_frame`. A DataFrame needs a 2-level MultiIndex (level 0 = time, level 1 = entity) matching `loa`; a `FeatureFrame` must carry the matching `level` and the `targets` features. pandas is confined to the `to_feature_frame` input boundary; `window_pool` runs on the frame's numpy panel. |
 | `sequence_number` | `int` | Offset from `test_start` for the prediction window start. |
 | `output_length` | `int` | Number of forecast timesteps. Required — no default. |
 
@@ -74,7 +74,9 @@ The shipped families are **`nb`** (negative binomial, Gamma-Poisson mixture) and
 | Unknown `family` | `ValueError` at `fit` | `fit_family` rejects unknown names. |
 | All-zero window | Point-mass at 0 + `WARNING` | Matches conflictology exactly. |
 | Underdispersed window (`var ≤ mean`, incl. single/constant positive) | Poisson fallback + `WARNING` | NB moment-match undefined; degrades with spread (not a point-mass), never `NaN`. |
-| Target column missing / bad index / missing `"test"` | `KeyError`/`IndexError` (crash) | No boundary validation (consistent with the other baselines). |
+| `window_months <= 0` | `ValueError` at **fit** (crash) | `window_pool` fails loud with `"window_months must be >= 1, got ..."` (ADR-019). |
+| Target column missing / DataFrame index names not matching `loa` / `FeatureFrame` level or target mismatch | `ValueError` (crash) | `to_feature_frame` validates targets and level at the input boundary (ADR-019). |
+| `partition_dict` missing `"test"` | `KeyError` (crash) | No validation (consistent with the other baselines). |
 | No entities have params | `ValueError` (crash) | `require_entities`, fail-loud. |
 | `views_frames` not installed | `ImportError` at predict time | Lazy import in the seam. |
 
@@ -82,24 +84,25 @@ The shipped families are **`nb`** (negative binomial, Gamma-Poisson mixture) and
 
 ## Boundaries and Interactions
 
-- **Depends on:** `numpy`; `views_baseline.model.distributions` (strategy registry: `fit_family`/`sample_family`, `NATIVE_ZERO_FAMILIES`, `TRANSFORMS`, `clamp_log`, `validate_family_transform`); `views_baseline.model.pooling.window_pool`; `views_baseline.model.helpers.sample_prediction_grid`.
-- **Predict scaffold (ADR-011/ADR-020):** `predict()` delegates the shared distributional shell to `helpers.sample_prediction_grid(..., draw_cell)` (the entity→time→target fill, seeded RNG, entity drop/`require_entities`, and `to_prediction_frames` construction), supplying only a per-cell `draw_cell` closure. No inline `PredictionFrame` construction; pandas confined to `window_pool`.
+- **Depends on:** `numpy`; `views_baseline.model.distributions` (strategy registry: `fit_family`/`sample_family`, `NATIVE_ZERO_FAMILIES`, `TRANSFORMS`, `clamp_log`, `validate_family_transform`); `views_baseline.model.frames.input.to_feature_frame` (the single pandas boundary, ADR-019); `views_baseline.model.frames.pooling.window_pool` (numpy windowing); `views_baseline.model.frames.output.sample_prediction_grid`. pandas is not a runtime dependency — confined to `to_feature_frame`, imported only under `TYPE_CHECKING`.
+- **Predict scaffold (ADR-011/ADR-020):** `predict()` delegates the shared distributional shell to `frames.output.sample_prediction_grid(..., draw_cell)` (the entity→time→target fill, seeded RNG, entity drop/`require_entities`, and `to_prediction_frames` construction), supplying only a per-cell `draw_cell` closure and `level=ff.index.level`. No inline `PredictionFrame` construction; pandas confined to the `to_feature_frame` boundary.
 - **Instantiated by:** `BaselineModelCatalog._get_parametric_conflictology()`.
 - **Genome:** `ReproducibilityGate.Config.ALGORITHM_GENOMES["ParametricConflictology"] = ["window_months", "n_samples", "seed", "family", "transform"]`.
 - **Pool equivalence:** `self.pools` is built by the same `window_pool` as `ConflictologyModel`, so the closeness measurement (S3/S8 harness) is valid.
+- **Precision (C-32):** `views_frames.FeatureFrame` storage is `float32` by design, so the pooled window magnitudes fed to `fit_family` are `float32`-rounded relative to raw `float64` (accepted trade-off). The entity/tail/RNG-advance **order** is preserved exactly (ADR-011), and a DataFrame and the `FeatureFrame` built from it produce identical output — so the golden characterization test's exact `y_pred` pin holds for both input types.
 
 ---
 
 ## Examples of Correct Usage
 
 ```python
-from views_baseline.model.baseline import ParametricConflictology
+from views_baseline.model.models.distributional import ParametricConflictology
 
 model = ParametricConflictology(
     targets=["y1"], window_months=36, partition_dict={"test": (457, 504)},
     loa="pgm", n_samples=1000, family="nb", transform="none", seed=42,
 )
-model.fit(df)
+model.fit(df)                # model.fit(ff) also works — dual input (pd.DataFrame | FeatureFrame)
 result = model.predict(df=df, sequence_number=0, output_length=1)
 pf = result["y1"]
 assert pf.values.shape[1] == 1000
@@ -147,6 +150,6 @@ Files: `tests/test_parametric.py`, `tests/test_distributions.py`, `tests/test_go
 
 ## Evolution Notes
 
-- Family set is a registry entry: adding a native-zero family is a `distributions.py` addition plus a `NATIVE_ZERO_FAMILIES` update — no change to this class. Tweedie was evaluated (S9) and excluded (feasibility, ADR-022); it is a candidate for a future data-rich (pooled/covariate) variant.
+- Family set is a registry entry: adding a native-zero family is a `distributions/families.py` addition plus a `NATIVE_ZERO_FAMILIES` update — no change to this class. Tweedie was evaluated (S9) and excluded (feasibility, ADR-022); it is a candidate for a future data-rich (pooled/covariate) variant.
 - MLE fits are a possible later ablation; the MVP uses method-of-moments (closed-form, transparent).
 - If the `views_frames` schema evolves upstream, the output contract may change — hence the **Evolving** stability (ADR-004).

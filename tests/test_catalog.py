@@ -1,15 +1,13 @@
 import pytest
 
-from views_baseline.model.baseline import (
-    AverageModel,
+from views_baseline.model.catalog import BaselineModelCatalog
+from views_baseline.model.models.distributional import (
     ConflictologyModel,
-    LocfModel,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
-    ZeroModel,
 )
-from views_baseline.model.catalog import BaselineModelCatalog
+from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
 
 def test_catalog_lists_all_models():
