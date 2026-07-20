@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from views_baseline.model.frames.input import panel, to_feature_frame
+from views_baseline.model.frames.input import to_feature_frame, to_index
 from views_baseline.model.frames.output import build_prediction_frame
 from views_baseline.model.frames.pooling import window_pool
 from views_baseline.model.grid import (
@@ -29,8 +29,6 @@ class LocfModel:
         self.partition_dict = partition_dict
         self.loa = loa
         self.last_observations = None  # {entity -> {target -> last observed value}}
-        self.time_idx = None
-        self.entity_idx = None
 
     def fit(self, df: "pd.DataFrame | FeatureFrame") -> LocfModel:
         """
@@ -39,10 +37,9 @@ class LocfModel:
         test_start = self.partition_dict["test"][0]
         train_end = test_start - 1
 
-        logger.info(f"Fitting LocfModel on level: {self.entity_idx}")
+        logger.info(f"Fitting LocfModel on level: {self.loa}")
 
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        self.time_idx, self.entity_idx = ff.index.level.index_names
         # Last observation per entity == the last-window-of-1 pool up to train_end.
         entity_ids, pools = window_pool(ff, self.targets, 1, train_end)
         self.last_observations = {
@@ -62,10 +59,9 @@ class LocfModel:
         test_start = self.partition_dict["test"][0]
         train_end = test_start - 1
 
-        logger.info(f"Generating LOCF predictions on level: {self.entity_idx}")
+        logger.info(f"Generating LOCF predictions on level: {self.loa}")
 
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        time, unit, _ = panel(ff, self.targets)
+        level, time, unit = to_index(df, loa=self.loa)
         entity_ids = entities_at(unit, time, train_end)
         entity_ids = filter_entities(entity_ids, self.last_observations, "LocfModel")
         require_entities(entity_ids, "LocfModel")
@@ -76,5 +72,5 @@ class LocfModel:
             time_ids=time_ids,
             targets=self.targets,
             value_fn=lambda cid, target: self.last_observations[cid][target],
-            level=ff.index.level,
+            level=level,
         )

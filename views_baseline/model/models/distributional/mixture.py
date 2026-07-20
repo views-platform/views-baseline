@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from views_baseline.model.defaults import DEFAULT_SEED
-from views_baseline.model.frames.input import panel, to_feature_frame
+from views_baseline.model.frames.input import panel, to_feature_frame, to_index
 from views_baseline.model.frames.output import sample_prediction_grid
-from views_baseline.model.frames.pooling import window_pool_arrays
+from views_baseline.model.frames.pooling import sort_train_panel, tail_pools
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -38,8 +38,6 @@ class MixtureBaseline:
         self.partition_dict = partition_dict
         self.loa = loa
         self.seed = seed
-        self.time_idx = None
-        self.entity_idx = None
         self.local_pool = None
         self.global_pool = None
         self.entity_ids = None
@@ -49,23 +47,22 @@ class MixtureBaseline:
         train_end = test_start - 1
 
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        self.time_idx, self.entity_idx = ff.index.level.index_names
         time, unit, values = panel(ff, self.targets)
 
-        # Local pool: last window_months values per entity (the shared windowing).
-        self.entity_ids, self.local_pool = window_pool_arrays(
-            time, unit, values, self.targets, self.window_months, train_end
+        # One (entity, time) sort of the training panel feeds BOTH pools (no re-sort):
+        self.entity_ids, s_unit, s_vals = sort_train_panel(
+            time, unit, values, self.targets, train_end
         )
-
-        # Global pool: all positive values per target across the whole train panel, in
-        # (entity, time)-sorted order — matching the pre-PR-2 sorted `train_df[t].values`
-        # order so the global `rng.choice` draws stay byte-identical (ADR-011).
-        keep = time <= train_end
-        order = np.lexsort((time[keep], unit[keep]))
-        self.global_pool = {}
-        for t in self.targets:
-            v = values[t][keep][order]
-            self.global_pool[t] = v[v > 0].astype(np.float64)
+        # Local pool: last window_months values per entity (the shared windowing).
+        self.local_pool = tail_pools(
+            self.entity_ids, s_unit, s_vals, self.targets, self.window_months
+        )
+        # Global pool: all positive values per target in the same (entity, time)-sorted order
+        # — matching the pre-PR-2 sorted `train_df[t].values` so the global `rng.choice` draws
+        # stay byte-identical (ADR-011).
+        self.global_pool = {
+            t: s_vals[t][s_vals[t] > 0].astype(np.float64) for t in self.targets
+        }
 
         return self
 
@@ -90,10 +87,10 @@ class MixtureBaseline:
     def predict(
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int
     ) -> dict:
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
+        level, _, _ = to_index(df, loa=self.loa)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.local_pool, model_name="MixtureBaseline",
-            targets=self.targets, n_samples=self.n_samples, level=ff.index.level,
+            targets=self.targets, n_samples=self.n_samples, level=level,
             test_start=self.partition_dict["test"][0],
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=self._sample,

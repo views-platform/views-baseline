@@ -14,7 +14,7 @@ from views_baseline.model.distributions import (
     sample_family,
     validate_family_transform,
 )
-from views_baseline.model.frames.input import to_feature_frame
+from views_baseline.model.frames.input import to_feature_frame, to_index
 from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.frames.pooling import window_pool
 
@@ -60,18 +60,15 @@ class ParametricHurdleConflictology:
         self.family = family
         self.transform = transform
         self.seed = seed
-        self.time_idx = None
-        self.entity_idx = None
         self.entity_ids = None
-        self.pools = None
         self.params = None  # per cid/target: {"zero_rate": w, "pos": params-or-None}
 
     def fit(self, df: pd.DataFrame | FeatureFrame) -> "ParametricHurdleConflictology":
         test_start = self.partition_dict["test"][0]
         train_end = test_start - 1
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        self.time_idx, self.entity_idx = ff.index.level.index_names
-        self.entity_ids, self.pools = window_pool(
+        # `pools` is local — predict reads only self.params (C-37).
+        self.entity_ids, pools = window_pool(
             ff, self.targets, self.window_months, train_end
         )
         forward, _ = TRANSFORMS[self.transform]
@@ -79,7 +76,7 @@ class ParametricHurdleConflictology:
         for cid in self.entity_ids:
             self.params[cid] = {}
             for t in self.targets:
-                pool = self.pools[cid][t]
+                pool = pools[cid][t]
                 pos = pool[pool > 0]
                 if pos.size == 0:  # all-zero window -> point mass at 0 (w=1)
                     self.params[cid][t] = {"zero_rate": 1.0, "pos": None}
@@ -108,11 +105,11 @@ class ParametricHurdleConflictology:
                 draws[is_positive] = clamp_floor(pos)
             return draws
 
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
+        level, _, _ = to_index(df, loa=self.loa)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.params,
             model_name="ParametricHurdleConflictology", targets=self.targets,
-            n_samples=self.n_samples, level=ff.index.level,
+            n_samples=self.n_samples, level=level,
             test_start=self.partition_dict["test"][0], sequence_number=sequence_number,
             output_length=output_length, seed=self.seed, draw_cell=draw,
         )

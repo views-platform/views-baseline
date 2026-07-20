@@ -64,6 +64,26 @@ def test_from_dataframe_rejects_missing_target_column():
         to_feature_frame(df, loa="pgm", targets=["y3"])
 
 
+def test_from_dataframe_rejects_nan_index():
+    df = _df().reset_index()
+    df["month_id"] = df["month_id"].astype(float)
+    df.loc[0, "month_id"] = np.nan
+    df = df.set_index(["month_id", "priogrid_id"])
+    with pytest.raises(ValueError, match="contains NaN"):
+        to_feature_frame(df, loa="pgm", targets=["y1"])
+
+
+def test_rejects_multisample_featureframe():
+    from views_frames import SpatioTemporalIndex
+
+    time = np.array([1, 1, 2], dtype=np.int64)
+    unit = np.array([10, 20, 10], dtype=np.int64)
+    idx = SpatioTemporalIndex(time=time, unit=unit, level=SpatialLevel.PGM)
+    multi = FeatureFrame(np.zeros((3, 1, 2), dtype=np.float32), idx, ["y1"])  # S == 2
+    with pytest.raises(ValueError, match="sample_count"):
+        to_feature_frame(multi, loa="pgm", targets=["y1"])
+
+
 def test_unknown_loa_raises():
     df = _df()
     with pytest.raises(ValueError, match="Unknown level of analysis"):

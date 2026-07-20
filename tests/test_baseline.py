@@ -115,11 +115,6 @@ def test_locf_model_respects_sequence_number(base_df_pgm, partition_dict, target
     assert max(time_vals) == test_start + seq_num + output_length - 1
 
 
-def test_locf_model_time_idx_is_not_tuple_before_fit(partition_dict, targets):
-    model = LocfModel(targets=targets, partition_dict=partition_dict, loa="pgm")
-    assert model.time_idx is None
-
-
 def test_locf_model_fit_handles_unsorted_data(partition_dict, targets):
     time_idx_name, entity_idx_name = "month_id", "priogrid_id"
     rows = []
@@ -651,6 +646,26 @@ def test_conflictology_window_months_zero_raises(base_df_pgm, partition_dict, ta
     )
     with pytest.raises(ValueError, match="window_months must be >= 1"):
         model.fit(base_df_pgm)
+
+
+@pytest.mark.parametrize(
+    "Model,kwargs",
+    [
+        (LocfModel, {}),
+        (AverageModel, {"window_months": 3}),
+        (ConflictologyModel, {"window_months": 3, "n_samples": 8}),
+        (MixtureBaseline, {"window_months": 3, "lambda_mix": 0.1, "n_samples": 8}),
+    ],
+)
+def test_nan_in_training_window_fails_loud(base_df_pgm, partition_dict, targets, Model, kwargs):
+    """A NaN target inside the training window fails loud at fit (C-33), rather than being
+    silently forward-filled (LOCF) or averaged-around (Average) as the pre-PR pandas path did."""
+    df = base_df_pgm.copy()
+    train_end = partition_dict["test"][0] - 1  # 492, the last training month
+    df.loc[(train_end, 1), "y1"] = np.nan  # NaN in the used window for entity 1
+    model = Model(targets=targets, partition_dict=partition_dict, loa="pgm", **kwargs)
+    with pytest.raises(ValueError, match="NaN target value"):
+        model.fit(df)
 
 
 def test_mixture_window_months_zero_raises(partition_dict, targets):

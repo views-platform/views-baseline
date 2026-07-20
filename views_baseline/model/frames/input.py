@@ -81,7 +81,33 @@ def _validate_feature_frame(ff: "FeatureFrame", *, loa: str, targets: list[str])
             f"FeatureFrame is missing required target feature(s) {missing}; "
             f"it carries {list(ff.feature_names)}."
         )
+    # Observed model input must be single-sample: panel() reads the S=0 slice, so an
+    # (N, F, S>1) frame would be silently truncated to its first sample (C-35).
+    if ff.sample_count != 1:
+        raise ValueError(
+            f"FeatureFrame has sample_count={ff.sample_count}; baseline models require "
+            f"single-sample observed input (S == 1). A multi-sample frame would be "
+            f"silently reduced to its first sample."
+        )
     return ff
+
+
+def _index_arrays(df) -> tuple:
+    """Extract ``(time, unit)`` int64 identifier arrays from a ``(time, entity)`` index.
+
+    Guards against a NaN in a float-typed index level silently casting to a garbage int64
+    id (e.g. ``-2**63``) that would mis-key the grid, bypassing views_frames' own identifier
+    validation which runs only after the cast (C-35).
+    """
+    time_level = df.index.get_level_values(0)
+    unit_level = df.index.get_level_values(1)
+    for name, lvl in zip(df.index.names, (time_level, unit_level)):
+        if lvl.hasnans:
+            raise ValueError(
+                f"Index level {name!r} contains NaN; entity/time identifiers must be "
+                f"complete integers (a NaN would be cast to a garbage id)."
+            )
+    return time_level.to_numpy(dtype=np.int64), unit_level.to_numpy(dtype=np.int64)
 
 
 def _from_dataframe(df, *, loa: str, targets: list[str]) -> "FeatureFrame":
@@ -97,12 +123,51 @@ def _from_dataframe(df, *, loa: str, targets: list[str]) -> "FeatureFrame":
             f"it has columns {list(df.columns)}."
         )
 
-    time = df.index.get_level_values(0).to_numpy(dtype=np.int64)
-    unit = df.index.get_level_values(1).to_numpy(dtype=np.int64)
-    # float64 block matching the downstream numpy pools (byte-identity with the pandas path).
+    time, unit = _index_arrays(df)
+    # NOTE: the block is float64 here but FeatureFrame.from_2d stores it as float32 (the
+    # views_frames contract); downstream pools are therefore float32-rounded, not byte-
+    # identical to the pre-PR float64 path (accepted FeatureFrame-canonical decision, C-32).
     block = df[list(targets)].to_numpy(dtype=np.float64)
     index = SpatioTemporalIndex(time=time, unit=unit, level=level)
     return FeatureFrame.from_2d(block, index, list(targets))
+
+
+def to_index(x, *, loa: str) -> tuple:
+    """Return ``(level, time, unit)`` from a df or FeatureFrame **without** the value block.
+
+    The light counterpart to :func:`to_feature_frame` for predict paths that need only the
+    spatial level and the ``(time, unit)`` identifiers, never the target values (ADR-019).
+    A DataFrame's declared level is validated against its index names; **no target columns
+    are required** (restoring the pre-PR column-agnostic predict contract — C-34). A
+    FeatureFrame passes through with a loa↔level agreement check (ADR-003).
+
+    Raises:
+        ValueError: if ``loa`` is unknown, the df index names/level disagree, or an index
+            level contains NaN.
+        TypeError: if ``x`` is neither a DataFrame nor a FeatureFrame.
+    """
+    from views_frames import FeatureFrame
+
+    if isinstance(x, FeatureFrame):
+        expected = spatial_level(loa)
+        if x.index.level != expected:
+            raise ValueError(
+                f"FeatureFrame level {x.index.level.name} disagrees with declared loa={loa!r} "
+                f"({expected.name}). Declarations are authoritative (ADR-003)."
+            )
+        return x.index.level, x.index.time, x.index.unit
+
+    import pandas as pd
+
+    if isinstance(x, pd.DataFrame):
+        level = resolve_level(loa, x.index.names)
+        time, unit = _index_arrays(x)
+        return level, time, unit
+
+    raise TypeError(
+        f"to_index expects a pandas.DataFrame or a views_frames.FeatureFrame, "
+        f"got {type(x).__name__}."
+    )
 
 
 def panel(ff: "FeatureFrame", targets: list[str]) -> tuple:

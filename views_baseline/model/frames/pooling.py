@@ -64,27 +64,33 @@ def window_pool_arrays(
     """Pure-numpy windowing core (the byte-identity-critical logic; dtype-agnostic).
 
     Reproduces the previous pandas ``sort_index(level=[entity, time]).groupby(entity).tail``
-    semantics on flat numpy arrays: restrict to ``time <= train_end``, sort stably by
-    ``(entity, time)``, take the entities present at ``train_end`` in ascending order, and
-    keep each such entity's last ``window_months`` rows in time order.
-
-    Args:
-        time: ``(N,)`` int time identifiers.
-        unit: ``(N,)`` int entity identifiers.
-        values: ``{target -> (N,)}`` observed series (aligned with ``time``/``unit``).
-        targets: Target names to pool.
-        window_months: Most-recent rows per entity to keep.
-        train_end: Last training time id; rows with time > this are dropped.
+    semantics: restrict to ``time <= train_end``, sort stably by ``(entity, time)``, take the
+    entities present at ``train_end`` in ascending order, and keep each such entity's last
+    ``window_months`` rows in time order. Composed from :func:`sort_train_panel` +
+    :func:`tail_pools` so the sort can be shared (see ``MixtureBaseline``).
 
     Returns:
         ``(entity_ids, pools)`` — see :func:`window_pool`.
     """
-    if window_months <= 0:
-        # Fail loud on a degenerate window. Guards the numpy slicing trap where
-        # `block[-0:]` would silently return the *entire* history (the pre-PR-2 pandas
-        # path failed here too, but only accidentally via an empty-group KeyError).
-        raise ValueError(f"window_months must be >= 1, got {window_months}.")
+    entity_ids, s_unit, s_vals = sort_train_panel(time, unit, values, targets, train_end)
+    return entity_ids, tail_pools(entity_ids, s_unit, s_vals, targets, window_months)
 
+
+def sort_train_panel(
+    time: np.ndarray,
+    unit: np.ndarray,
+    values: dict,
+    targets: list[str],
+    train_end: int,
+) -> tuple:
+    """Restrict to ``time <= train_end`` and stably sort by ``(entity, time)``.
+
+    The single ``(entity, time)`` sort shared by :func:`window_pool_arrays` and
+    ``MixtureBaseline`` (which derives both its local *and* global pools from the one sorted
+    panel, instead of re-sorting). Returns ``(entity_ids, s_unit, s_vals)``: the entities
+    present at ``train_end`` (ascending — matching the pre-PR pandas ``.unique()`` on an
+    entity-sorted frame) and the sorted unit + per-target value arrays.
+    """
     time = np.asarray(time)
     unit = np.asarray(unit)
 
@@ -93,16 +99,34 @@ def window_pool_arrays(
     k_unit = unit[keep]
     k_vals = {t: np.asarray(values[t])[keep] for t in targets}
 
-    # Sort stably by (entity, time): lexsort's last key is primary -> unit primary, time
-    # secondary. Panel rows are unique per (time, entity), so there are no ties to break.
+    # lexsort's last key is primary -> unit primary, time secondary. Panel rows are unique
+    # per (time, entity), so there are no ties to break.
     order = np.lexsort((k_time, k_unit))
     s_time = k_time[order]
     s_unit = k_unit[order]
     s_vals = {t: k_vals[t][order] for t in targets}
 
-    # Entities present exactly at train_end. On the entity-sorted array, order of appearance
-    # is ascending, which is what the previous pandas `.unique()` produced; np.unique matches.
     entity_ids = np.unique(s_unit[s_time == train_end])
+    return entity_ids, s_unit, s_vals
+
+
+def tail_pools(
+    entity_ids: np.ndarray,
+    s_unit: np.ndarray,
+    s_vals: dict,
+    targets: list[str],
+    window_months: int,
+) -> dict:
+    """Per-entity last ``window_months`` values from a ``(entity, time)``-sorted panel.
+
+    Fails loud on ``window_months <= 0`` (else the numpy ``block[-0:]`` slice returns the
+    whole history) and on a NaN in the pooled (used) values (C-33) — the pre-PR pandas path
+    silently skipna'd (``last()`` / ``mean(skipna=True)``); the numpy port surfaces it instead
+    of forward-filling / poisoning the forecast. Only the pooled tail is checked; NaN outside
+    the window is unused and not flagged.
+    """
+    if window_months <= 0:
+        raise ValueError(f"window_months must be >= 1, got {window_months}.")
 
     pools = {}
     for cid in entity_ids:
@@ -110,6 +134,13 @@ def window_pool_arrays(
         if block.size == 0:
             continue
         tail = block[-window_months:]  # last window_months in time order
-        pools[cid] = {t: s_vals[t][tail].astype(np.float64) for t in targets}
-
-    return entity_ids, pools
+        pool = {t: s_vals[t][tail].astype(np.float64) for t in targets}
+        for t in targets:
+            if np.isnan(pool[t]).any():
+                raise ValueError(
+                    f"window_pool: NaN target value in the training window for entity {cid}, "
+                    f"target {t!r}. Baseline models require complete target data in the "
+                    f"training window; NaN is not silently forward-filled."
+                )
+        pools[cid] = pool
+    return pools

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from views_baseline.model.defaults import DEFAULT_SEED
-from views_baseline.model.frames.input import to_feature_frame
+from views_baseline.model.frames.input import to_feature_frame, to_index
 from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.frames.pooling import window_pool
 
@@ -34,8 +34,6 @@ class ConflictologyModel:
         self.window_months = window_months
         self.n_samples = n_samples
         self.seed = seed
-        self.time_idx = None
-        self.entity_idx = None
         self.hist_per_entity = None
         self.entity_ids = None
 
@@ -51,7 +49,6 @@ class ConflictologyModel:
         # per-entity pools are byte-identical in order (ADR-022; value precision follows
         # the FeatureFrame's float32 — see C-32).
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        self.time_idx, self.entity_idx = ff.index.level.index_names
         self.entity_ids, self.hist_per_entity = window_pool(
             ff, self.targets, self.window_months, train_end
         )
@@ -65,11 +62,11 @@ class ConflictologyModel:
         Return predictions as Dict[str, PredictionFrame] — one PF per target.
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
+        level, _, _ = to_index(df, loa=self.loa)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
             model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,
-            level=ff.index.level, test_start=self.partition_dict["test"][0],
+            level=level, test_start=self.partition_dict["test"][0],
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=lambda cid, t, rng: rng.choice(
                 self.hist_per_entity[cid][t], size=self.n_samples, replace=True

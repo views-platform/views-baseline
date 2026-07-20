@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-07-20                           |
-| Total Concerns    | 32                                   |
-| Open Concerns     | 28                                   |
+| Total Concerns    | 37                                   |
+| Open Concerns     | 33                                   |
 | Resolved Concerns | 3                                    |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -526,6 +526,78 @@ See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator cou
 > **Decision (2026-07-20) — FeatureFrame is float32; golden regenerated once, deliberately.** S5 (the `to_feature_frame` adapter) surfaced that `views_frames.FeatureFrame` is a **float32** container by design (class contract; `coerce_values` casts; no float64 option), while the existing pools and golden tests are float64. Strict float64 byte-identity through a FeatureFrame is therefore impossible. The maintainer chose **FeatureFrame-canonical (float32)** with a **one-time, deliberate** golden regeneration to the platform's real precision (not a maintenance regen). To keep the migration safe despite the regen, the ordering/logic guard is **decoupled from the precision change**: (1) the ported numpy `window_pool` is proven byte-identical to the pandas `window_pool` on a **float64** panel (built directly from the df) — this pins entity order, tail order, and RNG advance independent of dtype (`test_pooling`, permanent); (2) only then is the model source switched to the float32 FeatureFrame and the model-level golden regenerated **once**, with the diff reviewed to confirm it is float32-rounding-only and nothing else. After the flip, `test_golden.py` pins the float32-canonical output and byte-identity holds going forward.
 
 > **Discharged (2026-07-20, PR-2 S6–S10).** The migration landed with the ordering guard intact and **no golden regeneration was actually required**: the distributional golden fixtures use small-integer data (`(t*3+u*7)%9`), which is float32-exact, so routing it through the float32 FeatureFrame is lossless and `test_golden.py` stayed **byte-identical unchanged** — confirming the numpy port preserved entity/tail/RNG order and per-cell logic. The float64 ordering guard (`test_pooling::test_window_pool_arrays_matches_pandas_reference_in_float64`, using non-float32-exact values) independently pins the order/logic. The float32 precision change is therefore invisible on the golden set and only affects non-integer production magnitudes (the accepted trade-off). One deliberate behaviour change shipped alongside: `window_months <= 0` now fails loud (`ValueError`) at fit for all windowing models, replacing the pre-PR-2 accidental KeyError / silent-NaN. Risk retained at Tier 2 as documentation of the precision boundary; the acute trigger (a non-order-preserving rewrite) has passed.
+
+> **Merged (2026-07-20, code-review #60 finding #6).** Two additions from the max-effort review: (1) the `_from_dataframe` code comment `"float64 block ... byte-identity with the pandas path"` (`model/frames/input.py`) is **now false** — `FeatureFrame.from_2d` immediately downcasts to float32, so the whole model layer (production df path included) computes on float32-rounded values; the comment is corrected in WS4. (2) The reach is a **reproducibility**, not merely precision, effect for non-float32-exact targets: `MixtureBaseline`'s global pool `v[v > 0]` and `ParametricHurdleConflictology`'s `pool == 0.0` / `pool > 0` zero-spike split are computed on float32 values, so a value that rounds across the 0 boundary changes the pool contents/size and reindexes the seeded `rng.choice` — the draws diverge from the pre-PR float64 path (still within the accepted FeatureFrame-canonical decision, but broader than "rounding").
+
+---
+
+### C-33: Pooling models silently propagate NaN targets (NaN-skipping lost in the numpy port)
+
+| Field | Value |
+|-------|-------|
+| ID | C-33 |
+| Tier | 2 |
+| Source | code-review (2026-07-20, PR #60 findings #2/#3) |
+| Trigger | When `fit()` runs on a panel whose training window (`time <= train_end`) contains a NaN target value — a unit entering/leaving the panel, a missing boundary month, or a gappy feature. |
+| Location | `views_baseline/model/frames/pooling.py:window_pool_arrays`; `views_baseline/model/models/point/locf.py:47`, `average.py:51` |
+
+The pandas→numpy port dropped the pre-PR NaN tolerance. OLD `LocfModel` used `groupby(entity)[targets].last()` (last **non-null** value per target); the numpy port takes `window_pool(...,1)` then `pools[cid][t][0]` — the literal last row, NaN or not (and forces all targets to one row). OLD `AverageModel` used pandas `.tail(w)[targets].mean()` (skipna, divides by non-NaN count); the numpy port uses `np.ndarray.mean()`, which propagates NaN and divides by the full window. By extension the Conflictology/parametric/Mixture pools resample/fit on NaN too. A single NaN in a training window therefore becomes a NaN (or garbage) forecast **with no error signal**. Not silent enough to be Tier 1 — a NaN forecast surfaces as NaN evaluation metrics downstream — and likelihood is gated (VIEWS target panels are mostly dense), hence Tier 2. The one NaN-window test was replaced by a `window_months=0` fail-loud test, so NaN-in-window is now covered by neither the old nor the new suite. **Remediation (chosen: fail-loud):** a shared NaN guard in `window_pool_arrays` raises `ValueError` when a pooled value is NaN (WS1). Cross-ref C-32 (same numpy-port cluster), C-31.
+
+---
+
+### C-34: predict/fit over-use the full input adapter — target-column precondition + wasted N×F lift
+
+| Field | Value |
+|-------|-------|
+| ID | C-34 |
+| Tier | 3 |
+| Source | code-review (2026-07-20, PR #60 findings #1/#7/#8) |
+| Trigger | When a caller passes `predict()` (or `ZeroModel.fit()`) a frame that omits a declared target column — a features-only or targets-not-yet-merged forecast frame; or when profiling a large-`pgm` predict. |
+| Location | all 7 `views_baseline/model/models/**` predict/fit sites; `views_baseline/model/frames/input.py:_from_dataframe` |
+
+Every `predict()` calls `to_feature_frame(df, targets)` even though it uses only `ff.index.level` (distributional) or `level` + predict-frame entities (point) — never the target **values**. Two consequences: (a) `_from_dataframe` reads `df[targets]` and raises `ValueError: missing required target column(s)` if a target column is absent — a **new precondition** the old index-only predict didn't have, which is worst for `ZeroModel` (whose entire purpose is data-independence, now data-dependent at both fit and predict — empirically verified to raise); (b) an N×F float64 block + N×F float32 block is built and discarded on every predict, ×7 models. Fails loud (not silent) and the standard VIEWS queryset carries the columns, so Tier 3 (contract widening + wasted work + test gap), not Tier 2. **Remediation:** a light `to_index(x,*,loa) -> (level, time, unit)` boundary that reads only the index; predict uses it; `ZeroModel.fit` stops requiring target columns (WS2). Cross-ref C-31 (the DIP boundary), C-07.
+
+---
+
+### C-35: Input boundary missing guards — multi-sample frame truncated; float/NaN index corrupted
+
+| Field | Value |
+|-------|-------|
+| ID | C-35 |
+| Tier | 2 |
+| Source | code-review (2026-07-20, PR #60 findings #4/#5) |
+| Trigger | When a caller passes a directly-constructed `(N, F, S>1)` FeatureFrame as observed input (ADR-019 dual-input allows it); or a DataFrame whose time/entity index level is float-typed and contains NaN (common after a merge/reindex). |
+| Location | `views_baseline/model/frames/input.py:_validate_feature_frame` (S), `_from_dataframe:100-101` (index cast), `panel:135` (S slice) |
+
+Two silent boundary holes. (1) `_validate_feature_frame` checks loa↔level and target presence but **not** `sample_count`; `panel` then does `col[:, 0]`, so a multi-sample FeatureFrame is silently reduced to its first sample and every model fits/pools on sample 0 only — wrong result, no error. The df-lift path is always `S==1`, so only a directly-passed frame hits it. (2) `_from_dataframe` hard-casts both index levels with `.to_numpy(dtype=np.int64)` **before** views_frames' identifier validation runs, so a NaN in a float-typed index maps to a platform garbage id (e.g. `-9223372036854775808`) that flows into `entities_at`/`window_pool` and mis-keys the grid — bypassing the very NaN-rejection views_frames provides. Both are silent-corruption paths with low VIEWS likelihood (int ids, df path), hence Tier 2. **Remediation:** `S==1` guard in `_validate_feature_frame`; integer-dtype + NaN-free validation before the int64 cast in `_from_dataframe` (WS1).
+
+---
+
+### C-36: PR-2 reorg guard tests under-verify their claims
+
+| Field | Value |
+|-------|-------|
+| ID | C-36 |
+| Tier | 3 |
+| Source | code-review (2026-07-20, PR #60 findings #10/#11/#12) |
+| Trigger | When a future change relies on these guards to catch a regression: a model reintroducing a float64 DataFrame fast-path; an in-`fit` `import pandas`; or a `catalog.py` registry refactored to a dict comprehension. |
+| Location | `tests/test_dual_input.py:48`; `tests/test_falsification_reorg_principles.py:90` (DIP), `:116` (OCP) |
+
+Three guards give false confidence. (1) The headline df≡FF equivalence test is near-tautological — both branches converge to the same float32 lift (`to_feature_frame`) and the dummy data is float32-exact integers, so a float64 df fast-path divergence would still compare equal. (2) The DIP AST guard scans only `ast.parse(...).body` (module top-level), so an in-function `import pandas` in a model — a genuine runtime DIP violation — is invisible and `offenders==[]` stays green. (3) The OCP strict-xfail measures the max size of any top-level dict **literal** in `catalog.py`; a still-hardcoded registry built via a dict comprehension or `dict(...)` drops the count to 0, flipping the strict-xfail to a false XPASS ("OCP resolved"). Maintainability/false-confidence, hence Tier 3. **Remediation:** non-float32-exact equivalence case; DIP guard walks all `Import` nodes; OCP check robust to comprehensions (WS3).
+
+---
+
+### C-37: pandas→numpy port residue (dead state, None-log, retained pool, double sort)
+
+| Field | Value |
+|-------|-------|
+| ID | C-37 |
+| Tier | 4 |
+| Source | code-review (2026-07-20, PR #60 findings #9/#13/#14/#15) |
+| Trigger | When a contributor extends a model and copies the dead `self.time_idx` assignment as if load-bearing, reads a fit log expecting the level, or profiles Mixture fit memory/CPU. |
+| Location | all 7 `views_baseline/model/models/**`; `views_baseline/model/models/distributional/mixture.py:63`; `parametric.py:70`, `parametric_hurdle.py:74` |
+
+Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but read nowhere; `self.entity_idx` only feeds a fit-log line that — because the reorg moved the assignment below the log — now always reads `on level: None`; `ParametricConflictology`/`Hurdle` retain `self.pools` on the fitted object though only `self.params` is read at predict (needlessly pins the entities×window array, including in pickled artifacts); `MixtureBaseline.fit` re-`lexsort`s and re-masks the same panel that `window_pool_arrays` already sorted for the local pool. No correctness impact — Tier 4. **Remediation:** WS4.
 
 ---
 

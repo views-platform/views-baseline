@@ -87,26 +87,45 @@ def test_adp_model_layer_import_graph_is_acyclic():
 # `if TYPE_CHECKING:` (type hints), never at runtime. Permanent guard (was strict-xfail in
 # PR-1; flipped when the numpy-on-FeatureFrame port landed).
 # ---------------------------------------------------------------------------
-def _has_runtime_module_level_pandas_import(path):
-    """True if the module imports pandas at module scope (not under TYPE_CHECKING, not in a
-    function body). Nested imports (inside `if TYPE_CHECKING:` or inside a def) are excluded."""
-    for node in ast.parse(path.read_text()).body:  # top-level statements only
-        if isinstance(node, ast.Import):
-            if any(a.name.split(".")[0] == "pandas" for a in node.names):
-                return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module and node.module.split(".")[0] == "pandas":
-                return True
+def _has_runtime_pandas_import(path):
+    """True if the module imports pandas anywhere at RUNTIME — module scope OR inside a
+    function body — excluding `if TYPE_CHECKING:` (type-only) imports. Walking all nodes (not
+    just module-level) catches an in-function `import pandas` a top-level-only scan would miss
+    (C-36)."""
+    tree = ast.parse(path.read_text())
+    type_only = set()  # line numbers inside `if TYPE_CHECKING:` blocks (type-only imports)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If):
+            test = node.test
+            if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+            ):
+                type_only.update(n.lineno for n in ast.walk(node) if hasattr(n, "lineno"))
+    for node in ast.walk(tree):
+        is_pandas = (
+            isinstance(node, ast.Import)
+            and any(a.name.split(".")[0] == "pandas" for a in node.names)
+        ) or (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".")[0] == "pandas"
+        )
+        if is_pandas and node.lineno not in type_only:
+            return True
     return False
 
 
-def test_dip_model_layer_has_no_runtime_pandas_import():
+def test_dip_pandas_confined_to_input_adapter():
+    """pandas is a runtime dependency of exactly one model module — frames/input.py (the
+    single reader / DIP boundary). Every other model module imports pandas only under
+    TYPE_CHECKING. Catches a reintroduced runtime pandas import at ANY scope (module or in-fn)."""
+    allowed = (MODEL / "frames" / "input.py").resolve()
     offenders = [
         p.relative_to(PKG).as_posix()
         for p in MODEL.rglob("*.py")
-        if _has_runtime_module_level_pandas_import(p)
+        if p.resolve() != allowed and _has_runtime_pandas_import(p)
     ]
-    assert offenders == [], f"DIP: runtime module-level pandas import in: {offenders}"
+    assert offenders == [], f"DIP: runtime pandas import outside frames/input.py in: {offenders}"
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +141,14 @@ def test_ocp_catalog_does_not_hardcode_model_registry():
     tree = ast.parse((MODEL / "catalog.py").read_text())
     hardcoded = 0
     for node in ast.walk(tree):
-        # the `self.models = { "ZeroModel": ..., ... }` dispatch dict
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
-            hardcoded = max(hardcoded, len(node.value.keys))
+        # the `self.models = { "ZeroModel": ..., ... }` dispatch dict — count a literal's
+        # entries, and treat a dict-comprehension / `dict(...)` build as hardcoded too (>=1),
+        # so a comprehension refactor of a still-hardcoded registry doesn't false-XPASS (C-36).
+        if isinstance(node, ast.Assign):
+            if isinstance(node.value, ast.Dict):
+                hardcoded = max(hardcoded, len(node.value.keys))
+            elif isinstance(node.value, ast.DictComp):
+                hardcoded = max(hardcoded, 1)
     assert hardcoded == 0, (
         f"OCP: catalog hardcodes {hardcoded} model entries (modification surface)"
     )
