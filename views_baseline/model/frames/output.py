@@ -128,7 +128,12 @@ def sample_prediction_grid(
     n_rows = len(time_arr)
     rng = np.random.default_rng(seed)
 
-    y_preds = {t: np.empty((n_rows, n_samples), dtype=np.float64) for t in targets}
+    # float32 matches the PredictionFrame's coerce-enforced dtype (ADR-020): the float64
+    # buffer was downcast-and-discarded at the to_prediction_frames seam, so allocating
+    # float32 up front is byte-identical output at half the memory — it halves the
+    # distributional grid footprint (issue #46). Draw order (ADR-011 §3) and the golden
+    # values are unchanged. History pools stay float64 (test_pooling byte-identity, C-32).
+    y_preds = {t: np.empty((n_rows, n_samples), dtype=np.float32) for t in targets}
     idx = 0
     for cid in entities:
         for _ in time_ids:
