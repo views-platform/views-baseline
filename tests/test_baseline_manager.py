@@ -1,9 +1,15 @@
 import pickle
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-from conftest import make_manager
+import pytest
+from conftest import make_dummy_ff, make_manager
+from views_pipeline_core.modules.dataloaders.datafactory_contract import (
+    DATA_FORMAT_DATAFRAME,
+    DATA_FORMAT_FEATURE_FRAME,
+)
 
 import views_baseline.manager.baseline_manager as bm
 from views_baseline.model.models.point import ZeroModel
@@ -93,6 +99,167 @@ def test_manager_forecast_uses_baseline_model(
     assert set(result.keys()) == set(targets)
     for target_key in targets:
         assert isinstance(result[target_key], PredictionFrame)
+
+
+# ---------------------------------------------------------------------
+# Tests: frame-native manager seam (issue #64)
+#
+# A model declaring data_format: feature_frame is served the pipeline-core
+# FeatureFrame directory cache directly — no pandas in the manager. Every
+# other model keeps the byte-identical read_dataframe path. These tests pin
+# both read-sites (_setup_model_and_data at :60, _evaluate_sweep at :125),
+# and assert the frame path NEVER touches read_dataframe (and vice versa).
+# ---------------------------------------------------------------------
+
+
+def _frame_config(algorithm="LocfModel", run_type="forecast", targets=("y1", "y2"), **extra):
+    config = {
+        "run_type": run_type,
+        "level": "pgm",
+        "algorithm": algorithm,
+        "targets": list(targets),
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+    }
+    config.update(extra)
+    return config
+
+
+def _no_pandas(path):
+    raise AssertionError("read_dataframe was called on a frame-declared model")
+
+
+def test_manager_setup_flows_feature_frame_from_cache(
+    monkeypatch, manager_partition_dict, targets
+):
+    """Frame-declared model: _setup_model_and_data loads the frame cache and a
+    FeatureFrame — not a DataFrame — flows into fit()."""
+    from views_frames import FeatureFrame
+
+    manager = make_manager(_frame_config(), manager_partition_dict)
+    manager._data_format = DATA_FORMAT_FEATURE_FRAME
+    manager._cached_frame_path = Path("dummy_frame_cache")
+
+    seen = {}
+
+    def fake_load_frame_cache(path):
+        seen["path"] = path
+        return make_dummy_ff(time_range=range(110, 126))
+
+    monkeypatch.setattr(bm, "read_dataframe", _no_pandas)
+    monkeypatch.setattr(bm, "load_frame_cache", fake_load_frame_cache)
+
+    model, source = manager._setup_model_and_data()
+
+    assert isinstance(source, FeatureFrame)
+    assert seen["path"] == Path("dummy_frame_cache")
+
+
+def test_manager_forecast_via_frame_cache(
+    monkeypatch, manager_partition_dict, targets
+):
+    """End-to-end forecast from the frame cache yields PredictionFrames with no pandas."""
+    from views_frames import PredictionFrame
+
+    manager = make_manager(_frame_config(run_type="forecast"), manager_partition_dict)
+    manager._data_format = DATA_FORMAT_FEATURE_FRAME
+    manager._cached_frame_path = Path("dummy_frame_cache")
+
+    monkeypatch.setattr(bm, "read_dataframe", _no_pandas)
+    monkeypatch.setattr(
+        bm, "load_frame_cache", lambda path: make_dummy_ff(time_range=range(110, 126))
+    )
+
+    result = manager._forecast_model_artifact()
+
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert isinstance(result[target_key], PredictionFrame)
+
+
+def test_manager_evaluate_sweep_via_frame_cache(
+    monkeypatch, manager_partition_dict, targets
+):
+    """The sweep read-site (:125) also serves the frame cache, no pandas."""
+    manager = make_manager(
+        _frame_config(run_type="eval", sequence_numbers=2), manager_partition_dict
+    )
+    manager._data_format = DATA_FORMAT_FEATURE_FRAME
+    manager._cached_frame_path = Path("dummy_frame_cache")
+
+    monkeypatch.setattr(bm, "read_dataframe", _no_pandas)
+    monkeypatch.setattr(
+        bm, "load_frame_cache", lambda path: make_dummy_ff(time_range=range(110, 126))
+    )
+
+    model, _ = manager._setup_model_and_data()
+    result = manager._evaluate_sweep(eval_type="temporal", model=model)
+
+    assert set(result.keys()) == set(targets)
+    for target_key in targets:
+        assert len(result[target_key]) == 2
+
+
+def test_manager_frame_declared_missing_cache_fails_loud(
+    monkeypatch, manager_partition_dict, targets
+):
+    """A frames-declared model whose cache was never populated must fail loud —
+    never silently fall back to the pandas path (pipeline-core register C-214)."""
+    manager = make_manager(_frame_config(), manager_partition_dict)
+    manager._data_format = DATA_FORMAT_FEATURE_FRAME
+    manager._cached_frame_path = None  # declared frame, but cache absent
+
+    monkeypatch.setattr(
+        bm, "read_dataframe", lambda path: pytest.fail("silent pandas fallback on frame model")
+    )
+    monkeypatch.setattr(
+        bm, "load_frame_cache", lambda path: pytest.fail("loader reached with no cache path")
+    )
+
+    with pytest.raises(RuntimeError):
+        manager._load_source()
+
+
+def test_manager_legacy_format_never_calls_frame_loader(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """An explicitly dataframe-declared model uses read_dataframe and never the
+    frame loader — the branch does not degrade legacy behavior."""
+    manager = make_manager(
+        _frame_config(algorithm="ZeroModel", run_type="eval"), manager_partition_dict
+    )
+    manager._data_format = DATA_FORMAT_DATAFRAME
+
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+    monkeypatch.setattr(
+        bm, "load_frame_cache", lambda path: pytest.fail("frame loader called on dataframe model")
+    )
+
+    model, source = manager._setup_model_and_data()
+
+    assert isinstance(model, ZeroModel)
+    assert source.shape == manager_df.shape
+
+
+def test_manager_default_format_is_dataframe(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """With no _data_format attribute set at all, the manager defaults to the
+    pandas path (byte-identical legacy behavior)."""
+    manager = make_manager(
+        _frame_config(algorithm="ZeroModel", run_type="eval"), manager_partition_dict
+    )
+    # deliberately do NOT set manager._data_format
+
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+    monkeypatch.setattr(
+        bm, "load_frame_cache", lambda path: pytest.fail("frame loader called by default")
+    )
+
+    _, source = manager._setup_model_and_data()
+
+    assert source.shape == manager_df.shape
 
 
 def test_manager_forecast_respects_algorithm_choice(

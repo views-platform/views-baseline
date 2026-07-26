@@ -3,6 +3,11 @@ import pickle
 
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
+from views_pipeline_core.modules.dataloaders.datafactory_contract import (
+    DATA_FORMAT_DATAFRAME,
+    DATA_FORMAT_FEATURE_FRAME,
+)
+from views_pipeline_core.modules.dataloaders.frame_cache import load_frame_cache
 
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
@@ -45,6 +50,27 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         logger.info(f"Saved baseline artifact: {model_filename}")
         return self.model
 
+    def _load_source(self):
+        """Load the fit/predict input for the current partition, dispatching on declared format.
+
+        Frame-native seam (issue #64). A model that declares ``data_format: feature_frame``
+        is served the pipeline-core FeatureFrame directory cache directly, so the
+        ``FeatureFrame`` flows straight into ``fit``/``predict`` with no pandas in the
+        manager — the models have consumed either shape since ADR-019/epic #47. Every other
+        model keeps the byte-identical pandas-parquet path (``read_dataframe``).
+
+        Dispatch is on the declared ``_data_format`` (set by the base manager during data
+        fetching; absent → ``dataframe``, i.e. legacy behavior). The frame branch resolves
+        the cache through the LOUD ``_get_cached_frame_path()`` getter, which raises if the
+        frame cache was never populated. There is deliberately NO silent
+        ``getattr(..., None)`` fallback from the frame path back to pandas: a frames-declared
+        config that has lost its cache must fail loud, never silently degrade to a pandas run
+        (pipeline-core register C-214).
+        """
+        if getattr(self, "_data_format", DATA_FORMAT_DATAFRAME) == DATA_FORMAT_FEATURE_FRAME:
+            return load_frame_cache(self._get_cached_frame_path())
+        return read_dataframe(self._get_cached_data_path())
+
     def _setup_model_and_data(self):
         """
         Instantiate the baseline model via the catalog, load data, fit, and return both.
@@ -57,7 +83,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         )
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
-        df_source = read_dataframe(self._get_cached_data_path())
+        df_source = self._load_source()
         model.fit(df_source)
         return model, df_source
 
@@ -122,5 +148,5 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        df_source = read_dataframe(self._get_cached_data_path())
+        df_source = self._load_source()
         return self._generate_predictions(model, df_source, eval_type)

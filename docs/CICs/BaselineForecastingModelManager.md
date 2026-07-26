@@ -18,7 +18,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 ## Non-Goals
 
 - Does not implement any prediction algorithm. All model logic lives in the seven model classes.
-- Does not own data loading. Data is read from disk via `read_dataframe` (from `views_pipeline_core`) inside `_setup_model_and_data()`.
+- Does not own data loading. Input is read from disk inside `_load_source()`, dispatching on the declared `data_format`: a pandas DataFrame via `read_dataframe` (legacy default) or a `views_frames.FeatureFrame` via `load_frame_cache` when the model declares `data_format: feature_frame` (issue #64). Both come from `views_pipeline_core`.
 - Does not define the configuration schema. Config structure is the responsibility of the pipeline configuration layer.
 - Does not sweep hyperparameters in any non-trivial way; `_evaluate_sweep` delegates entirely to `_generate_predictions`.
 
@@ -26,11 +26,17 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 
 ## Responsibilities and Guarantees
 
+**`_load_source()`**:
+- The single input-sourcing seam (issue #64). Dispatches on the declared `_data_format` (set by the base class during data fetching; absent → `dataframe`, i.e. legacy behavior).
+- `feature_frame` → returns a `views_frames.FeatureFrame` via `load_frame_cache(self._get_cached_frame_path())`; the frame flows straight into `fit`/`predict` with no pandas in the manager (models are frame-native since ADR-019).
+- Any other value → returns a `pandas.DataFrame` via `read_dataframe(self._get_cached_data_path())` (byte-identical legacy path).
+- The frame branch uses the **loud** `_get_cached_frame_path()` getter (raises `RuntimeError` if the frame cache was never populated). There is deliberately no silent fallback from the frame path to pandas — a frames-declared config that lost its cache fails loud (pipeline-core register C-214).
+
 **`_setup_model_and_data()`**:
 - Calls `ReproducibilityGate.Config.audit_manifest(self.config)` as a precondition — raises `MissingHyperparameterError` if core or algorithm-specific keys are missing or `None`.
 - Reads `config["level"]` and `_data_loader.partition_dict`.
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
-- Reads the training DataFrame from disk via `self._get_cached_data_path()` (path set by the base class during data fetching).
+- Reads the training input from disk via `self._load_source()` (a DataFrame or FeatureFrame per the declared `data_format`; path set by the base class during data fetching).
 - Calls `model.fit(df_source)`.
 - Returns `(model, df_source)`.
 
@@ -57,7 +63,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 - Otherwise: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns a single `pd.DataFrame` (not wrapped in a list).
 
 **`_evaluate_sweep(eval_type, model)`**:
-- Reads the DataFrame from disk using the same path logic as `_setup_model_and_data()`.
+- Reads input from disk via `_load_source()` (the same dispatch as `_setup_model_and_data()`).
 - Calls `_generate_predictions(model, df, eval_type)`.
 - Returns predictions.
 
@@ -96,7 +102,8 @@ The `config` dict is populated by the base class `_config_manager` before any li
 | `config["algorithm"]` unknown to catalog | `ValueError` from `BaselineModelCatalog.get_model()` | Descriptive error listing available names. |
 | Required config key missing for the algorithm | `ValueError` from catalog | Lists missing keys. |
 | Cached data path not set (data fetching not run) | `RuntimeError` from `_get_cached_data_path()` | Raised if `_execute_data_fetching()` has not run before a lifecycle method accesses data. Message: "No cached data path available." |
-| Data file not found on disk | `FileNotFoundError` from `read_dataframe` | No explicit error handling in manager. |
+| Frames-declared model with no populated frame cache | `RuntimeError` from `_get_cached_frame_path()` | `_load_source()` on the `feature_frame` branch uses the loud getter — a lost/absent frame cache fails loud, never silently falling back to pandas (C-214). |
+| Data file not found on disk | `FileNotFoundError` from `read_dataframe` (DataFrame) / from `load_frame_cache` (FeatureFrame) | No explicit error handling in manager; both readers are fail-loud upstream. |
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
@@ -116,7 +123,9 @@ The manager emits `logger.info()` messages at lifecycle boundaries: initialisati
 | Symbol | Purpose |
 |---|---|
 | `generate_model_file_name` | Generates timestamped artifact filename. |
-| `read_dataframe` | Reads the viewser DataFrame from disk. |
+| `read_dataframe` | Reads the viewser DataFrame from disk (legacy `dataframe` path in `_load_source`). |
+| `load_frame_cache` | Reads the `FeatureFrame` directory cache from disk (`feature_frame` path in `_load_source`, issue #64). |
+| `DATA_FORMAT_DATAFRAME`, `DATA_FORMAT_FEATURE_FRAME` | The declared-format literals `_load_source` dispatches on. |
 | `ForecastingModelManager` | Base class providing `config` property, `_config_manager`, `_data_loader`, `_resolve_evaluation_sequence_number`, etc. |
 | `ModelPathManager` | Type of the `model_path` constructor argument. |
 | `ConfigurationManager` | Type used in tests to construct `_config_manager`. |
@@ -217,6 +226,12 @@ File: `tests/test_baseline_manager.py`
 | `test_manager_evaluate_distributional_model` | `_evaluate_model_artifact` with `ConflictologyModel` returns `dict[str, list[PredictionFrame]]` with correct keys and list length matching `sequence_numbers`. |
 | `test_manager_forecast_distributional_model` | `_forecast_model_artifact` with `ConflictologyModel` returns `dict[str, PredictionFrame]` with correct keys and types. |
 | `test_manager_evaluate_sweep` | `_evaluate_sweep` loads data, delegates to `_generate_predictions`, and returns a list of DataFrames identical to direct model output. |
+| `test_manager_setup_flows_feature_frame_from_cache` | A `data_format: feature_frame` model routes `_setup_model_and_data` through `load_frame_cache`; a `FeatureFrame` (not a DataFrame) flows into `fit`, and `read_dataframe` is never called (issue #64). |
+| `test_manager_forecast_via_frame_cache` | End-to-end `_forecast_model_artifact` from the frame cache yields `PredictionFrame`s with no pandas. |
+| `test_manager_evaluate_sweep_via_frame_cache` | The sweep read-site also serves the frame cache with no pandas. |
+| `test_manager_frame_declared_missing_cache_fails_loud` | A frames-declared model with an absent cache raises `RuntimeError` — never a silent pandas fallback (C-214). |
+| `test_manager_legacy_format_never_calls_frame_loader` | An explicitly `dataframe`-declared model uses `read_dataframe` and never the frame loader. |
+| `test_manager_default_format_is_dataframe` | With no `_data_format` set, the manager defaults to the pandas path (byte-identical legacy behavior). |
 | `test_manager_gate_rejects_incomplete_config` | `_setup_model_and_data()` raises `MissingHyperparameterError` when core keys are missing. (In `test_reproducibility_gate.py`.) |
 
 File: `tests/test_falsification_timestamp_contract.py`
