@@ -1,0 +1,50 @@
+name: Lint and Test
+
+# uv-based CI (mirrors the views-frames / views-datafactory / views-reporting pattern).
+#
+# NOTE: `uv sync` cannot currently resolve the dependency graph because
+# views-pipeline-core (>=3.0.0) is not on PyPI yet, so this workflow is expected to
+# be red until that dependency is published. The editable `views_pipeline` conda env
+# is the working test gate meanwhile (README / CONTRIBUTING).
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+      - development
+  workflow_dispatch:
+
+jobs:
+  # Lint runs project-independently (uvx), so it stays a reliable green signal even
+  # while `uv sync` cannot resolve views-pipeline-core (see the header note) — the
+  # `check` job below is gated behind that resolution and is expected red until then.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx ruff check .
+
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --python ${{ matrix.python-version }}
+      - run: uv run pytest tests/ -v
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build

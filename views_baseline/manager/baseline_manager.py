@@ -1,13 +1,16 @@
-from views_pipeline_core.managers.model import ModelPathManager, ForecastingModelManager
-from views_pipeline_core.files.utils import read_dataframe, generate_model_file_name
-from views_pipeline_core.configs.pipeline import PipelineConfig
 import logging
 import pickle
-import pandas as pd
-from datetime import datetime
-from views_baseline.model.catalog import BaselineModelCatalog
-from views_baseline.model.protocol import DistributionalBaselineModel
 
+from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
+from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
+from views_pipeline_core.modules.dataloaders.datafactory_contract import (
+    DATA_FORMAT_DATAFRAME,
+    DATA_FORMAT_FEATURE_FRAME,
+)
+from views_pipeline_core.modules.dataloaders.frame_cache import load_frame_cache
+
+from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
+from views_baseline.model.catalog import BaselineModelCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,6 @@ logger = logging.getLogger(__name__)
 class BaselineForecastingModelManager(ForecastingModelManager):
     """
     Baseline Forecasting Model Manager
-
     """
 
     def __init__(
@@ -48,12 +50,32 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         logger.info(f"Saved baseline artifact: {model_filename}")
         return self.model
 
+    def _load_source(self):
+        """Load the fit/predict input for the current partition, dispatching on declared format.
+
+        Frame-native seam (issue #64). A model that declares ``data_format: feature_frame``
+        is served the pipeline-core FeatureFrame directory cache directly, so the
+        ``FeatureFrame`` flows straight into ``fit``/``predict`` with no pandas in the
+        manager — the models have consumed either shape since ADR-019/epic #47. Every other
+        model keeps the byte-identical pandas-parquet path (``read_dataframe``).
+
+        Dispatch is on the declared ``_data_format`` (set by the base manager during data
+        fetching; absent → ``dataframe``, i.e. legacy behavior). The frame branch resolves
+        the cache through the LOUD ``_get_cached_frame_path()`` getter, which raises if the
+        frame cache was never populated. There is deliberately NO silent
+        ``getattr(..., None)`` fallback from the frame path back to pandas: a frames-declared
+        config that has lost its cache must fail loud, never silently degrade to a pandas run
+        (pipeline-core register C-214).
+        """
+        if getattr(self, "_data_format", DATA_FORMAT_DATAFRAME) == DATA_FORMAT_FEATURE_FRAME:
+            return load_frame_cache(self._get_cached_frame_path())
+        return read_dataframe(self._get_cached_data_path())
+
     def _setup_model_and_data(self):
         """
         Instantiate the baseline model via the catalog, load data, fit, and return both.
         """
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
+        ReproducibilityGate.Config.audit_manifest(self.config)
         loa = self.config["level"]
         partition_dict = self._data_loader.partition_dict
         catalog = BaselineModelCatalog(
@@ -61,82 +83,70 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         )
         model = catalog.get_model(self.config["algorithm"])
         logger.info(f"Model type is {self.config['algorithm']}")
-        self.config["timestamp"] = datetime.now().strftime("%Y%m%d_%H%M%S")
-        df = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
-        model.fit(df)
-        return model, df
+        df_source = self._load_source()
+        model.fit(df_source)
+        return model, df_source
 
-    def _evaluate_model_artifact(
-        self, eval_type: str, artifact_name: str = None
-    ) -> list:
+    def _generate_predictions(self, model, df, eval_type):
         """
-        Evaluate trained model artifact.
+        Generate predictions for all sequence numbers in an evaluation.
 
+        All models return Dict[str, PredictionFrame], so this accumulates
+        into Dict[str, list[PredictionFrame]] across sequence numbers.
         """
-        logger.info("Evaluating baseline model artifact")
-
-        self.model, df_viewser = self._setup_model_and_data()
-
-        logger.info(f"Generating predictions for {eval_type} evaluation")
-
         sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+        output_length = self.config["time_steps"]
 
-        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
-            predictions = {}
-            for seq_num in range(sequence_numbers):
-                pf_dict = self.model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
-                for target, pf in pf_dict.items():
-                    predictions.setdefault(target, []).append(pf)
-            return predictions
-
-        predictions = []
+        predictions = {}
         for seq_num in range(sequence_numbers):
-            preds = self.model.predict(df=df_viewser, sequence_number=seq_num)
-            predictions.append(preds)
-
+            pf_dict = model.predict(
+                df=df, sequence_number=seq_num, output_length=output_length
+            )
+            for target, pf in pf_dict.items():
+                predictions.setdefault(target, []).append(pf)
         return predictions
 
-    def _forecast_model_artifact(self, artifact_name: str = None) -> pd.DataFrame:
+    def _evaluate_model_artifact(self, eval_type: str, artifact_name: str = None):
+        """
+        Evaluate trained model artifact.
+        """
+        logger.info("Evaluating baseline model artifact")
+        if artifact_name:
+            path_artifact = self._model_path.artifacts / artifact_name
+        else:
+            path_artifact = self._model_path.get_latest_model_artifact_path(
+                run_type=self.config["run_type"]
+            )
+        self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
+        self.model, df_source = self._setup_model_and_data()
+        logger.info(f"Generating predictions for {eval_type} evaluation")
+        return self._generate_predictions(self.model, df_source, eval_type)
+
+    def _forecast_model_artifact(self, artifact_name: str = None):
         """
         Generate forecasts using trained model artifact.
-
         """
         logger.info("Generating forecasts")
+        if artifact_name:
+            path_artifact = self._model_path.artifacts / artifact_name
+        else:
+            path_artifact = self._model_path.get_latest_model_artifact_path(
+                run_type=self.config["run_type"]
+            )
+        self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
+        self.model, df_source = self._setup_model_and_data()
+        output_length = self.config["time_steps"]
 
-        self.model, df_viewser = self._setup_model_and_data()
+        return self.model.predict(
+            df=df_source, sequence_number=0, output_length=output_length
+        )
 
-        if self._prediction_format == "prediction_frame" and isinstance(self.model, DistributionalBaselineModel):
-            return self.model.predict_prediction_frame(df=df_viewser, sequence_number=0)
-
-        return self.model.predict(sequence_number=0, df=df_viewser)
-
-    def _evaluate_sweep(self, eval_type: str, model) -> list:
+    def _evaluate_sweep(self, eval_type: str, model):
         """
         Evaluate a baseline model during a WandB sweep iteration.
 
         The model has already been fitted by _train_model_artifact().
         We load the data and generate predictions using it.
         """
-        path_raw = self._model_path.data_raw
-        run_type = self.config["run_type"]
-        df_viewser = read_dataframe(
-            path_raw / f"{run_type}_viewser_df{PipelineConfig.dataframe_format}"
-        )
-
-        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
-
-        if self._prediction_format == "prediction_frame" and isinstance(model, DistributionalBaselineModel):
-            predictions = {}
-            for seq_num in range(sequence_numbers):
-                pf_dict = model.predict_prediction_frame(df=df_viewser, sequence_number=seq_num)
-                for target, pf in pf_dict.items():
-                    predictions.setdefault(target, []).append(pf)
-            return predictions
-
-        predictions = []
-        for seq_num in range(sequence_numbers):
-            preds = model.predict(df=df_viewser, sequence_number=seq_num)
-            predictions.append(preds)
-        return predictions
+        df_source = self._load_source()
+        return self._generate_predictions(model, df_source, eval_type)

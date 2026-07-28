@@ -1,29 +1,44 @@
-from typing import List, Protocol, runtime_checkable
+from __future__ import annotations
 
-import pandas as pd
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from views_frames import FeatureFrame, PredictionFrame
 
 
 @runtime_checkable
 class BaselineModel(Protocol):
-    targets: List[str]
+    """All baseline models return dict[str, PredictionFrame] from predict()."""
+
+    targets: list[str]
     partition_dict: dict
     loa: str
 
-    def fit(self, df: pd.DataFrame) -> "BaselineModel": ...
+    def fit(self, df: pd.DataFrame | FeatureFrame) -> BaselineModel: ...
 
     def predict(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | FeatureFrame,
         sequence_number: int,
-        output_length: int = 36,
-    ) -> pd.DataFrame: ...
+        output_length: int,
+    ) -> dict[str, PredictionFrame]: ...
 
 
 @runtime_checkable
-class DistributionalBaselineModel(BaselineModel, Protocol):
-    def predict_prediction_frame(
+class DistributionalBaselineModel(Protocol):
+    """Distributional baseline with multi-sample y_pred (n_samples > 1)."""
+
+    targets: list[str]
+    partition_dict: dict
+    loa: str
+    distributional: bool
+
+    def fit(self, df: pd.DataFrame | FeatureFrame) -> DistributionalBaselineModel: ...
+
+    def predict(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | FeatureFrame,
         sequence_number: int,
-        output_length: int = 36,
-    ) -> dict: ...
+        output_length: int,
+    ) -> dict[str, PredictionFrame]: ...

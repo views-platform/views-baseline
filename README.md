@@ -1,35 +1,8 @@
 # views-baseline
 
-**views-baseline** is a package providing simple, interpretable baseline models for the VIEWS forecasting pipeline. These models are designed for benchmarking and sanity-checking more complex machine learning models. Baseline models in this package do not require training and include approaches such as always predicting zero or repeating the last observed value.
-
-## Features
-
-- **ZeroModel**: predicts zero for all targets and all forecast horizons.
-- **LOCFModel**: repeats the last observed value for each target into the future.
-- **AverageModel**: predicts the average of the last n months (default 18 months)
-- **Plug-and-play**: Fully compatible with the VIEWS pipeline and model manager interfaces.
-- **No training required**: Baseline models are stateless and require no fitting.
-
-The current set up does not support ensembling as no model artifact is saved. 
-
-## Installation
-
-Clone the repository and install with pip:
-
-```bash
-pip install -e .
-```
-
-# views-baseline
-
 Baseline forecasting models for the VIEWS pipeline.
 
-This package provides **simple, transparent baseline models** that can be used for:
-
-* benchmarking more complex forecasting models
-* sanity checks
-
-The baselines are intentionally minimal and deterministic.
+This package provides **simple, transparent baseline models** that can be used for benchmarking more complex forecasting models and sanity checks. The baselines are intentionally minimal and deterministic (or reproducibly stochastic for distributional models).
 
 ---
 
@@ -43,75 +16,101 @@ The package implements several common baseline strategies for **panel time-serie
 All models follow a common interface:
 
 ```python
-model.fit(df)
+model.fit(df)                       # df: a pandas DataFrame OR a views_frames FeatureFrame
 predictions = model.predict(df, sequence_number)
 ```
 
-Predictions are returned as a `pd.DataFrame` indexed by `(time, entity)` with columns named:
-
-```
-pred_<target>
-```
+`fit()` / `predict()` accept **either** a pandas `DataFrame` **or** a `views_frames.FeatureFrame` (ADR-019): the input is normalized to a `FeatureFrame` once at the boundary (`to_feature_frame` in `model/frames/input.py`, the only place pandas is read), and all windowing/aggregation runs on its numpy arrays. Models are fitted automatically via `fit()` before generating predictions. Fitted model artifacts are pickled for ensemble compatibility.
 
 ---
 
 ## Implemented Models
 
-### 1. ZeroModel
+All baselines operate on panel data indexed by **(time `t`, unit `i`)** — `month_id` × spatial unit (`priogrid_id` at `pgm`, `country_id` at `cm`) — and forecast one or more target columns over a horizon of `output_length` steps starting at `test_start + sequence_number`. ("unit" is the term used in a `PredictionFrame`'s `SpatioTemporalIndex`; the input index calls the same axis the *entity*.)
 
-Predicts **0 for all targets**, entities, and forecast horizons.
+**Causal split (no leakage).** Every model is fit using only observations strictly before the test period. The last training month is `train_end = test_start − 1`; no value at or after `test_start` enters any fitted quantity. (The point models and `MixtureBaseline` filter `t < test_start`; `ConflictologyModel` filters `t ≤ train_end` — the same boundary, written two ways.)
+
+Two output families:
+
+- **Point forecasts** — one deterministic value per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, 1)`.
+- **Distributional forecasts** — `n_samples` Monte-Carlo draws per (unit, time, target). Returned as `dict[str, PredictionFrame]` with `y_pred` of shape `(N, n_samples)`.
+
+In all cases `N = (number of units) × output_length`, and each `PredictionFrame` carries a `SpatioTemporalIndex` with the `time`, `unit`, and spatial `level` (CM/PGM) of every row. All frames are built through a single construction seam, `to_prediction_frames` in `model/frames/output.py` (ADR-020), and the `level` is derived from the declared `loa` and validated against the input index (ADR-003).
+
+### Point Forecast Models
+
+#### ZeroModel
+
+Predicts exactly **0** for every target, unit, and forecast step. The lower-bound reference; performs no fitting.
 
 ```python
 ZeroModel(targets, partition_dict, loa)
 ```
 
----
+#### LocfModel — Last Observation Carried Forward
 
-### 2. LocfModel (Last Observation Carried Forward)
-
-Repeats the **last observed value before the test period** for each entity and target across the forecast horizon.
-
+For each unit and target, carries the **last observed value at `train_end`** forward unchanged across the entire horizon. A persistence baseline ("the most recent observation is the best guess"), strong for highly autocorrelated targets.
 
 ```python
 LocfModel(targets, partition_dict, loa)
 ```
 
----
+#### AverageModel
 
-### 3. AverageModel
-
-Forecasts the **mean of the last `m` months** before the test period for each entity and target.
-
-The window length `m` is configurable.
+For each unit and target, forecasts the **arithmetic mean of that unit's last `window_months` observations** before `test_start`, held constant across the horizon. A smoothed-persistence baseline, more robust than LOCF when individual months are noisy.
 
 ```python
-AverageModel(targets, months, partition_dict, loa)
+AverageModel(targets, window_months, partition_dict, loa)
 ```
 
-**Notes**:
+* Means are computed per unit; units with no history before `test_start` are skipped (logged).
 
-* averages are computed per entity
-* entities without sufficient history are skipped
+### Distributional Models
 
----
+Both draw `n_samples` i.i.d. samples per cell from a fresh, seeded generator (`numpy.random.default_rng(seed)`), so a given (data, configuration, seed) reproduces bit-for-bit. The RNG is consumed in a fixed unit → time → target order to guarantee reproducibility.
 
-### 4. ConflictologyModel
+#### ConflictologyModel — empirical climatology
 
-A special baseline used in the VIEWS context.
-
-Instead of producing point forecasts, this model returns uncertainty forecasts, e.g. forecasting samples (last `m` months) as the prediction for each future time step.
+For each unit `i`, collects that unit's **last `window_months` observed values** up to `train_end`, then draws `n_samples` samples **with replacement** from that per-unit history for every forecast cell. The predictive distribution for a cell is the recent empirical distribution of that same unit — a conflict "climatology." It uses only the unit's own recent history: no pooling across units, no older history.
 
 ```python
-ConflictologyModel(targets, months, partition_dict, loa)
+ConflictologyModel(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
-Each `pred_<target>` column contains a **list of length `m`**.
+#### MixtureBaseline — mixture of local and global empirical pools
+
+Combines two empirical sources to avoid the **zero-probability trap** (a unit whose recent history is entirely zero being structurally unable to predict a nonzero outcome):
+
+- **Local pool** — the unit's last `window_months` observed values (as in `ConflictologyModel`).
+- **Global pool** — **all strictly-positive** observed values, pooled across **every unit** and the **entire training span**.
+
+Each of the `n_samples` draws is taken from the **global** pool with probability `lambda_mix`, otherwise from the **local** pool (probability `1 − lambda_mix`). At `lambda_mix = 0` it reduces to a local-only empirical baseline (same source as `ConflictologyModel`); larger `lambda_mix` injects more cross-unit, full-history positive mass.
+
+```python
+MixtureBaseline(targets, window_months, lambda_mix, n_samples, partition_dict, loa, seed=42)
+```
+
+#### ParametricConflictology — no-hurdle parametric climatology
+
+The parametric counterpart of `ConflictologyModel`: instead of resampling each unit's window empirically, it **fits a single native-zero distribution** (`family`, e.g. `nb`) to that same window and draws `n_samples` per cell from the fitted law. `family`, `transform`, and `seed` are required, audited genome keys (ADR-021/ADR-022); `transform="log1p"` is illegal for count families and fails loud. In the closeness study (see `reports/closeness_experiment/`), `nb` is the family closest to conflictology on the C2ST indistinguishability metric.
+
+```python
+ParametricConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
+```
+
+#### ParametricHurdleConflictology — hurdle parametric climatology
+
+A two-part law per unit: a **zero-spike** (empirical zero-rate, Bernoulli) plus a **continuous positive-part family** (`lognormal`/`gumbel`/`gamma`) fit to the positive window values (mirrors Vesco et al. 2026's RVI mixture). `transform` (`none`/`log1p`) applies to the positive part and is inverted **per sample**; a non-negativity floor (`EMIT_FLOOR`) guarantees no negative magnitudes even for `gumbel`. Closeness study: `gamma`/`none` is closest on magnitude fidelity (Wasserstein/energy); `log1p` is worse on active cells. (Tweedie was evaluated and excluded — ADR-022.)
+
+```python
+ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
+```
 
 ---
 
 ## Model Catalog
 
-The `BaselineModelCatalog` provides a simple factory for instantiating models based on config:
+The `BaselineModelCatalog` provides a factory for instantiating models based on config:
 
 ```python
 from views_baseline.model.catalog import BaselineModelCatalog
@@ -124,7 +123,8 @@ Available models:
 
 ```python
 catalog.list_models()
-# ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel']
+# ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
+#  'ParametricConflictology', 'ParametricHurdleConflictology']
 ```
 
 ---
@@ -139,9 +139,10 @@ BaselineForecastingModelManager
 
 Key characteristics:
 
-* **no training step** (training is skipped)
-* predictions are generated per evaluation sequence
-* supports both evaluation and forecasting modes
+* Models are fitted automatically via `fit()` and artifacts are pickled
+* Predictions are generated per evaluation sequence
+* Supports both evaluation and forecasting modes
+* Distributional models are dispatched automatically via the `DistributionalBaselineModel` protocol
 
 ---
 
@@ -149,8 +150,8 @@ Key characteristics:
 
 Input DataFrame:
 
-* must be indexed by `(time, entity)`
-* must contain target columns specified in `config['targets']`
+* Must be indexed by `(time, entity)` as a MultiIndex
+* Must contain target columns specified in `config['targets']`
 
 Example index:
 
@@ -162,13 +163,22 @@ MultiIndex(levels=[month_id, priogrid_id])
 
 ## Notes & Caveats
 
-* Entities without sufficient history are skipped
+* Entities without sufficient history are skipped (with a warning)
 * No imputation beyond what the baseline logic implies
 * No clipping or post-processing is applied by default
+
+---
+
+## Installation
+
+Clone the repository and install with pip:
+
+```bash
+pip install -e .
+```
 
 ---
 
 ## License / Usage
 
 Internal VIEWS package. Intended for research and forecasting pipelines, not as a general-purpose forecasting library.
-

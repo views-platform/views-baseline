@@ -1,0 +1,57 @@
+name: Publish Package
+
+# Publishes views-baseline to PyPI when a GitHub Release is published
+# (create a Release from a vX.Y.Z tag). Auth is PyPI Trusted Publishing (OIDC) —
+# no stored API token. See docs/guides/publishing-to-pypi.md.
+#
+# One-time PyPI setup (project Settings -> Publishing -> add a trusted publisher,
+# or a *pending* publisher for the first-ever release before the project exists):
+#   Publisher: GitHub  |  Owner: views-platform  |  Repo: views-baseline
+#   Workflow:  publish_package.yml  |  Environment: (leave blank)
+#
+# NOTE: views-baseline depends on views-pipeline-core (>=3.0.0), which is not yet
+# on PyPI — `pip install views-baseline` will not resolve until that dependency is
+# published. Uploading here still succeeds and reserves the name/version.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:   # manual trigger (still publishes the committed version)
+
+permissions:
+  contents: read
+  id-token: write      # REQUIRED: mints the OIDC token for Trusted Publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (+ Python 3.11)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"   # the wheel is pure-Python (py3-none-any)
+
+      - name: Guard — pyproject version must be newer than what's on PyPI
+        run: |
+          uv run --no-project --python 3.11 --with packaging python - <<'PY'
+          import json, tomllib, urllib.request
+          from packaging.version import parse
+          new = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          try:
+              cur = json.load(urllib.request.urlopen(
+                  "https://pypi.org/pypi/views-baseline/json"))["info"]["version"]
+          except Exception:
+              cur = "0.0.0"
+          assert parse(new) > parse(cur), (
+              f"pyproject version {new} must be > current PyPI {cur} — bump it before releasing"
+          )
+          print(f"version guard OK: {new} > {cur}")
+          PY
+
+      - name: Build (hatchling, via uv)
+        run: uv build
+
+      - name: Publish to PyPI (Trusted Publishing — no token)
+        run: uv publish --trusted-publishing always
