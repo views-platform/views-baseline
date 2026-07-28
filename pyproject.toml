@@ -11,7 +11,7 @@ authors = [
     { name = "Simon Polichinel von der Maase", email = "simmaa@prio.org" },
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 # License is declared via the SPDX `license` expression above (PEP 639); the deprecated

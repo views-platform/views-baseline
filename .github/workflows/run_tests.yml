@@ -19,6 +19,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Lint runs project-independently (uvx), so it stays a reliable green signal even
+  # while `uv sync` cannot resolve views-pipeline-core (see the header note) — the
+  # `check` job below is gated behind that resolution and is expected red until then.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx ruff check .
+
   check:
     runs-on: ubuntu-latest
     strategy:
@@ -30,7 +40,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --python ${{ matrix.python-version }}
-      - run: uv run ruff check .
       - run: uv run pytest tests/ -v
 
   build:
