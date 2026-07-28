@@ -1,5 +1,12 @@
 name: Lint and Test
 
+# uv-based CI (mirrors the views-frames / views-datafactory / views-reporting pattern).
+#
+# NOTE: `uv sync` cannot currently resolve the dependency graph because
+# views-pipeline-core (>=3.0.0) is not on PyPI yet, so this workflow is expected to
+# be red until that dependency is published. The editable `views_pipeline` conda env
+# is the working test gate meanwhile (README / CONTRIBUTING).
+
 on:
   push:
     branches:
@@ -12,29 +19,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint:
+  check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-    - run: pip install ruff
-    - run: ruff check .
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --python ${{ matrix.python-version }}
+      - run: uv run ruff check .
+      - run: uv run pytest tests/ -v
 
-  test:
+  build:
     runs-on: ubuntu-latest
-    needs: lint
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
-    - name: Install Poetry
-      run: curl -sSL https://install.python-poetry.org | python3 -
-    - name: Install dependencies
-      run: poetry install
-    - name: Run tests
-      run: |
-        set -e
-        poetry run pytest tests/ -v
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
