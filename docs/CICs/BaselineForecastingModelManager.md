@@ -59,8 +59,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 - If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
 - Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
 - Calls `_setup_model_and_data()`.
-- If `isinstance(model, DistributionalBaselineModel)`: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns `dict[str, PredictionFrame]`.
-- Otherwise: calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns a single `pd.DataFrame` (not wrapped in a list).
+- Calls `model.predict(df=df_source, sequence_number=0, output_length=output_length)` and returns `dict[str, PredictionFrame]`. Every model — point and distributional — returns this same type; there is no `isinstance` dispatch (ADR-010/ADR-017).
 
 **`_evaluate_sweep(eval_type, model)`**:
 - Reads input from disk via `_load_source()` (the same dispatch as `_setup_model_and_data()`).
@@ -84,14 +83,18 @@ The `config` dict is populated by the base class `_config_manager` before any li
 
 ## Outputs and Side Effects
 
-| Method | Output type (point) | Output type (distributional) | Side effects |
-|---|---|---|---|
-| `_train_model_artifact()` | Fitted model instance | Fitted model instance | Writes `.pkl` file to `artifacts/` |
-| `_evaluate_model_artifact()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | Persists artifact timestamp in config via `add_config` |
-| `_forecast_model_artifact()` | `pd.DataFrame` | `dict[str, PredictionFrame]` | Persists artifact timestamp in config via `add_config` |
-| `_setup_model_and_data()` | `(model, df_source)` | `(model, df_source)` | None |
-| `_generate_predictions()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None |
-| `_evaluate_sweep()` | `list[pd.DataFrame]` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
+Output type is **uniform** across point and distributional models (ADR-010): all `predict()`-driven methods return `PredictionFrame`s, differing only in `y_pred` width (`(N, 1)` point / `(N, n_samples)` distributional).
+
+**Downstream consumption (verified, issue #69):** these frames are consumed by pipeline-core's `PredictionFrameEnsembleManager`, whose `_aggregate_prediction_frames` requires constituents to share `sample_count` — a point `(N, 1)` frame pools with other single-sample frames, and mixing it with a distributional `(N, n_samples>1)` frame fails loud (pipeline-core #160 / C-205), never a silent unbalanced pool. Cross-**level** `point-broadcast` (cm→pgm reconciliation) is a separate mechanism, not constituent pooling. Pinned by `tests/test_ensemble_consumption.py`.
+
+| Method | Output type (all models) | Side effects |
+|---|---|---|
+| `_train_model_artifact()` | Fitted model instance | Writes `.pkl` file to `artifacts/` |
+| `_evaluate_model_artifact()` | `dict[str, list[PredictionFrame]]` | Persists artifact timestamp in config via `add_config` |
+| `_forecast_model_artifact()` | `dict[str, PredictionFrame]` | Persists artifact timestamp in config via `add_config` |
+| `_setup_model_and_data()` | `(model, df_source)` | None |
+| `_generate_predictions()` | `dict[str, list[PredictionFrame]]` | None |
+| `_evaluate_sweep()` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 
 ---
 
@@ -135,9 +138,9 @@ The manager emits `logger.info()` messages at lifecycle boundaries: initialisati
 |---|---|
 | `ReproducibilityGate` | Config validation gate — `audit_manifest()` called in `_setup_model_and_data()`. |
 | `BaselineModelCatalog` | Model factory. |
-| `DistributionalBaselineModel` | Protocol used for `isinstance()` dispatch. |
+| `DistributionalBaselineModel` | Protocol marking distributional models (`distributional: bool`) — semantic classification, not output dispatch. |
 
-**Does not depend on** `build_prediction_grid` or any individual model class directly.
+**Does not depend on** the frame builders (`build_prediction_frame` / `sample_prediction_grid` in `model/frames/output.py`) or any individual model class directly.
 
 ---
 
@@ -160,11 +163,11 @@ model = manager._train_model_artifact()   # fits, pickles, returns model
 
 # Evaluation
 preds = manager._evaluate_model_artifact(eval_type="temporal")
-# preds is list[pd.DataFrame] for point models
+# preds is dict[str, list[PredictionFrame]] for all models (point and distributional)
 
 # Forecasting
 forecast = manager._forecast_model_artifact()
-# forecast is pd.DataFrame for point models
+# forecast is dict[str, PredictionFrame] for all models
 ```
 
 Testing pattern (from `test_baseline_manager.py`):
@@ -203,10 +206,9 @@ manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "AverageMod
 manager._evaluate_model_artifact(eval_type="temporal")
 # ValueError: "Model 'AverageModel' requires config keys ['window_months'] but they are missing"
 
-# Expecting a list from _forecast_model_artifact (it returns a single prediction, not a list)
+# Indexing _forecast_model_artifact by position (it returns dict[str, PredictionFrame], keyed by target)
 forecast = manager._forecast_model_artifact()
-forecast[0]   # TypeError if forecast is a DataFrame (point model)
-              # or KeyError if accessing by integer on a dict (distributional model)
+forecast[0]   # KeyError — index by target key (e.g. forecast["y1"]), not by integer position
 ```
 
 ---
