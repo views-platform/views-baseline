@@ -4,10 +4,10 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-07-21                           |
-| Total Concerns    | 37                                   |
-| Open Concerns     | 33                                   |
-| Resolved Concerns | 3                                    |
+| Last Updated      | 2026-07-31                           |
+| Total Concerns    | 38                                   |
+| Open Concerns     | 16                                   |
+| Resolved Concerns | 21                                   |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
 ---
@@ -22,6 +22,24 @@
 | 4 | Low | Code quality concerns that do not affect correctness or reliability. |
 
 Tiers reflect **expected risk** (impact × likelihood), not impact alone. A silent-correctness risk with a low-likelihood trigger can sit at Tier 2 rather than Tier 1 — the narrative should state the impact-vs-likelihood reasoning when it does (see C-05, C-13).
+
+---
+
+## Causal Clusters
+
+Root-cause groupings from the 2026-07-31 strategic review. Most are now resolved; the index
+keeps the shared causes visible so a future regression is read against its cluster, not in
+isolation.
+
+| Cluster | Root cause | Entries | Status |
+|---------|-----------|---------|--------|
+| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18 | Resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020); only C-19 OCP half deferred (ADR-012) |
+| K2 — numpy-port byte-identity (epic #47) | pandas→numpy rewrite risking silent forecast drift + weak guard tests | C-32, C-33, C-34, C-35, C-36, C-37, C-29 | Resolved & merged (PR #60); only C-30 (numpy pin) deferred |
+| K3 — Seed / reproducibility | Seed not wired; determinism-only tests | C-10, C-24, C-25, C-29 | Resolved & merged (ADR-021, #31) |
+| K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20 | Open, cross-repo (pipeline-core / views-models) |
+| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07 | Partly subsumed by K1; C-06/C-07 residual |
+| K6 — Governance-doc drift | Docs lag code changes | C-21, C-28 | C-28 resolved; C-21 residual sites |
+| K7 — Distribution / packaging | Cross-repo dependency on unpublished pipeline-core | C-38, C-17 | C-17 superseded; C-38 live, blocked on pipeline-core #319 |
 
 ---
 
@@ -83,6 +101,8 @@ See also C-03 (related: same code locations, C-03 addresses duplication, C-05 ad
 
 **Forward link (FeatureFrame input, 2026-06-04):** this same direct consumption of the DataFrame `(time, entity)` MultiIndex is what makes views-baseline a *high-effort* consumer in the platform's FeatureFrame-input migration — point models read `df.index.names` / `df[targets]` directly, so an input-format switch breaks `fit()` unless adapted (unlike adapter-fronted engines such as hydranet/r2darts2). Adopting FeatureFrame input (which carries its own validation) could *subsume* this risk. Tracked at `views-platform/views-pipeline-core#161` (input path) and `views-platform/views-pipeline-core#162` (contract hardening); see ADR-019 (proposed, not implemented).
 
+> **Re-scope (2026-07-31, strategic review):** the FeatureFrame input boundary this entry's forward-link named as potentially subsuming it (**C-31**) is now resolved and merged — `to_feature_frame` validates loa↔level and rejects NaN / non-integer / overflow indices at the boundary. The positional-index root is largely closed on the frame path; residual exposure is only the raw-DataFrame dual-input path. Candidate for Tier 3 at next review.
+
 ---
 
 ### C-06: `partition_dict` structure assumed but never validated
@@ -113,19 +133,7 @@ The config's `targets` list is passed through to models and used to slice DataFr
 
 See also C-06 (related: both are data-layer boundary validation gaps not covered by the ReproducibilityGate).
 
----
-
-### C-08: Duplicated lazy `PredictionFrame` import in distributional predict() methods
-
-| Field | Value |
-|-------|-------|
-| ID | C-08 |
-| Tier | 4 |
-| Source | repo-assimilation (2026-06-01) |
-| Trigger | When views-pipeline-core renames or restructures the `data.prediction_frame` module path — both lazy import sites must be updated simultaneously, and omitting one produces a `ModuleNotFoundError` only when that specific model's `predict()` is exercised |
-| Location | `views_baseline/model/baseline.py:259,380` |
-
-`ConflictologyModel.predict()` and `MixtureBaseline.predict()` each contain an identical lazy import: `from views_pipeline_core.data.prediction_frame import PredictionFrame`. The duplication is mandated by ADR-002 (no module-level pipeline-core imports in `model/`) and acknowledged in ADR-002 and ADR-013. The risk is low — Python's module cache makes it functionally equivalent to a single site — but the pattern scales linearly with each new distributional model (ADR-012 Step 1 requires it). Currently mitigated by the fact that both sites are tested by the distributional model tests.
+> **Partial mitigation (2026-07-31):** the merged `to_feature_frame` boundary now raises `ValueError: missing required target column(s)` when a declared target is absent (C-34 resolution) — surfacing the fit-path failure at the boundary rather than deep in pandas, for the frame/df-lift path. Kept Open for the remaining deep-`KeyError` paths and the predict-path column-agnostic tradeoff (a *misnamed* target no longer errors, C-34 residual).
 
 ---
 
@@ -141,25 +149,7 @@ See also C-06 (related: both are data-layer boundary validation gaps not covered
 
 ADR-002 and ADR-013 define strict dependency topology rules: `model/` must have zero module-level imports from views-pipeline-core. These rules are enforced only by code review. No `import-linter` config, ruff plugin, or CI grep check exists. ADR-013 explicitly notes this as a known gap and suggests a CI lint rule. A single forbidden import would break the foundation-layer testability guarantee — `test_baseline.py`, `test_catalog.py`, and `test_protocol.py` would fail in environments where pipeline-core is absent or broken, and the failure would be attributed to pipeline-core rather than the import violation.
 
----
-
-### C-10: `seed` is never forwarded from config to the distributional models (config/sweep seed silently ignored)
-
-| Field | Value |
-|-------|-------|
-| ID | C-10 |
-| Tier | 2 |
-| Source | repo-assimilation (2026-06-01); mechanism corrected + re-tiered via model-review of white_ranger (2026-06-25) |
-| Trigger | When any config or WandB sweep sets `seed` for `ConflictologyModel`/`MixtureBaseline` (e.g. white_ranger's sweep over `[42, 123, 456]`) — the value is silently dropped and the model always uses the hardcoded default `seed=42`. Seed sweeps are therefore inert (every leg identical), and any config-declared non-42 seed produces results that differ from the declared config with no warning |
-| Location | `views_baseline/model/catalog.py` `_get_conflictology_model` / `_get_mixture_model` — **neither factory passes `seed=` to the constructor**; `views_baseline/model/baseline.py` (`seed: int = 42` default; `np.random.default_rng(self.seed)`); `views_baseline/infrastructure/reproducibility_gate.py` `ALGORITHM_GENOMES` (`seed` absent → not audited). Evidence: `views-models/models/white_ranger/configs/config_sweep.py` (inert `seed` sweep) |
-
-**Mechanism corrected (2026-06-25):** the original entry framed this as "seed is not *audited*, so a *misspelled* key defaults." The actual defect is stronger — the catalog factory methods for both distributional models omit `seed` entirely, so `config["seed"]` **never reaches the model constructor**; both models always use the hardcoded default `42` regardless of what the config (correctly spelled or not) declares. Consequences: (1) a WandB **seed sweep is a no-op** — white_ranger sweeps `seed ∈ {42, 123, 456}` and every leg produces identical draws, which can support a false "results are seed-robust" conclusion; (2) any deployed baseline that declares `seed != 42` silently diverges from its own config. white_ranger is correct only by accident (its `seed: 42` equals the default). Re-tiered from 3 to 2: the failure is **silent** (no error), **already realized** (the sweep is inert now), and can produce **misleading experimental conclusions** about seed sensitivity. Fix is small: forward `seed=self.config.get("seed", 42)` in both factories, and add `seed` to `ALGORITHM_GENOMES` so it is audited (ADR-014 §4). Under investigation on a dedicated fix branch (2026-06-25).
-
-See also C-14/ADR-014 (the reproducibility-gate contract this should extend to `seed`).
-
-> **Status (2026-06-25):** fixed in the working tree (`fix/distributional-seed-not-forwarded`) under **ADR-021** — the catalog forwards `config["seed"]` strictly, `seed` is a required+audited `ALGORITHM_GENOMES` key, and a single `DEFAULT_SEED` sentinel backs direct construction. Enforced by `tests/test_falsification_seed_wiring.py`, catalog forwarding + param-completeness tests, and a gate rejects-missing-seed test (114 green). Stays Open until the **coordinated merge** with views-models #233 (declare `seed` in the 9 configs) lands together.
->
-> **RESOLVED (2026-07-17):** merged — views-models#234 (declares `seed`, commit `d1187be`) then views-baseline#31 (genome + strict forward, merge `506523b`) landed on `development` in the safe order. All 20 distributional configs now declare `seed`; the fix is live.
+> **Partial mitigation (2026-07-31):** an AST guard now walks all `Import` nodes and fails CI on a runtime `import pandas` in the model layer (C-36 resolution, `tests/test_falsification_reorg_principles.py`) — concrete enforcement of one topology rule. The general “no module-level `views_pipeline_core` import in `model/`” rule remains convention-only (no import-linter). Kept Open.
 
 ---
 
@@ -229,68 +219,6 @@ See also C-13 (related root cause: the ecosystem treating PredictionFrame as inh
 
 ---
 
-### C-15: Dead `build_prediction_grid` DataFrame builder retained and tested post-migration
-
-| Field | Value |
-|-------|-------|
-| ID | C-15 |
-| Tier | 4 |
-| Source | repo-assimilation (2026-06-05) |
-| Trigger | When a contributor adds a sixth model or modifies output handling and reuses `build_prediction_grid()` believing it is a supported output path — they build on a helper that no production code path exercises after the PredictionFrame migration |
-| Location | `views_baseline/model/helpers.py:12-48` (`build_prediction_grid`); `tests/test_helpers.py` (`test_build_prediction_grid_empty`) |
-
-`build_prediction_grid()` — the legacy DataFrame builder that returns a MultiIndexed `pred_{target}` frame — is retained in `helpers.py` and still carries a unit test for its empty case, but is **called by nothing** in production after PR #15 (all models now use `build_prediction_frame()` → `dict[str, PredictionFrame]`). ADR-018 documents it as "retained for reference, called by nothing." The risk is purely drift: a maintainer reading `helpers.py` may infer a live DataFrame output path still exists, because the function is present and green-tested. No correctness or reliability impact; single-developer scope. Candidate for deletion or an explicit `@deprecated`/docstring marker disambiguating it from `build_prediction_frame()`.
-
----
-
-### C-16: views-baseline un-migrated to the extracted `views-frames` PredictionFrame (governed break; DIP/SDP root cause)
-
-| Field | Value |
-|-------|-------|
-| ID | C-16 |
-| Tier | 2 |
-| Source | repo-assimilation (2026-06-24) |
-| Trigger | When any model's `predict()` executes against a `views-pipeline-core` that carries #188/PR #206 (the local editable checkout is already on `development` past #206; any clean install resolving to 3.0.0 likewise) — `PredictionFrame.__init__()` raises `TypeError: got an unexpected keyword argument 'identifiers'`, because the constructor is now the `views_frames` leaf `(y_pred, index: SpatioTemporalIndex(time, unit, level), metadata=None)` while the code passes `identifiers={...}` |
-| Location | `views_baseline/model/helpers.py:136` (`build_prediction_frame`), `views_baseline/model/baseline.py:285` (`ConflictologyModel.predict`), `views_baseline/model/baseline.py:402` (`MixtureBaseline.predict`); contract also asserted in `README.md:38,70`; protocol return typed `-> dict` not `dict[str, PredictionFrame]` at `views_baseline/model/protocol.py:23,41` |
-
-This is **not accidental dependency drift** but an un-adopted **governed platform migration**: the platform's Frame types were extracted into a standalone `views-frames` package (the "frames replace dataframes" program; ADR-017/018/019), and `views-pipeline-core` #188 (PR #206) retires its local `PredictionFrame` to re-export the `views_frames` leaf — a breaking change destined for pipeline-core **3.0.0**. The local editable `views-pipeline-core` checkout is already on `development` past #206 (its `prediction_frame.py` is now `from views_frames import PredictionFrame`), so the suite is **26/98 red in this env** even though pip metadata still reads `2.3.0`; the 72 green tests are exactly those that never construct a real frame. The failure is loud (`TypeError`) and total, not silent — hence Tier 2, not Tier 1. The **root cause is architectural, not a version number**: the model layer depends directly on the *concrete, volatile* platform leaf, constructing it inline at three sites, and baseline owns no boundary abstraction of its own (a DIP/SDP/SAP violation — high-level policy depending toward the least-stable component). That is why C-01, this break, and the pending FeatureFrame *input* migration are the same root cause surfacing repeatedly. The fix is a baseline-owned frames boundary (one adapter), not a pin bump alone. Specced and tracked by **views-baseline #21** (lockstep with pipeline-core #188).
-
-See also C-01 (RESOLVED — its resolution rationale is invalidated here), C-08 (the lazy-import workaround the boundary adapter subsumes), C-05/C-14 (the same input/output complecting), C-17 (dependency-declaration hygiene), C-18 (level-inference correctness), C-19 (scattered construction / OCP), and D-04/D-06. Tracked by GitHub issue #21.
-
----
-
-### C-17: `views-frames` undeclared and pin admits the breaking pipeline-core release
-
-| Field | Value |
-|-------|-------|
-| ID | C-17 |
-| Tier | 2 |
-| Source | expert-review (2026-06-24) |
-| Trigger | When `poetry update`/`poetry lock` or a clean install resolves dependencies — `views-pipeline-core` may resolve to the breaking `3.0.0` (admitted by `<=3.0.0`), and `views-frames` (now the owner of the core `PredictionFrame`/`SpatioTemporalIndex`/`SpatialLevel` types) is not declared at all, so the break is pulled in with no lockfile or contract-test guard |
-| Location | `views_baseline/pyproject.toml:11-13` (`[tool.poetry.dependencies]`, single dep `views-pipeline-core >=2.3.0,<=3.0.0`; no `views-frames`) |
-
-`pyproject.toml` declares exactly one runtime dependency and pins it `>=2.3.0,<=3.0.0` — a range whose upper bound *includes* the release (3.0.0) that retires the old `PredictionFrame` (C-16). The package that now owns the data structures flowing through the entire system, `views-frames`, is undeclared, so its version floats uncontrolled in any environment that has it transitively. There is no committed lockfile guarantee and no contract test that constructs the *real* leaf, so in a clean install pinned at 2.3.0 the break is invisible until 3.0.0 lands. This is a Stable-Dependencies / Stable-Abstractions failure: baseline depends toward an unmanaged, volatile surface. Mitigation (none applied yet): declare `views-frames` with a compatible range, bump the pipeline-core pin to `>=3.0.0,<4.0.0` per #21, commit the lockfile, and add one canary test that builds a real `views_frames.PredictionFrame` through the boundary adapter.
-
-See also C-16 (the realized break), C-01 (RESOLVED — same pin-discipline class).
-
----
-
-### C-18: Spatial-level mislabel if `SpatialLevel` is inferred from the positional entity index
-
-| Field | Value |
-|-------|-------|
-| ID | C-18 |
-| Tier | 2 |
-| Source | expert-review (2026-06-24) |
-| Trigger | When the #21 migration derives `SpatialLevel` from `df.index.names[1]` (e.g. `_level_from_entity_idx`: `"country_id"→CM`, else `PGM`) rather than from the declared `loa`, and a loader later renames the entity level (`priogrid_gid`/new alias), flips index order, or introduces a third level — the output `PredictionFrame` is stamped with the wrong `SpatialLevel` and no error is raised |
-| Location | Prospective per #21 at `views_baseline/model/helpers.py:~138` and `views_baseline/model/baseline.py:285,402`; positional-index root at `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` |
-
-The #21 spec derives the required `SpatialLevel` by string-matching the entity index name (`df.index.names[1]`). This is the same unvalidated positional-index assumption already tracked as C-05, but with a new and more dangerous consequence: the level is now *written into the output frame's identity*. A fall-through default (`else PGM`) means a renamed or reordered entity level produces a frame labelled `PGM` when it is `CM` (or vice versa) — a **silent mislabel** that downstream evaluation, aggregation, and joins consume as truth. Impact is Tier-1-shaped (silent output incorrectness, no signal); it sits at Tier 2 because the likelihood is gated on *how* #21 is implemented — the risk is fully preventable by single-sourcing the level. ADR-003 ("authority of declarations over inference") favours deriving from the declared `loa`; #21 chose inference; the two are independent sources of truth for one fact and can disagree. Mitigation: derive `level` once from a single source, and assert `df.index.names == (time_idx, entity_idx)` **and** `loa ⇔ entity_idx` agreement at the model boundary, raising on mismatch.
-
-See also C-05 (acute new instance of the same positional-index root cause) and D-05 (the declared-vs-inferred level disagreement).
-
----
-
 ### C-19: Output construction scattered across three sites; model addition is modification, not extension (OCP)
 
 | Field | Value |
@@ -353,6 +281,315 @@ See also C-16 / ADR-020 (the epic that corrected the adjacent construction-site 
 | Location | `views_baseline/model/helpers.py` `to_prediction_frames` — `PredictionFrame(y_pred, index)` is constructed with no `metadata` argument |
 
 `to_prediction_frames` is the single construction chokepoint (ADR-020), which makes it the natural — and only — place to stamp `FrameMetadata` (views-frames v1.4.0 added `run_id`/`data_version`) if downstream ever wants run identity carried on the frame itself. Not required for the #21 migration and not a correctness issue; recorded as an enhancement opportunity that the seam makes trivial to add later. No current consumer requests it.
+
+---
+
+### C-27: Tweedie `lam` is unbounded when the derived index `p` clamps to the ceiling (OOM + unclamped magnitude)
+
+| Field | Value |
+|-------|-------|
+| ID | C-27 |
+| Tier | 3 — **WITHDRAWN 2026-07-18** |
+| Source | review-diff (2026-07-18, epic #33 S9) |
+| Trigger | When `fit_tweedie` is called on a **low-zero-rate, low-dispersion** window (so the derived `p = 2 − m²/(var·lam0)` exceeds 2 and clamps to `2 − eps`), making `lam = m²/(var·(2−p)) ≈ 1000·m²/var` — e.g. a new/low-dispersion regression target routed to `ParametricConflictology(family="tweedie")` |
+| Location | `views_baseline/model/distributions.py` (`fit_tweedie` `lam` recompute; `sample_tweedie` `rng.gamma(..., size=total)` allocation); `views_baseline/model/baseline.py` (`ParametricConflictology.predict` native-zero path applies no clamp) |
+
+> **WITHDRAWN (2026-07-18):** the Tweedie family was **removed** from views-baseline in S9 (code deleted, not fixed), so this risk no longer exists. Diagnosis that drove the removal: on the real pgm data the OOM/ceiling case (`p≥2`) fired **zero** times (max clamped λ = 0.3); what actually occurred was the *benign* `p≤1` clamp on ~40% of active cells — windows with 1–2 events in 36 months that a continuous family fundamentally cannot represent. The only honest handling of that infeasibility was either clamp (hides misspecification) or empirical fallback (turns the parametric model back into conflictology) — neither acceptable — so Tweedie was excluded from the baseline. See ADR-022 (Tweedie exclusion record) and `reports/closeness_experiment/FINDINGS.md` §S9. Original narrative retained below for provenance.
+
+The Tweedie index `p` is derived from the window's mean/var/zero-rate and clamped to `(1+eps, 2−eps)` to stay in the compound Poisson-Gamma regime — but the clamp bounds only the *index*, not the rate. When `p` clamps to the ceiling, `lam` is recomputed as `1000·m²/var` and left unbounded. `sample_tweedie` then draws `rng.poisson(lam, size)` and allocates `rng.gamma(alpha, theta, size=total)` with `total = counts.sum()`; a pathological cell drives `lam` to 1e4–1e6 → a 1e7–1e9-element jump array → **OOM/hang**. Coupled second consequence: the native-zero path in `ParametricConflictology.predict` applies **neither** `clamp_log` **nor** `clamp_floor` (those guard the hurdle/log1p paths), so the same `lam` also yields an **unbounded emitted magnitude** — the failure class `EMIT_LOG_CEIL` exists to prevent. Did not fire in the S8 experiment because conflict windows are high-zero-rate/high-dispersion (`p` clamps toward 1, `lam` small); it is an atypical-but-realistic edge for a low-dispersion target. Tier 3 (not 2): needs an atypical window, no silent corruption in the intended zero-inflated regime, and the fix is a localized ceiling. **Not yet fixed** — a deliberate policy call: a single-sourced `_TWEEDIE_LAM_CEIL` (WARN on cap) bounds both the array size and the magnitude but under-preserves the mean in the already-approximate clamped-`p` regime. See also C-26 (the gumbel floor, fixed) as the sibling native-zero/positive-part numeric guard, and the `EMIT_LOG_CEIL` ceiling it mirrors.
+
+---
+
+### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin)
+
+| Field | Value |
+|-------|-------|
+| ID | C-30 |
+| Tier | 4 |
+| Source | review (2026-07-19, PR #45) |
+| Trigger | When `numpy` is upgraded to a version whose `Generator` streams (`gamma`/`poisson`/`choice`) change, the hardcoded expected arrays in `tests/test_golden.py` fail — a maintenance false-positive requiring deliberate regeneration, not a code defect |
+| Location | `tests/test_golden.py`; `pyproject.toml` (no `numpy` version constraint) |
+
+The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
+
+> **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
+
+---
+
+### C-32: Byte-identity risk of the PR-2 numpy-on-FeatureFrame migration (silent forecast drift)
+
+| Field | Value |
+|-------|-------|
+| ID | C-32 |
+| Tier | 4 |
+| Source | falsify (2026-07-20, PR-1 reorg audit — forward risk of the P1 remediation); plan (epic #47 PR-2) |
+| Trigger | When PR-2 S6–S8 (issues #53–#55) rewrite `window_pool` and the point/Mixture/parametric `fit` aggregations from pandas (`groupby(...).tail`, `.xs`, sort order) to numpy-on-FeatureFrame — any change to entity ordering, tail-selection order, or float dtype silently shifts the seeded RNG stream and therefore the sampled `y_pred` |
+| Location | `views_baseline/model/frames/pooling.py` (`window_pool`), the model `fit()` aggregations under `views_baseline/model/models/**`; gated by `tests/test_golden.py` (byte-identity) + `tests/test_pooling.py` |
+
+The distributional models' output is reproducible only because a single seeded `np.random.default_rng` is advanced in a fixed **entity→time→target** order over pandas-derived pools (ADR-011). Re-deriving those pools with numpy changes nothing *if and only if* the entity order, the per-entity tail (last `window_months`) order, and the emitted float dtype are bit-for-bit preserved. A subtle divergence (e.g. numpy sort vs pandas `sort_index` stability, `unique()` ordering, `float64` vs `float32`) produces **different draws with no error signal** — wrong forecasts that pass every structural test. Impact is high (silent forecast incorrectness); likelihood is real during the rewrite; it is **not Tier 1** only because the golden characterization tests (C-29) provide a loud, total catch *if run at every step*. Mitigation: port one model at a time, gate each step on `test_golden.py` + `test_pooling.py` byte-identity, and treat any golden diff as a stop-the-line defect (not a regenerate-the-baseline event) until the change is proven order-preserving.
+
+See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator coupling), C-31 (the DIP migration this executes), C-11/C-25 (the RNG-order reproducibility contract this must preserve).
+
+> **Decision (2026-07-20) — FeatureFrame is float32; golden regenerated once, deliberately.** S5 (the `to_feature_frame` adapter) surfaced that `views_frames.FeatureFrame` is a **float32** container by design (class contract; `coerce_values` casts; no float64 option), while the existing pools and golden tests are float64. Strict float64 byte-identity through a FeatureFrame is therefore impossible. The maintainer chose **FeatureFrame-canonical (float32)** with a **one-time, deliberate** golden regeneration to the platform's real precision (not a maintenance regen). To keep the migration safe despite the regen, the ordering/logic guard is **decoupled from the precision change**: (1) the ported numpy `window_pool` is proven byte-identical to the pandas `window_pool` on a **float64** panel (built directly from the df) — this pins entity order, tail order, and RNG advance independent of dtype (`test_pooling`, permanent); (2) only then is the model source switched to the float32 FeatureFrame and the model-level golden regenerated **once**, with the diff reviewed to confirm it is float32-rounding-only and nothing else. After the flip, `test_golden.py` pins the float32-canonical output and byte-identity holds going forward.
+
+> **Discharged (2026-07-20, PR-2 S6–S10).** The migration landed with the ordering guard intact and **no golden regeneration was actually required**: the distributional golden fixtures use small-integer data (`(t*3+u*7)%9`), which is float32-exact, so routing it through the float32 FeatureFrame is lossless and `test_golden.py` stayed **byte-identical unchanged** — confirming the numpy port preserved entity/tail/RNG order and per-cell logic. The float64 ordering guard (`test_pooling::test_window_pool_arrays_matches_pandas_reference_in_float64`, using non-float32-exact values) independently pins the order/logic. The float32 precision change is therefore invisible on the golden set and only affects non-integer production magnitudes (the accepted trade-off). One deliberate behaviour change shipped alongside: `window_months <= 0` now fails loud (`ValueError`) at fit for all windowing models, replacing the pre-PR-2 accidental KeyError / silent-NaN. Risk retained at Tier 2 as documentation of the precision boundary; the acute trigger (a non-order-preserving rewrite) has passed.
+
+> **Merged (2026-07-20, code-review #60 finding #6).** Two additions from the max-effort review: (1) the `_from_dataframe` code comment `"float64 block ... byte-identity with the pandas path"` (`model/frames/input.py`) is **now false** — `FeatureFrame.from_2d` immediately downcasts to float32, so the whole model layer (production df path included) computes on float32-rounded values; the comment is corrected in WS4. (2) The reach is a **reproducibility**, not merely precision, effect for non-float32-exact targets: `MixtureBaseline`'s global pool `v[v > 0]` and `ParametricHurdleConflictology`'s `pool == 0.0` / `pool > 0` zero-spike split are computed on float32 values, so a value that rounds across the 0 boundary changes the pool contents/size and reindexes the seeded `rng.choice` — the draws diverge from the pre-PR float64 path (still within the accepted FeatureFrame-canonical decision, but broader than "rounding").
+
+> **Re-tiered 2→4 (2026-07-31, strategic review):** the acute non-order-preserving-rewrite trigger has passed — the numpy port merged and `test_golden.py` stayed byte-identical. Retained as documentation of the float32 precision boundary, not a live structural risk; kept Open as a standing boundary note.
+
+---
+
+### C-38: views-baseline 1.0.0 is published to PyPI but not installable until views-pipeline-core 3.0.0 ships there
+
+| Field | Value |
+|-------|-------|
+| ID | C-38 |
+| Tier | 3 |
+| Source | release (2026-07-31, PyPI v1.0.0 publish — deliberate "publish now anyway" tradeoff) |
+| Trigger | When anyone runs `pip install views-baseline` (or a `uv sync` / `uv pip install` that resolves it) from PyPI **before** `views-pipeline-core 3.0.0` is published there — dependency resolution fails hard because the required `views-pipeline-core>=3.0.0,<4.0.0` has no release on pypi.org (only 2.3.0 exists). The same unresolvable dependency keeps the `check` matrix in `run_tests.yml` red. |
+| Location | `pyproject.toml:36` (`"views-pipeline-core>=3.0.0,<4.0.0"`); `.github/workflows/run_tests.yml` (`check` job `uv sync`, and the header note documenting the expected-red state); external blocker `views-platform/views-pipeline-core#319` (publish 3.0.0 to PyPI) |
+
+views-baseline 1.0.0 was uploaded to PyPI via Trusted Publishing, reserving the name and version, **while one of its two hard dependencies is not on PyPI at all**. `views-frames>=1.3.0` resolves (it is published, 1.10.1); `views-pipeline-core>=3.0.0` does not — pipeline-core's newest PyPI release is 2.3.0, and 3.0.0 exists only in-repo (held from publication for non-technical reasons). Consequently the published artifact is **installable in name only**: every `pip install views-baseline` from a clean index errors at resolution, and the uv `check` CI job cannot `uv sync` for the same reason (documented, expected-red). The maintainer accepted this knowingly to reserve the release and complete the packaging pipeline ahead of the dependency; the working test gate remains the editable `views_pipeline` conda env, not the PyPI install.
+
+**Tier rationale (impact vs. likelihood):** the failure is **loud** (a resolution error, never silent corruption) and has a single, known discharge condition, so it is not Tier 2 fragility. Blast radius today is small — no consumer is expected to `pip install` this yet (the conda env is the sanctioned path) — but it is a genuine cross-repo coupling that increases friction and confusion until cleared, hence Tier 3. **Discharge:** resolve when views-pipeline-core 3.0.0 is published to PyPI (`#319`) and a clean `pip install views-baseline==1.0.0` resolves; the `check` CI job goes green at the same moment. Tracked from this repo by the pandas/packaging follow-up issue and cross-repo by pipeline-core #319.
+
+See also C-17 (the prior pin-hygiene entry — **inverted** here: 3.0.0 is now intentionally *required* rather than dangerously *admitted*), C-16 (the code break the `>=3.0.0` floor exists to require the fix for), and C-31/C-32 (the FeatureFrame-native work that made the frame path pandas-free, orthogonal to this distribution gap).
+
+---
+
+## Disagreements
+
+### D-01: Clean break vs. gradual dual-format migration for PredictionFrame adoption
+
+| Field | Value |
+|-------|-------|
+| ID | D-01 |
+| Source | expert-review (2026-06-02) |
+| Perspectives | Feathers (gradual — the dual-format seam enables per-model testing and rollback if ensemble integration fails), Hickey/Ousterhout (clean break — baseline has 5 trivial models and 880 LOC, transient dual-format complexity is not justified, hydranet proved the direct switch works at larger scale), Beck (gradual only if integration-tested at each step; without an integration test, gradual is just slow risk accumulation) |
+| Resolution | **Resolved in practice (2026-06-04).** Clean break implemented in PR #15: all point models switched directly to `dict[str, PredictionFrame]`, the isinstance dispatch was removed, and no dual-format path was introduced. Final on merge of PR #15. |
+
+---
+
+### D-02: Sample-count asymmetry — current defect vs. future concern
+
+| Field | Value |
+|-------|-------|
+| ID | D-02 |
+| Source | expert-review (2026-06-02) |
+| Perspectives | Nygard/Kleppmann (design defect now — silent acceptance of invalid input should be fixed in pipeline-core regardless of current usage; the code validates 2 of 3 structural properties and the missing third enables silent data corruption), Feathers/Ousterhout (future concern — no ensemble triggers it today, golden_hour is homogeneous at 3×64, the fix is important but not urgent), Beck (write the test now — `test_aggregate_rejects_heterogeneous_sample_counts()` forces the design decision without requiring the full fix) |
+| Resolution | Unresolved. Recommend fixing now — 5 lines of validation in pipeline-core, zero risk, prevents a class of silent corruption. See C-13. |
+
+---
+
+### D-03: Baseline migration deferral mechanism
+
+| Field | Value |
+|-------|-------|
+| ID | D-03 |
+| Source | expert-review (2026-06-02) |
+| Perspectives | Feathers (event-triggered: un-defer baseline issues #8-#11 when golden_hour issue #126 closes — clear, concrete, no drift), Ousterhout (time-boxed: proceed independently if golden_hour hasn't shipped by a deadline — prevents indefinite blocking on another team's timeline), Hickey (permanent deferral until someone actually needs baselines in a PFE ensemble — don't build for hypothetical requirements; baselines currently serve only as evaluation benchmarks, not ensemble constituents) |
+| Resolution | **Moot — overtaken by events (2026-06-04).** The deferral never took effect: the baseline migration proceeded directly (PR #15 in views-baseline, PR #76 in views-models) rather than waiting on golden_hour. The deferral-mechanism question (event-triggered vs time-boxed vs permanent) is therefore no longer live. Retained for audit trail. |
+
+---
+
+### D-04: Apply #21 site-by-site vs. route all construction through one boundary adapter
+
+| Field | Value |
+|-------|-------|
+| ID | D-04 |
+| Source | expert-review (2026-06-24) |
+| Perspectives | Hickey/Ousterhout/Martin (one boundary module — the recurring break is a DIP/SDP/SAP violation; constructing the leaf at each site re-buys the same churn at the next platform change), Feathers/Beck (incremental is right, but via a *single* test-gated seam so the change is reviewable and the `:402` site cannot be missed), Nygard (either is acceptable provided dependency pins and a real-leaf canary test land) |
+| Resolution | **Resolved toward the single boundary adapter (2026-06-24).** DIP/SDP/SAP decide it rather than preference; the maintainer confirmed a principle-driven framing (SOLID + component-cohesion + screaming architecture). Tracked by the views-frames-boundary epic (#21 and successors). See C-16, C-19. |
+
+---
+
+### D-05: Spatial level from observed entity index (#21) vs. declared `loa` (ADR-003)
+
+| Field | Value |
+|-------|-------|
+| ID | D-05 |
+| Source | expert-review (2026-06-24) |
+| Perspectives | Kleppmann (derive from the *declared* `loa`, validated against the index — inference from `df.index.names[1]` risks a silent CM/PGM mislabel and conflates "declared" with "observed"), #21 author (derive from the *observed* `entity_idx` as the data's ground truth — pragmatic and local to the construction site) |
+| Resolution | **Resolved (2026-07-31):** the epic #22 migration single-sourced `level` from the declared `loa` via `resolve_level`, validated against the index — the recommended reconciliation, decided in favour of Kleppmann / ADR-003 (declared over inferred). See C-18 (mitigated). |
+
+---
+
+### D-06: How much to invest given ~880 LOC and a single maintainer
+
+| Field | Value |
+|-------|-------|
+| ID | D-06 |
+| Source | expert-review (2026-06-24) |
+| Perspectives | Ousterhout/Hickey (the trivial size makes the clean restructure *cheap* — that is the argument *for* doing the full boundary + one-class-per-file restructure now, not against), YAGNI counter (it is a benchmark library; recurring small edits at each platform change may be an acceptable tax rather than a restructure) |
+| Resolution | **Resolved by the maintainer (2026-06-24)** toward the full principle-driven restructure (SOLID + REP/CCP/CRP/ADP/SDP/SAP + screaming architecture / one-concept-per-file). Scoped as the views-frames-boundary epic. |
+
+---
+
+### D-07: `seed` optional-with-default now vs required-in-genome now (the C-10 fix)
+
+| Field | Value |
+|-------|-------|
+| ID | D-07 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Kleppmann / ADR-003 (declare `seed` in the genome and validate it — a reproducibility knob must not silently default), Feathers / Nygard (making it required breaks the ~9 downstream configs that omit `seed` → a config-time outage, C-24 → ship optional-with-default first and coordinate the required change separately), Hickey (both are lesser evils; give the gate an explicit "optional-with-default" notion to dissolve the dilemma) |
+| Resolution | Recommend **optional-with-default now** (forward `seed` + single default), **required-in-genome later** via a coordinated views-baseline + views-models PR pair. See C-10, C-24. |
+
+---
+
+### D-08: Patch the one dropped param vs fix the parallel-list root (C-19 registry)
+
+| Field | Value |
+|-------|-------|
+| ID | D-08 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Martin / GoF / Ousterhout (the dropped `seed` is a symptom of three hand-maintained parallel param lists — constructor signature ↔ `MODEL_GENOMES` ↔ factory body; the durable fix is the C-19 registration table that makes "audited" and "forwarded" one list), Feathers / Beck + the bounded mandate (patch `seed` now with a param-completeness test; don't balloon into the registry) |
+| Resolution | Recommend **patch + param-completeness test now**; the C-19 registry remains the deferred durable fix (ADR-012 threshold). See C-19, C-10. |
+
+---
+
+### D-09: Where the default seed `42` lives
+
+| Field | Value |
+|-------|-------|
+| ID | D-09 |
+| Source | expert-review (2026-06-25) |
+| Perspectives | Hickey / Kleppmann / Ousterhout (one module-level `DEFAULT_SEED` constant — single source of truth), minimal-diff view (inline `get("seed", 42)` is an acceptable two-line fix) |
+| Resolution | Recommend a single `DEFAULT_SEED` constant — trivial and forecloses C-25. |
+
+---
+
+## Resolved Concerns
+
+### C-02: `_evaluate_sweep` method has no test coverage — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-02 |
+| Resolved | 2026-05-19 |
+| Resolution | `test_manager_evaluate_sweep` added in `tests/test_baseline_manager.py`. Verifies that `_evaluate_sweep` loads data and delegates to `_generate_predictions`, returning identical output to direct model invocation. |
+
+---
+
+### C-04: `artifact_name` parameter silently ignored in evaluate/forecast — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-04 |
+| Resolved | 2026-05-19 |
+| Resolution | `if artifact_name:` branching implemented in both `_evaluate_model_artifact` and `_forecast_model_artifact`, following the stepshifter pattern. Tested by `test_uses_specified_artifact_timestamp` in `tests/test_falsification_ship_readiness.py`. |
+
+---
+
+### C-01: Version floor admits unreleased views-pipeline-core — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-01 |
+| Resolved | 2026-04-28 |
+| Resolution | views-pipeline-core bumped to `v2.3.0` (commit `0f87358`) on its `fix/C-59-cached-data-path-coupling` branch. Both branches ship together; the `>=2.3.0` floor in `pyproject.toml` now resolves correctly. |
+
+---
+
+> **Archived from Open (2026-07-31, strategic review).** The entries below were resolved-and-merged to `main`/`development` (verified against the working tree) but had been left in Open by now-stale “stays Open until merge” caveats. Relocated verbatim — full narratives and status trails preserved. C-17 is resolved as *superseded by C-38*.
+
+---
+
+### C-08: Duplicated lazy `PredictionFrame` import in distributional predict() methods
+
+| Field | Value |
+|-------|-------|
+| ID | C-08 |
+| Tier | 4 |
+| Source | repo-assimilation (2026-06-01) |
+| Trigger | When views-pipeline-core renames or restructures the `data.prediction_frame` module path — both lazy import sites must be updated simultaneously, and omitting one produces a `ModuleNotFoundError` only when that specific model's `predict()` is exercised |
+| Location | `views_baseline/model/baseline.py:259,380` |
+
+`ConflictologyModel.predict()` and `MixtureBaseline.predict()` each contain an identical lazy import: `from views_pipeline_core.data.prediction_frame import PredictionFrame`. The duplication is mandated by ADR-002 (no module-level pipeline-core imports in `model/`) and acknowledged in ADR-002 and ADR-013. The risk is low — Python's module cache makes it functionally equivalent to a single site — but the pattern scales linearly with each new distributional model (ADR-012 Step 1 requires it). Currently mitigated by the fact that both sites are tested by the distributional model tests.
+
+---
+
+### C-10: `seed` is never forwarded from config to the distributional models (config/sweep seed silently ignored)
+
+| Field | Value |
+|-------|-------|
+| ID | C-10 |
+| Tier | 2 |
+| Source | repo-assimilation (2026-06-01); mechanism corrected + re-tiered via model-review of white_ranger (2026-06-25) |
+| Trigger | When any config or WandB sweep sets `seed` for `ConflictologyModel`/`MixtureBaseline` (e.g. white_ranger's sweep over `[42, 123, 456]`) — the value is silently dropped and the model always uses the hardcoded default `seed=42`. Seed sweeps are therefore inert (every leg identical), and any config-declared non-42 seed produces results that differ from the declared config with no warning |
+| Location | `views_baseline/model/catalog.py` `_get_conflictology_model` / `_get_mixture_model` — **neither factory passes `seed=` to the constructor**; `views_baseline/model/baseline.py` (`seed: int = 42` default; `np.random.default_rng(self.seed)`); `views_baseline/infrastructure/reproducibility_gate.py` `ALGORITHM_GENOMES` (`seed` absent → not audited). Evidence: `views-models/models/white_ranger/configs/config_sweep.py` (inert `seed` sweep) |
+
+**Mechanism corrected (2026-06-25):** the original entry framed this as "seed is not *audited*, so a *misspelled* key defaults." The actual defect is stronger — the catalog factory methods for both distributional models omit `seed` entirely, so `config["seed"]` **never reaches the model constructor**; both models always use the hardcoded default `42` regardless of what the config (correctly spelled or not) declares. Consequences: (1) a WandB **seed sweep is a no-op** — white_ranger sweeps `seed ∈ {42, 123, 456}` and every leg produces identical draws, which can support a false "results are seed-robust" conclusion; (2) any deployed baseline that declares `seed != 42` silently diverges from its own config. white_ranger is correct only by accident (its `seed: 42` equals the default). Re-tiered from 3 to 2: the failure is **silent** (no error), **already realized** (the sweep is inert now), and can produce **misleading experimental conclusions** about seed sensitivity. Fix is small: forward `seed=self.config.get("seed", 42)` in both factories, and add `seed` to `ALGORITHM_GENOMES` so it is audited (ADR-014 §4). Under investigation on a dedicated fix branch (2026-06-25).
+
+See also C-14/ADR-014 (the reproducibility-gate contract this should extend to `seed`).
+
+> **Status (2026-06-25):** fixed in the working tree (`fix/distributional-seed-not-forwarded`) under **ADR-021** — the catalog forwards `config["seed"]` strictly, `seed` is a required+audited `ALGORITHM_GENOMES` key, and a single `DEFAULT_SEED` sentinel backs direct construction. Enforced by `tests/test_falsification_seed_wiring.py`, catalog forwarding + param-completeness tests, and a gate rejects-missing-seed test (114 green). Stays Open until the **coordinated merge** with views-models #233 (declare `seed` in the 9 configs) lands together.
+>
+> **RESOLVED (2026-07-17):** merged — views-models#234 (declares `seed`, commit `d1187be`) then views-baseline#31 (genome + strict forward, merge `506523b`) landed on `development` in the safe order. All 20 distributional configs now declare `seed`; the fix is live.
+
+---
+
+### C-15: Dead `build_prediction_grid` DataFrame builder retained and tested post-migration
+
+| Field | Value |
+|-------|-------|
+| ID | C-15 |
+| Tier | 4 |
+| Source | repo-assimilation (2026-06-05) |
+| Trigger | When a contributor adds a sixth model or modifies output handling and reuses `build_prediction_grid()` believing it is a supported output path — they build on a helper that no production code path exercises after the PredictionFrame migration |
+| Location | `views_baseline/model/helpers.py:12-48` (`build_prediction_grid`); `tests/test_helpers.py` (`test_build_prediction_grid_empty`) |
+
+`build_prediction_grid()` — the legacy DataFrame builder that returns a MultiIndexed `pred_{target}` frame — is retained in `helpers.py` and still carries a unit test for its empty case, but is **called by nothing** in production after PR #15 (all models now use `build_prediction_frame()` → `dict[str, PredictionFrame]`). ADR-018 documents it as "retained for reference, called by nothing." The risk is purely drift: a maintainer reading `helpers.py` may infer a live DataFrame output path still exists, because the function is present and green-tested. No correctness or reliability impact; single-developer scope. Candidate for deletion or an explicit `@deprecated`/docstring marker disambiguating it from `build_prediction_frame()`.
+
+---
+
+### C-16: views-baseline un-migrated to the extracted `views-frames` PredictionFrame (governed break; DIP/SDP root cause)
+
+| Field | Value |
+|-------|-------|
+| ID | C-16 |
+| Tier | 2 |
+| Source | repo-assimilation (2026-06-24) |
+| Trigger | When any model's `predict()` executes against a `views-pipeline-core` that carries #188/PR #206 (the local editable checkout is already on `development` past #206; any clean install resolving to 3.0.0 likewise) — `PredictionFrame.__init__()` raises `TypeError: got an unexpected keyword argument 'identifiers'`, because the constructor is now the `views_frames` leaf `(y_pred, index: SpatioTemporalIndex(time, unit, level), metadata=None)` while the code passes `identifiers={...}` |
+| Location | `views_baseline/model/helpers.py:136` (`build_prediction_frame`), `views_baseline/model/baseline.py:285` (`ConflictologyModel.predict`), `views_baseline/model/baseline.py:402` (`MixtureBaseline.predict`); contract also asserted in `README.md:38,70`; protocol return typed `-> dict` not `dict[str, PredictionFrame]` at `views_baseline/model/protocol.py:23,41` |
+
+This is **not accidental dependency drift** but an un-adopted **governed platform migration**: the platform's Frame types were extracted into a standalone `views-frames` package (the "frames replace dataframes" program; ADR-017/018/019), and `views-pipeline-core` #188 (PR #206) retires its local `PredictionFrame` to re-export the `views_frames` leaf — a breaking change destined for pipeline-core **3.0.0**. The local editable `views-pipeline-core` checkout is already on `development` past #206 (its `prediction_frame.py` is now `from views_frames import PredictionFrame`), so the suite is **26/98 red in this env** even though pip metadata still reads `2.3.0`; the 72 green tests are exactly those that never construct a real frame. The failure is loud (`TypeError`) and total, not silent — hence Tier 2, not Tier 1. The **root cause is architectural, not a version number**: the model layer depends directly on the *concrete, volatile* platform leaf, constructing it inline at three sites, and baseline owns no boundary abstraction of its own (a DIP/SDP/SAP violation — high-level policy depending toward the least-stable component). That is why C-01, this break, and the pending FeatureFrame *input* migration are the same root cause surfacing repeatedly. The fix is a baseline-owned frames boundary (one adapter), not a pin bump alone. Specced and tracked by **views-baseline #21** (lockstep with pipeline-core #188).
+
+See also C-01 (RESOLVED — its resolution rationale is invalidated here), C-08 (the lazy-import workaround the boundary adapter subsumes), C-05/C-14 (the same input/output complecting), C-17 (dependency-declaration hygiene), C-18 (level-inference correctness), C-19 (scattered construction / OCP), and D-04/D-06. Tracked by GitHub issue #21.
+
+---
+
+### C-17: `views-frames` undeclared and pin admits the breaking pipeline-core release
+
+| Field | Value |
+|-------|-------|
+| ID | C-17 |
+| Tier | 2 |
+| Source | expert-review (2026-06-24) |
+| Trigger | When `poetry update`/`poetry lock` or a clean install resolves dependencies — `views-pipeline-core` may resolve to the breaking `3.0.0` (admitted by `<=3.0.0`), and `views-frames` (now the owner of the core `PredictionFrame`/`SpatioTemporalIndex`/`SpatialLevel` types) is not declared at all, so the break is pulled in with no lockfile or contract-test guard |
+| Location | `views_baseline/pyproject.toml:11-13` (`[tool.poetry.dependencies]`, single dep `views-pipeline-core >=2.3.0,<=3.0.0`; no `views-frames`) |
+
+`pyproject.toml` declares exactly one runtime dependency and pins it `>=2.3.0,<=3.0.0` — a range whose upper bound *includes* the release (3.0.0) that retires the old `PredictionFrame` (C-16). The package that now owns the data structures flowing through the entire system, `views-frames`, is undeclared, so its version floats uncontrolled in any environment that has it transitively. There is no committed lockfile guarantee and no contract test that constructs the *real* leaf, so in a clean install pinned at 2.3.0 the break is invisible until 3.0.0 lands. This is a Stable-Dependencies / Stable-Abstractions failure: baseline depends toward an unmanaged, volatile surface. Mitigation (none applied yet): declare `views-frames` with a compatible range, bump the pipeline-core pin to `>=3.0.0,<4.0.0` per #21, commit the lockfile, and add one canary test that builds a real `views_frames.PredictionFrame` through the boundary adapter.
+
+See also C-16 (the realized break), C-01 (RESOLVED — same pin-discipline class).
+
+> **SUPERSEDED (2026-07-31, strategic review):** the trigger references `poetry update`/`poetry lock`, but the repo migrated to hatchling / PEP 621 / uv this session, so that trigger is obsolete; and the mitigation this entry asked for — declare `views-frames`, bump the pin to `>=3.0.0,<4.0.0` — is now applied in `pyproject.toml`. The forward risk (the required 3.0.0 is absent from PyPI) is carried by **C-38**. Resolved as superseded, not by pin change alone.
+
+---
+
+### C-18: Spatial-level mislabel if `SpatialLevel` is inferred from the positional entity index
+
+| Field | Value |
+|-------|-------|
+| ID | C-18 |
+| Tier | 2 |
+| Source | expert-review (2026-06-24) |
+| Trigger | When the #21 migration derives `SpatialLevel` from `df.index.names[1]` (e.g. `_level_from_entity_idx`: `"country_id"→CM`, else `PGM`) rather than from the declared `loa`, and a loader later renames the entity level (`priogrid_gid`/new alias), flips index order, or introduces a third level — the output `PredictionFrame` is stamped with the wrong `SpatialLevel` and no error is raised |
+| Location | Prospective per #21 at `views_baseline/model/helpers.py:~138` and `views_baseline/model/baseline.py:285,402`; positional-index root at `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` |
+
+The #21 spec derives the required `SpatialLevel` by string-matching the entity index name (`df.index.names[1]`). This is the same unvalidated positional-index assumption already tracked as C-05, but with a new and more dangerous consequence: the level is now *written into the output frame's identity*. A fall-through default (`else PGM`) means a renamed or reordered entity level produces a frame labelled `PGM` when it is `CM` (or vice versa) — a **silent mislabel** that downstream evaluation, aggregation, and joins consume as truth. Impact is Tier-1-shaped (silent output incorrectness, no signal); it sits at Tier 2 because the likelihood is gated on *how* #21 is implemented — the risk is fully preventable by single-sourcing the level. ADR-003 ("authority of declarations over inference") favours deriving from the declared `loa`; #21 chose inference; the two are independent sources of truth for one fact and can disagree. Mitigation: derive `level` once from a single source, and assert `df.index.names == (time_idx, entity_idx)` **and** `loa ⇔ entity_idx` agreement at the model boundary, raising on mismatch.
+
+See also C-05 (acute new instance of the same positional-index root cause) and D-05 (the declared-vs-inferred level disagreement).
 
 ---
 
@@ -424,22 +661,6 @@ The hurdle model's docstring calls `family` a "continuous **positive-part** fami
 
 ---
 
-### C-27: Tweedie `lam` is unbounded when the derived index `p` clamps to the ceiling (OOM + unclamped magnitude)
-
-| Field | Value |
-|-------|-------|
-| ID | C-27 |
-| Tier | 3 — **WITHDRAWN 2026-07-18** |
-| Source | review-diff (2026-07-18, epic #33 S9) |
-| Trigger | When `fit_tweedie` is called on a **low-zero-rate, low-dispersion** window (so the derived `p = 2 − m²/(var·lam0)` exceeds 2 and clamps to `2 − eps`), making `lam = m²/(var·(2−p)) ≈ 1000·m²/var` — e.g. a new/low-dispersion regression target routed to `ParametricConflictology(family="tweedie")` |
-| Location | `views_baseline/model/distributions.py` (`fit_tweedie` `lam` recompute; `sample_tweedie` `rng.gamma(..., size=total)` allocation); `views_baseline/model/baseline.py` (`ParametricConflictology.predict` native-zero path applies no clamp) |
-
-> **WITHDRAWN (2026-07-18):** the Tweedie family was **removed** from views-baseline in S9 (code deleted, not fixed), so this risk no longer exists. Diagnosis that drove the removal: on the real pgm data the OOM/ceiling case (`p≥2`) fired **zero** times (max clamped λ = 0.3); what actually occurred was the *benign* `p≤1` clamp on ~40% of active cells — windows with 1–2 events in 36 months that a continuous family fundamentally cannot represent. The only honest handling of that infeasibility was either clamp (hides misspecification) or empirical fallback (turns the parametric model back into conflictology) — neither acceptable — so Tweedie was excluded from the baseline. See ADR-022 (Tweedie exclusion record) and `reports/closeness_experiment/FINDINGS.md` §S9. Original narrative retained below for provenance.
-
-The Tweedie index `p` is derived from the window's mean/var/zero-rate and clamped to `(1+eps, 2−eps)` to stay in the compound Poisson-Gamma regime — but the clamp bounds only the *index*, not the rate. When `p` clamps to the ceiling, `lam` is recomputed as `1000·m²/var` and left unbounded. `sample_tweedie` then draws `rng.poisson(lam, size)` and allocates `rng.gamma(alpha, theta, size=total)` with `total = counts.sum()`; a pathological cell drives `lam` to 1e4–1e6 → a 1e7–1e9-element jump array → **OOM/hang**. Coupled second consequence: the native-zero path in `ParametricConflictology.predict` applies **neither** `clamp_log` **nor** `clamp_floor` (those guard the hurdle/log1p paths), so the same `lam` also yields an **unbounded emitted magnitude** — the failure class `EMIT_LOG_CEIL` exists to prevent. Did not fire in the S8 experiment because conflict windows are high-zero-rate/high-dispersion (`p` clamps toward 1, `lam` small); it is an atypical-but-realistic edge for a low-dispersion target. Tier 3 (not 2): needs an atypical window, no silent corruption in the intended zero-inflated regime, and the fix is a localized ceiling. **Not yet fixed** — a deliberate policy call: a single-sourced `_TWEEDIE_LAM_CEIL` (WARN on cap) bounds both the array size and the magnitude but under-preserves the mean in the already-approximate clamped-`p` regime. See also C-26 (the gumbel floor, fixed) as the sibling native-zero/positive-part numeric guard, and the `EMIT_LOG_CEIL` ceiling it mirrors.
-
----
-
 ### C-28: Governance-doc drift after the parametric-baseline epic (stale model/test counts + current-state claims)
 
 | Field | Value |
@@ -472,22 +693,6 @@ The "reproducibility" tests (`test_reproducible_under_seed`, `test_no_hurdle_zin
 
 ---
 
-### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin)
-
-| Field | Value |
-|-------|-------|
-| ID | C-30 |
-| Tier | 4 |
-| Source | review (2026-07-19, PR #45) |
-| Trigger | When `numpy` is upgraded to a version whose `Generator` streams (`gamma`/`poisson`/`choice`) change, the hardcoded expected arrays in `tests/test_golden.py` fail — a maintenance false-positive requiring deliberate regeneration, not a code defect |
-| Location | `tests/test_golden.py`; `pyproject.toml` (no `numpy` version constraint) |
-
-The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
-
-> **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
-
----
-
 ### C-31: Model layer depends on concrete pandas on the INPUT path; no FeatureFrame boundary (DIP — input side)
 
 | Field | Value |
@@ -512,28 +717,6 @@ See also C-16 (output-side DIP/SDP root cause, resolved via the `to_prediction_f
 > ADR-019 accepted. Models accept `pd.DataFrame | FeatureFrame`; both routes are exactly
 > equivalent (`test_dual_input.py`). Residual: the pure-FeatureFrame path has no upstream
 > producer yet (architectural readiness, not a defect).
-
----
-
-### C-32: Byte-identity risk of the PR-2 numpy-on-FeatureFrame migration (silent forecast drift)
-
-| Field | Value |
-|-------|-------|
-| ID | C-32 |
-| Tier | 2 |
-| Source | falsify (2026-07-20, PR-1 reorg audit — forward risk of the P1 remediation); plan (epic #47 PR-2) |
-| Trigger | When PR-2 S6–S8 (issues #53–#55) rewrite `window_pool` and the point/Mixture/parametric `fit` aggregations from pandas (`groupby(...).tail`, `.xs`, sort order) to numpy-on-FeatureFrame — any change to entity ordering, tail-selection order, or float dtype silently shifts the seeded RNG stream and therefore the sampled `y_pred` |
-| Location | `views_baseline/model/frames/pooling.py` (`window_pool`), the model `fit()` aggregations under `views_baseline/model/models/**`; gated by `tests/test_golden.py` (byte-identity) + `tests/test_pooling.py` |
-
-The distributional models' output is reproducible only because a single seeded `np.random.default_rng` is advanced in a fixed **entity→time→target** order over pandas-derived pools (ADR-011). Re-deriving those pools with numpy changes nothing *if and only if* the entity order, the per-entity tail (last `window_months`) order, and the emitted float dtype are bit-for-bit preserved. A subtle divergence (e.g. numpy sort vs pandas `sort_index` stability, `unique()` ordering, `float64` vs `float32`) produces **different draws with no error signal** — wrong forecasts that pass every structural test. Impact is high (silent forecast incorrectness); likelihood is real during the rewrite; it is **not Tier 1** only because the golden characterization tests (C-29) provide a loud, total catch *if run at every step*. Mitigation: port one model at a time, gate each step on `test_golden.py` + `test_pooling.py` byte-identity, and treat any golden diff as a stop-the-line defect (not a regenerate-the-baseline event) until the change is proven order-preserving.
-
-See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator coupling), C-31 (the DIP migration this executes), C-11/C-25 (the RNG-order reproducibility contract this must preserve).
-
-> **Decision (2026-07-20) — FeatureFrame is float32; golden regenerated once, deliberately.** S5 (the `to_feature_frame` adapter) surfaced that `views_frames.FeatureFrame` is a **float32** container by design (class contract; `coerce_values` casts; no float64 option), while the existing pools and golden tests are float64. Strict float64 byte-identity through a FeatureFrame is therefore impossible. The maintainer chose **FeatureFrame-canonical (float32)** with a **one-time, deliberate** golden regeneration to the platform's real precision (not a maintenance regen). To keep the migration safe despite the regen, the ordering/logic guard is **decoupled from the precision change**: (1) the ported numpy `window_pool` is proven byte-identical to the pandas `window_pool` on a **float64** panel (built directly from the df) — this pins entity order, tail order, and RNG advance independent of dtype (`test_pooling`, permanent); (2) only then is the model source switched to the float32 FeatureFrame and the model-level golden regenerated **once**, with the diff reviewed to confirm it is float32-rounding-only and nothing else. After the flip, `test_golden.py` pins the float32-canonical output and byte-identity holds going forward.
-
-> **Discharged (2026-07-20, PR-2 S6–S10).** The migration landed with the ordering guard intact and **no golden regeneration was actually required**: the distributional golden fixtures use small-integer data (`(t*3+u*7)%9`), which is float32-exact, so routing it through the float32 FeatureFrame is lossless and `test_golden.py` stayed **byte-identical unchanged** — confirming the numpy port preserved entity/tail/RNG order and per-cell logic. The float64 ordering guard (`test_pooling::test_window_pool_arrays_matches_pandas_reference_in_float64`, using non-float32-exact values) independently pins the order/logic. The float32 precision change is therefore invisible on the golden set and only affects non-integer production magnitudes (the accepted trade-off). One deliberate behaviour change shipped alongside: `window_months <= 0` now fails loud (`ValueError`) at fit for all windowing models, replacing the pre-PR-2 accidental KeyError / silent-NaN. Risk retained at Tier 2 as documentation of the precision boundary; the acute trigger (a non-order-preserving rewrite) has passed.
-
-> **Merged (2026-07-20, code-review #60 finding #6).** Two additions from the max-effort review: (1) the `_from_dataframe` code comment `"float64 block ... byte-identity with the pandas path"` (`model/frames/input.py`) is **now false** — `FeatureFrame.from_2d` immediately downcasts to float32, so the whole model layer (production df path included) computes on float32-rounded values; the comment is corrected in WS4. (2) The reach is a **reproducibility**, not merely precision, effect for non-float32-exact targets: `MixtureBaseline`'s global pool `v[v > 0]` and `ParametricHurdleConflictology`'s `pool == 0.0` / `pool > 0` zero-spike split are computed on float32 values, so a value that rounds across the 0 boundary changes the pool contents/size and reindexes the seeded `rng.choice` — the draws diverge from the pre-PR float64 path (still within the accepted FeatureFrame-canonical decision, but broader than "rounding").
 
 ---
 
@@ -614,141 +797,6 @@ Three guards give false confidence. (1) The headline df≡FF equivalence test is
 Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but read nowhere; `self.entity_idx` only feeds a fit-log line that — because the reorg moved the assignment below the log — now always reads `on level: None`; `ParametricConflictology`/`Hurdle` retain `self.pools` on the fitted object though only `self.params` is read at predict (needlessly pins the entities×window array, including in pickled artifacts); `MixtureBaseline.fit` re-`lexsort`s and re-masks the same panel that `window_pool_arrays` already sorted for the local pool. No correctness impact — Tier 4. **Remediation:** WS4.
 
 > **Resolved (2026-07-20, WS4 + re-review).** Dead `self.time_idx`/`self.entity_idx` deleted across all 7 models; fit logs now use `self.loa` (no more `on level: None`); parametric `self.pools` is a fit-local; `MixtureBaseline` derives local+global pools from one shared `sort_train_panel` (no re-sort). Re-review added: `tail_pools` builds+NaN-checks in one loop, the dead `block.size==0` guard removed, `_check_ff_level` dedups the loa↔level check across `to_index`/`to_feature_frame`, and a `train_test_boundary(partition_dict)` helper homes the `train_end = test_start-1` convention. Golden byte-identical throughout.
-
----
-
-## Disagreements
-
-### D-01: Clean break vs. gradual dual-format migration for PredictionFrame adoption
-
-| Field | Value |
-|-------|-------|
-| ID | D-01 |
-| Source | expert-review (2026-06-02) |
-| Perspectives | Feathers (gradual — the dual-format seam enables per-model testing and rollback if ensemble integration fails), Hickey/Ousterhout (clean break — baseline has 5 trivial models and 880 LOC, transient dual-format complexity is not justified, hydranet proved the direct switch works at larger scale), Beck (gradual only if integration-tested at each step; without an integration test, gradual is just slow risk accumulation) |
-| Resolution | **Resolved in practice (2026-06-04).** Clean break implemented in PR #15: all point models switched directly to `dict[str, PredictionFrame]`, the isinstance dispatch was removed, and no dual-format path was introduced. Final on merge of PR #15. |
-
----
-
-### D-02: Sample-count asymmetry — current defect vs. future concern
-
-| Field | Value |
-|-------|-------|
-| ID | D-02 |
-| Source | expert-review (2026-06-02) |
-| Perspectives | Nygard/Kleppmann (design defect now — silent acceptance of invalid input should be fixed in pipeline-core regardless of current usage; the code validates 2 of 3 structural properties and the missing third enables silent data corruption), Feathers/Ousterhout (future concern — no ensemble triggers it today, golden_hour is homogeneous at 3×64, the fix is important but not urgent), Beck (write the test now — `test_aggregate_rejects_heterogeneous_sample_counts()` forces the design decision without requiring the full fix) |
-| Resolution | Unresolved. Recommend fixing now — 5 lines of validation in pipeline-core, zero risk, prevents a class of silent corruption. See C-13. |
-
----
-
-### D-03: Baseline migration deferral mechanism
-
-| Field | Value |
-|-------|-------|
-| ID | D-03 |
-| Source | expert-review (2026-06-02) |
-| Perspectives | Feathers (event-triggered: un-defer baseline issues #8-#11 when golden_hour issue #126 closes — clear, concrete, no drift), Ousterhout (time-boxed: proceed independently if golden_hour hasn't shipped by a deadline — prevents indefinite blocking on another team's timeline), Hickey (permanent deferral until someone actually needs baselines in a PFE ensemble — don't build for hypothetical requirements; baselines currently serve only as evaluation benchmarks, not ensemble constituents) |
-| Resolution | **Moot — overtaken by events (2026-06-04).** The deferral never took effect: the baseline migration proceeded directly (PR #15 in views-baseline, PR #76 in views-models) rather than waiting on golden_hour. The deferral-mechanism question (event-triggered vs time-boxed vs permanent) is therefore no longer live. Retained for audit trail. |
-
----
-
-### D-04: Apply #21 site-by-site vs. route all construction through one boundary adapter
-
-| Field | Value |
-|-------|-------|
-| ID | D-04 |
-| Source | expert-review (2026-06-24) |
-| Perspectives | Hickey/Ousterhout/Martin (one boundary module — the recurring break is a DIP/SDP/SAP violation; constructing the leaf at each site re-buys the same churn at the next platform change), Feathers/Beck (incremental is right, but via a *single* test-gated seam so the change is reviewable and the `:402` site cannot be missed), Nygard (either is acceptable provided dependency pins and a real-leaf canary test land) |
-| Resolution | **Resolved toward the single boundary adapter (2026-06-24).** DIP/SDP/SAP decide it rather than preference; the maintainer confirmed a principle-driven framing (SOLID + component-cohesion + screaming architecture). Tracked by the views-frames-boundary epic (#21 and successors). See C-16, C-19. |
-
----
-
-### D-05: Spatial level from observed entity index (#21) vs. declared `loa` (ADR-003)
-
-| Field | Value |
-|-------|-------|
-| ID | D-05 |
-| Source | expert-review (2026-06-24) |
-| Perspectives | Kleppmann (derive from the *declared* `loa`, validated against the index — inference from `df.index.names[1]` risks a silent CM/PGM mislabel and conflates "declared" with "observed"), #21 author (derive from the *observed* `entity_idx` as the data's ground truth — pragmatic and local to the construction site) |
-| Resolution | Unresolved. Recommend single-sourcing the level and validating `loa ⇔ entity_idx` agreement at the boundary, reconciled explicitly with ADR-003. See C-18. |
-
----
-
-### D-06: How much to invest given ~880 LOC and a single maintainer
-
-| Field | Value |
-|-------|-------|
-| ID | D-06 |
-| Source | expert-review (2026-06-24) |
-| Perspectives | Ousterhout/Hickey (the trivial size makes the clean restructure *cheap* — that is the argument *for* doing the full boundary + one-class-per-file restructure now, not against), YAGNI counter (it is a benchmark library; recurring small edits at each platform change may be an acceptable tax rather than a restructure) |
-| Resolution | **Resolved by the maintainer (2026-06-24)** toward the full principle-driven restructure (SOLID + REP/CCP/CRP/ADP/SDP/SAP + screaming architecture / one-concept-per-file). Scoped as the views-frames-boundary epic. |
-
----
-
-### D-07: `seed` optional-with-default now vs required-in-genome now (the C-10 fix)
-
-| Field | Value |
-|-------|-------|
-| ID | D-07 |
-| Source | expert-review (2026-06-25) |
-| Perspectives | Kleppmann / ADR-003 (declare `seed` in the genome and validate it — a reproducibility knob must not silently default), Feathers / Nygard (making it required breaks the ~9 downstream configs that omit `seed` → a config-time outage, C-24 → ship optional-with-default first and coordinate the required change separately), Hickey (both are lesser evils; give the gate an explicit "optional-with-default" notion to dissolve the dilemma) |
-| Resolution | Recommend **optional-with-default now** (forward `seed` + single default), **required-in-genome later** via a coordinated views-baseline + views-models PR pair. See C-10, C-24. |
-
----
-
-### D-08: Patch the one dropped param vs fix the parallel-list root (C-19 registry)
-
-| Field | Value |
-|-------|-------|
-| ID | D-08 |
-| Source | expert-review (2026-06-25) |
-| Perspectives | Martin / GoF / Ousterhout (the dropped `seed` is a symptom of three hand-maintained parallel param lists — constructor signature ↔ `MODEL_GENOMES` ↔ factory body; the durable fix is the C-19 registration table that makes "audited" and "forwarded" one list), Feathers / Beck + the bounded mandate (patch `seed` now with a param-completeness test; don't balloon into the registry) |
-| Resolution | Recommend **patch + param-completeness test now**; the C-19 registry remains the deferred durable fix (ADR-012 threshold). See C-19, C-10. |
-
----
-
-### D-09: Where the default seed `42` lives
-
-| Field | Value |
-|-------|-------|
-| ID | D-09 |
-| Source | expert-review (2026-06-25) |
-| Perspectives | Hickey / Kleppmann / Ousterhout (one module-level `DEFAULT_SEED` constant — single source of truth), minimal-diff view (inline `get("seed", 42)` is an acceptable two-line fix) |
-| Resolution | Recommend a single `DEFAULT_SEED` constant — trivial and forecloses C-25. |
-
----
-
-## Resolved Concerns
-
-### C-02: `_evaluate_sweep` method has no test coverage — RESOLVED
-
-| Field | Value |
-|-------|-------|
-| ID | C-02 |
-| Resolved | 2026-05-19 |
-| Resolution | `test_manager_evaluate_sweep` added in `tests/test_baseline_manager.py`. Verifies that `_evaluate_sweep` loads data and delegates to `_generate_predictions`, returning identical output to direct model invocation. |
-
----
-
-### C-04: `artifact_name` parameter silently ignored in evaluate/forecast — RESOLVED
-
-| Field | Value |
-|-------|-------|
-| ID | C-04 |
-| Resolved | 2026-05-19 |
-| Resolution | `if artifact_name:` branching implemented in both `_evaluate_model_artifact` and `_forecast_model_artifact`, following the stepshifter pattern. Tested by `test_uses_specified_artifact_timestamp` in `tests/test_falsification_ship_readiness.py`. |
-
----
-
-### C-01: Version floor admits unreleased views-pipeline-core — RESOLVED
-
-| Field | Value |
-|-------|-------|
-| ID | C-01 |
-| Resolved | 2026-04-28 |
-| Resolution | views-pipeline-core bumped to `v2.3.0` (commit `0f87358`) on its `fix/C-59-cached-data-path-coupling` branch. Both branches ship together; the `>=2.3.0` floor in `pyproject.toml` now resolves correctly. |
-
----
 
 ## Register Conventions
 
