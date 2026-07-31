@@ -10,8 +10,25 @@ logger = logging.getLogger(__name__)
 def train_test_boundary(partition_dict: dict) -> tuple[int, int]:
     """Return ``(test_start, train_end)`` from the partition dict — the single home of the
     train/test boundary convention (``train_end = test_start - 1``), so the ~ten fit/predict
-    sites don't each re-encode it (C-37)."""
-    test_start = partition_dict["test"][0]
+    sites don't each re-encode it (C-37), and the single place the partition-dict shape is
+    validated at the model boundary (C-06) rather than failing deep in fit/predict.
+    """
+    if not isinstance(partition_dict, dict) or "test" not in partition_dict:
+        raise ValueError(
+            f"partition_dict must be a dict with a 'test' key; got {partition_dict!r}."
+        )
+    test = partition_dict["test"]
+    if (
+        not isinstance(test, (tuple, list))
+        or len(test) == 0
+        or isinstance(test[0], bool)
+        or not isinstance(test[0], (int, np.integer))
+    ):
+        raise ValueError(
+            f"partition_dict['test'] must be a non-empty (start, end) tuple of ints; "
+            f"got {test!r}."
+        )
+    test_start = test[0]
     return test_start, test_start - 1
 
 
