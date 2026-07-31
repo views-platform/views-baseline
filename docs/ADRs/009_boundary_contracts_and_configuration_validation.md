@@ -79,6 +79,14 @@ The model constructor receives fully resolved values. It does not receive the co
 
 ## Boundary 3: Model → Pipeline (Protocol Dispatch)
 
+> **Status note (ADR-017, ADR-020):** Since PR #15 every baseline model returns
+> `dict[str, PredictionFrame]` and `BaselineForecastingModelManager._generate_predictions`
+> has a **single, type-uniform path** — the `isinstance(model, DistributionalBaselineModel)`
+> dispatch and the `else` `list[pd.DataFrame]` branch described below **no longer exist**. The
+> `distributional` attribute is retained as a **semantic marker** (declaration of intent per
+> ADR-012), not a dispatch discriminator. The body is preserved as the original 2026-03-13
+> record (ADR-000: append-only) — read it as history, not current behaviour.
+
 **Location:** `BaselineForecastingModelManager._generate_predictions()` and `_forecast_model_artifact()`
 
 **What is validated:**

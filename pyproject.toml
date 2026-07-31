@@ -27,6 +27,12 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    # numpy is a direct runtime dependency (np.random.default_rng / Generator across the
+    # model layer), not merely transitive via views-frames — declared explicitly, matching
+    # the sibling house style (views-frames, views-datafactory). The golden tests
+    # (tests/test_golden.py) pin numpy's gamma/poisson/choice Generator streams; the <3
+    # ceiling matches siblings and those streams are stream-stable (NEP-19), see C-30.
+    "numpy>=1.26,<3",
     # views-frames is the canonical home of PredictionFrame / SpatioTemporalIndex /
     # SpatialLevel, constructed at the single seam in model/frames/output.py (ADR-020).
     "views-frames>=1.3.0,<2.0.0",
