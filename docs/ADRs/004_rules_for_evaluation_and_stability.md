@@ -126,6 +126,12 @@ The test suite contains 51 tests across 4 files:
 | `tests/test_protocol.py` | Protocol conformance: which classes satisfy BaselineModel and DistributionalBaselineModel | Comprehensive for protocol checks |
 | `tests/test_baseline_manager.py` | Manager: evaluate (ZeroModel, LocfModel), forecast (LocfModel, ZeroModel), setup, train/artifact | Point model paths only |
 
+> **Status note (ADR-017):** The `isinstance(model, DistributionalBaselineModel)` branch this
+> "known gap" describes was **removed** — since ADR-017 `_generate_predictions` has a single
+> type-uniform path (every model returns `dict[str, PredictionFrame]`), so there is no
+> distributional dispatch branch left untested. The block below is preserved as the original
+> record (ADR-000: append-only) — read it as history.
+
 **Known gap: manager distributional path is untested.**
 
 `_evaluate_model_artifact` and `_forecast_model_artifact` are tested only with `ZeroModel` and `LocfModel`. The `isinstance(model, DistributionalBaselineModel)` branch in `_generate_predictions` has no test. If the distributional dispatch is broken (e.g., by a protocol change), the test suite will not catch it.

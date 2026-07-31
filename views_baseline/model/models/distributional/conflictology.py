@@ -63,10 +63,11 @@ class ConflictologyModel:
         Each PF has y_pred shape (N, n_samples) with resampled draws.
         """
         level = to_level(df, loa=self.loa)
+        test_start, _ = train_test_boundary(self.partition_dict)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
             model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,
-            level=level, test_start=self.partition_dict["test"][0],
+            level=level, test_start=test_start,
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=lambda cid, t, rng: rng.choice(
                 self.hist_per_entity[cid][t], size=self.n_samples, replace=True

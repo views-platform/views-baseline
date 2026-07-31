@@ -162,10 +162,12 @@ For distributional models, additionally verify:
 
 Covers: `test_baseline_manager.py`
 
-When adding a new model, consider whether a Beige team test is needed to verify the
-manager's dispatch path for the new model. The distributional manager dispatch path
-(`isinstance(model, DistributionalBaselineModel)` branch in `_generate_predictions`) is
-currently untested — this is a known gap from ADR-005.
+When adding a new model, consider whether a Beige team test is needed to verify the manager
+consumes the new model's `dict[str, PredictionFrame]` output correctly. Note that since
+ADR-017 the manager has a single type-uniform path — every model returns the same type, so
+there is no `isinstance(model, DistributionalBaselineModel)` dispatch branch in
+`_generate_predictions` to test (`distributional = True` is a semantic marker, not a dispatch
+discriminator).
 
 ### Red team — adversarial inputs
 

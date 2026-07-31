@@ -182,5 +182,5 @@ It tracks which template items have been completed, which are deferred, and why.
 
 - ADR-004 open question on `sequence_number` and RNG is tracked as candidate ADR-011.
 - ADR-003 open question on entity-drop errors vs warnings is not yet resolved.
-- The manager distributional dispatch path remains untested (known gap, ADR-005).
+- The manager has a single type-uniform path since ADR-017 — there is no distributional `isinstance` dispatch branch (the earlier ADR-005 "untested dispatch path" gap is moot).
 - The `validate_docs.sh` run should be done after any future documentation additions.

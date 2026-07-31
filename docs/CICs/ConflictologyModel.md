@@ -11,7 +11,7 @@
 
 `ConflictologyModel` is a distributional climatology baseline. For each entity, it treats the last `window_months` of training observations as an empirical distribution and produces `n_samples` i.i.d. bootstrap resamples (with replacement) per prediction cell. This gives a full predictive distribution that reflects the historical variability of conflict intensity for each location, without pooling across entities or weighting by recency. It serves as the distributional counterpart to `AverageModel`.
 
-The class attribute `distributional = True` is used by `BaselineForecastingModelManager` and `DistributionalBaselineModel` protocol dispatch to route output handling correctly.
+The class attribute `distributional = True` is a semantic marker (it satisfies the `DistributionalBaselineModel` protocol per ADR-012), **not** an `isinstance` dispatch discriminator: `BaselineForecastingModelManager` has a single type-uniform path since ADR-017, because every model returns `dict[str, PredictionFrame]`.
 
 ---
 

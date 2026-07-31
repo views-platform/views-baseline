@@ -6,8 +6,8 @@
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-07-31                           |
 | Total Concerns    | 38                                   |
-| Open Concerns     | 16                                   |
-| Resolved Concerns | 21                                   |
+| Open Concerns     | 12                                   |
+| Resolved Concerns | 25                                   |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
 ---
@@ -88,7 +88,7 @@ See also C-05 (related: same code locations, different problem — C-03 is dupli
 | Field | Value |
 |-------|-------|
 | ID | C-05 |
-| Tier | 2 |
+| Tier | 3 |
 | Source | repo-assimilation (2026-06-01) |
 | Trigger | When the upstream data loader in views-pipeline-core changes the index level ordering, or when a contributor passes a flat-indexed or 3-level DataFrame to a model — all 5 models silently extract wrong index names via positional `df.index.names[0]`/`[1]` |
 | Location | `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` |
@@ -101,39 +101,7 @@ See also C-03 (related: same code locations, C-03 addresses duplication, C-05 ad
 
 **Forward link (FeatureFrame input, 2026-06-04):** this same direct consumption of the DataFrame `(time, entity)` MultiIndex is what makes views-baseline a *high-effort* consumer in the platform's FeatureFrame-input migration — point models read `df.index.names` / `df[targets]` directly, so an input-format switch breaks `fit()` unless adapted (unlike adapter-fronted engines such as hydranet/r2darts2). Adopting FeatureFrame input (which carries its own validation) could *subsume* this risk. Tracked at `views-platform/views-pipeline-core#161` (input path) and `views-platform/views-pipeline-core#162` (contract hardening); see ADR-019 (proposed, not implemented).
 
-> **Re-scope (2026-07-31, strategic review):** the FeatureFrame input boundary this entry's forward-link named as potentially subsuming it (**C-31**) is now resolved and merged — `to_feature_frame` validates loa↔level and rejects NaN / non-integer / overflow indices at the boundary. The positional-index root is largely closed on the frame path; residual exposure is only the raw-DataFrame dual-input path. Candidate for Tier 3 at next review.
-
----
-
-### C-06: `partition_dict` structure assumed but never validated
-
-| Field | Value |
-|-------|-------|
-| ID | C-06 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-06-01) |
-| Trigger | When upstream changes the `partition_dict` schema (e.g., renames `"test"` key or changes tuple to a dict), all 5 models fail with `KeyError` or `TypeError` deep in `fit()`/`predict()` rather than at the validation boundary |
-| Location | `views_baseline/model/baseline.py:44,82,101,142,168,222,261,328,382` |
-
-All five model classes access `self.partition_dict["test"][0]` as the test-start boundary without any structural validation. The `ReproducibilityGate` validates hyperparameter keys but has no data-layer contracts — `partition_dict` is not audited. A malformed partition dict would cause loud failures (`KeyError`, `TypeError`) but at deep call sites inside `fit()` and `predict()`, far from the config boundary where such validation belongs. Currently mitigated by views-pipeline-core's data loader providing a consistent schema.
-
----
-
-### C-07: No enforcement that `targets` columns exist in input DataFrame
-
-| Field | Value |
-|-------|-------|
-| ID | C-07 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-06-01) |
-| Trigger | When a downstream config in views-models declares a target column name that does not exist in the loaded DataFrame — `fit()` fails with `KeyError` deep in groupby/slice logic rather than at the validation boundary |
-| Location | `views_baseline/model/baseline.py:89,153,247,348` (`fit()` methods slicing `df[self.targets]` or `df.groupby(...)[self.targets]`) |
-
-The config's `targets` list is passed through to models and used to slice DataFrame columns. Neither the `ReproducibilityGate`, `BaselineModelCatalog`, nor any model's `fit()` method verifies that these column names actually exist in the input DataFrame. The failure is loud (`KeyError`) but occurs deep in pandas groupby/slice operations, producing error messages that point to the DataFrame rather than the misconfigured target list. Currently mitigated only by the convention that views-models configs name columns that exist in the data loader's output.
-
-See also C-06 (related: both are data-layer boundary validation gaps not covered by the ReproducibilityGate).
-
-> **Partial mitigation (2026-07-31):** the merged `to_feature_frame` boundary now raises `ValueError: missing required target column(s)` when a declared target is absent (C-34 resolution) — surfacing the fit-path failure at the boundary rather than deep in pandas, for the frame/df-lift path. Kept Open for the remaining deep-`KeyError` paths and the predict-path column-agnostic tradeoff (a *misnamed* target no longer errors, C-34 residual).
+> **Re-scope (2026-07-31, strategic review):** the FeatureFrame input boundary this entry's forward-link named as potentially subsuming it (**C-31**) is now resolved and merged — `to_feature_frame` validates loa↔level and rejects NaN / non-integer / overflow indices at the boundary. The positional-index root is largely closed on the frame path; residual exposure is only the raw-DataFrame dual-input path. **Downgraded to Tier 3 on 2026-07-31** on this evidence (positional-index root closed on the frame path; residual only on the raw-DataFrame dual-input path).
 
 ---
 
@@ -254,22 +222,6 @@ See also C-13 (the related sample-axis validation gap in PFE concat aggregation)
 
 ---
 
-### C-21: Governance docs still describe the removed `isinstance` manager dispatch (pre-existing drift)
-
-| Field | Value |
-|-------|-------|
-| ID | C-21 |
-| Tier | 4 |
-| Source | pr-review (2026-06-24) |
-| Trigger | When a contributor (human or AI) reads the manager-dispatch description in the docs below and writes or reviews code on the assumption that the manager routes via `isinstance(model, DistributionalBaselineModel)` — the manager has had a single type-uniform path since ADR-017 / PR #15, so the guidance is wrong |
-| Location | `docs/ADRs/004_*.md:129`, `005_*.md:51`, `009_*.md:86-89`, `010_*.md:13,29,86`, `docs/CICs/BaselineForecastingModelManager.md:56`, `docs/contributor_protocols/hardened_protocol_template.md:166`, `carbon_based_agents.md:56` |
-
-ADR-017 unified all models onto `dict[str, PredictionFrame]` output and removed the `isinstance(model, DistributionalBaselineModel)` dispatch from the manager (`_generate_predictions`); `distributional = True` is now a semantic marker only. ADR-010 itself records the removal, yet several other governance documents still describe the dispatch as live. This is **pre-existing drift** (it predates the views-frames epic #22) and is documentation-only — no code impact — but it misleads contributors, which matters under the silicon-agent protocol (ADR-007) where stale docs are treated as authoritative. Epic #22 corrected this where it already touched docs (silicon protocol, ADR-003, the two distributional CICs); the remaining sites are listed above. Out of scope for #22 (a bounded migration, not a doc sweep); tracked here for a dedicated governance-doc pass.
-
-See also C-16 / ADR-020 (the epic that corrected the adjacent construction-site drift).
-
----
-
 ### C-22: Baseline PredictionFrames carry no provenance metadata
 
 | Field | Value |
@@ -297,22 +249,6 @@ See also C-16 / ADR-020 (the epic that corrected the adjacent construction-site 
 > **WITHDRAWN (2026-07-18):** the Tweedie family was **removed** from views-baseline in S9 (code deleted, not fixed), so this risk no longer exists. Diagnosis that drove the removal: on the real pgm data the OOM/ceiling case (`p≥2`) fired **zero** times (max clamped λ = 0.3); what actually occurred was the *benign* `p≤1` clamp on ~40% of active cells — windows with 1–2 events in 36 months that a continuous family fundamentally cannot represent. The only honest handling of that infeasibility was either clamp (hides misspecification) or empirical fallback (turns the parametric model back into conflictology) — neither acceptable — so Tweedie was excluded from the baseline. See ADR-022 (Tweedie exclusion record) and `reports/closeness_experiment/FINDINGS.md` §S9. Original narrative retained below for provenance.
 
 The Tweedie index `p` is derived from the window's mean/var/zero-rate and clamped to `(1+eps, 2−eps)` to stay in the compound Poisson-Gamma regime — but the clamp bounds only the *index*, not the rate. When `p` clamps to the ceiling, `lam` is recomputed as `1000·m²/var` and left unbounded. `sample_tweedie` then draws `rng.poisson(lam, size)` and allocates `rng.gamma(alpha, theta, size=total)` with `total = counts.sum()`; a pathological cell drives `lam` to 1e4–1e6 → a 1e7–1e9-element jump array → **OOM/hang**. Coupled second consequence: the native-zero path in `ParametricConflictology.predict` applies **neither** `clamp_log` **nor** `clamp_floor` (those guard the hurdle/log1p paths), so the same `lam` also yields an **unbounded emitted magnitude** — the failure class `EMIT_LOG_CEIL` exists to prevent. Did not fire in the S8 experiment because conflict windows are high-zero-rate/high-dispersion (`p` clamps toward 1, `lam` small); it is an atypical-but-realistic edge for a low-dispersion target. Tier 3 (not 2): needs an atypical window, no silent corruption in the intended zero-inflated regime, and the fix is a localized ceiling. **Not yet fixed** — a deliberate policy call: a single-sourced `_TWEEDIE_LAM_CEIL` (WARN on cap) bounds both the array size and the magnitude but under-preserves the mean in the already-approximate clamped-`p` regime. See also C-26 (the gumbel floor, fixed) as the sibling native-zero/positive-part numeric guard, and the `EMIT_LOG_CEIL` ceiling it mirrors.
-
----
-
-### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin)
-
-| Field | Value |
-|-------|-------|
-| ID | C-30 |
-| Tier | 4 |
-| Source | review (2026-07-19, PR #45) |
-| Trigger | When `numpy` is upgraded to a version whose `Generator` streams (`gamma`/`poisson`/`choice`) change, the hardcoded expected arrays in `tests/test_golden.py` fail — a maintenance false-positive requiring deliberate regeneration, not a code defect |
-| Location | `tests/test_golden.py`; `pyproject.toml` (no `numpy` version constraint) |
-
-The golden/characterization tests (added for C-29) pin the **exact** sampled `y_pred` of the four distributional models, which fixes them to the current numpy `Generator` algorithms. `pyproject.toml` declares no `numpy` pin, so a transitive numpy bump can break these tests even though the model code is unchanged. This is the accepted cost of a true regression guard (the alternative — no golden test — is worse, C-29), but a future dev who bumps numpy must know to regenerate deliberately. Mitigation: a note in the golden-test docstring (added) and/or a `numpy` floor/pin in `pyproject.toml` (deferred — a dependency-policy decision). See also C-29 (the golden tests this describes), C-25/C-10 (the seed contract).
-
-> **Status (2026-07-19):** partially mitigated — `test_golden.py` docstring now flags the numpy-Generator coupling and the regenerate-deliberately protocol. Adding a `numpy` pin to `pyproject.toml` is left as a deliberate dependency-policy call.
 
 ---
 
@@ -797,6 +733,44 @@ Three guards give false confidence. (1) The headline df≡FF equivalence test is
 Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but read nowhere; `self.entity_idx` only feeds a fit-log line that — because the reorg moved the assignment below the log — now always reads `on level: None`; `ParametricConflictology`/`Hurdle` retain `self.pools` on the fitted object though only `self.params` is read at predict (needlessly pins the entities×window array, including in pickled artifacts); `MixtureBaseline.fit` re-`lexsort`s and re-masks the same panel that `window_pool_arrays` already sorted for the local pool. No correctness impact — Tier 4. **Remediation:** WS4.
 
 > **Resolved (2026-07-20, WS4 + re-review).** Dead `self.time_idx`/`self.entity_idx` deleted across all 7 models; fit logs now use `self.loa` (no more `on level: None`); parametric `self.pools` is a fit-local; `MixtureBaseline` derives local+global pools from one shared `sort_train_panel` (no re-sort). Re-review added: `tail_pools` builds+NaN-checks in one loop, the dead `block.size==0` guard removed, `_check_ff_level` dedups the loa↔level check across `to_index`/`to_feature_frame`, and a `train_test_boundary(partition_dict)` helper homes the `train_end = test_start-1` convention. Golden byte-identical throughout.
+
+### C-06: `partition_dict` structure assumed but never validated — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-06 |
+| Resolved | 2026-07-31 |
+| Resolution | `train_test_boundary` (`model/grid.py`) now validates the partition-dict shape (a dict with a `'test'` key whose value is a non-empty `(start, end)` of ints) and raises `ValueError` at the model boundary; the 4 distributional `predict()`s were routed through it, closing the former Pattern-B inline `self.partition_dict['test'][0]` bypass so every fit/predict site is guarded once. Tests: `tests/test_grid.py`. |
+
+---
+
+### C-07: No enforcement that `targets` columns exist in input DataFrame — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-07 |
+| Resolved | 2026-07-31 |
+| Resolution | Target-presence is validated on the fit path of all 6 non-Zero models — `_from_dataframe` raises `missing required target column(s)` and `_validate_feature_frame` raises `missing required target feature(s)` (`model/frames/input.py`, C-34 work). Predict is deliberately column-agnostic (C-34) and `ZeroModel` deliberately data-independent, so the deep-`KeyError` path this entry described is closed with no remaining code gap. Covered by `tests/test_input.py` (`*_rejects_missing_target_*`). |
+
+---
+
+### C-21: Governance docs still describe the removed `isinstance` manager dispatch — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-21 |
+| Resolved | 2026-07-31 |
+| Resolution | Doc sweep completed. Active docs edited in place — `contributor_protocols/carbon_based_agents.md`, `hardened_protocol_template.md`, `CICs/ConflictologyModel.md`, `INSTANTIATION_CHECKLIST.md`; immutable ADR bodies given prepended Status notes per ADR-000 — `ADRs/009` (Boundary 3) and `ADRs/004`. The register's stale location list is corrected: `ADRs/005:51` (legitimate protocol-conformance text) and `CICs/BaselineForecastingModelManager.md:56` (already correct) were NOT drift. `validate_docs.sh` green; remaining `isinstance` mentions are historical/decision records or protocol-conformance statements. |
+
+---
+
+### C-30: Golden tests are coupled to the numpy Generator version (no numpy pin) — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-30 |
+| Resolved | 2026-07-31 |
+| Resolution | `numpy>=1.26,<3` declared in `pyproject.toml` `[project] dependencies`, matching sibling house style (views-frames, views-datafactory) and making numpy a first-class direct dependency (imported across ~10 runtime modules). The golden-test/Generator-stream coupling note stays in `tests/test_golden.py`; the `<3` ceiling matches siblings and those streams are stream-stable (NEP-19). |
 
 ## Register Conventions
 

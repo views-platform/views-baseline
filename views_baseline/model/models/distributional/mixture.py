@@ -95,10 +95,11 @@ class MixtureBaseline:
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int
     ) -> dict:
         level = to_level(df, loa=self.loa)
+        test_start, _ = train_test_boundary(self.partition_dict)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.local_pool, model_name="MixtureBaseline",
             targets=self.targets, n_samples=self.n_samples, level=level,
-            test_start=self.partition_dict["test"][0],
+            test_start=test_start,
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=self._sample,
         )

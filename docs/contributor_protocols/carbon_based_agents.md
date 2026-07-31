@@ -56,7 +56,7 @@ views-pipeline-core ≥3.0.0) is lazy-imported inside the single `to_prediction_
 ### Declarations, not inference
 
 ADR-003 is the most important principle for day-to-day coding. Never infer:
-- Model type from output shape (use `isinstance(model, DistributionalBaselineModel)`)
+- Model type from output shape (it is a declared class attribute, `distributional = True`; note this is a semantic marker only — the manager has a single type-uniform path since ADR-017 and does **not** `isinstance`-dispatch on it)
 - Target columns by scanning DataFrame dtypes
 - Train/test boundary from `df.index.max()`
 - Required config keys by inspecting constructor signatures
