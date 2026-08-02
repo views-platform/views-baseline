@@ -35,7 +35,7 @@ dependencies = [
     "numpy>=1.26,<3",
     # views-frames is the canonical home of PredictionFrame / SpatioTemporalIndex /
     # SpatialLevel, constructed at the single seam in model/frames/output.py (ADR-020).
-    "views-frames>=1.3.0,<2.0.0",
+    "views-frames>=1.10.2,<2",
     # Requires the views-frames re-export of PredictionFrame, which lands in
     # views-pipeline-core 3.0.0 (#188 / PR #206). The suite asserts isinstance against
     # that re-exported leaf, so 2.x (old local PredictionFrame) is not compatible.
