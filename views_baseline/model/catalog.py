@@ -54,17 +54,17 @@ class BaselineModelCatalog:
 
     def _get_zero_model(self):
         return ZeroModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.config["regression_targets"], partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_locf_model(self):
         return LocfModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.config["regression_targets"], partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_average_model(self):
         return AverageModel(
-            targets=self.config["targets"],
+            targets=self.config["regression_targets"],
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -72,7 +72,7 @@ class BaselineModelCatalog:
 
     def _get_conflictology_model(self):
         return ConflictologyModel(
-            targets=self.config["targets"],
+            targets=self.config["regression_targets"],
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -82,7 +82,7 @@ class BaselineModelCatalog:
 
     def _get_mixture_model(self):
         return MixtureBaseline(
-            targets=self.config["targets"],
+            targets=self.config["regression_targets"],
             window_months=self.config["window_months"],
             lambda_mix=self.config["lambda_mix"],
             n_samples=self.config["n_samples"],
@@ -95,7 +95,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on an unsupported family or an illegal family×transform.
         return ParametricConflictology(
-            targets=self.config["targets"],
+            targets=self.config["regression_targets"],
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -109,7 +109,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on a non-continuous family or an illegal family×transform.
         return ParametricHurdleConflictology(
-            targets=self.config["targets"],
+            targets=self.config["regression_targets"],
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
