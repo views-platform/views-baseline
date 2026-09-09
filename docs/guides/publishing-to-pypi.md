@@ -13,7 +13,7 @@ months later** — every command is copy-paste-able.
 
 | Thing | What | Why it matters |
 |---|---|---|
-| **⚠️ Dependency not on PyPI yet** | `views-baseline` depends on `views-pipeline-core >=3.0.0`, which is **not published on PyPI** | Uploading the wheel **succeeds** and reserves the name/version, but `pip install views-baseline` will **fail to resolve** until pipeline-core 3.0.0 is on PyPI. `views-frames` (the other dep) *is* on PyPI. A clean-room install-back (§A) is therefore blocked until then. |
+| **✅ Dependencies now resolve** | `views-pipeline-core` reached PyPI on **2026-08-03** (3.0.0; now 3.2.0) | Historical note: 1.0.0 and 1.0.1 were published while this dependency had no PyPI release, so `pip install views-baseline` could not resolve *any* version (register C-38). That is cleared. **1.0.2 is the first release for which a clean-room install-back (§A) actually works — do it, since it has never been exercised.** |
 | **Single package** | The `views-baseline` wheel ships one import package, `views_baseline` | `pip install views-baseline` → `import views_baseline`. |
 | **Versions are write-once** | Once `X.Y.Z` is on PyPI it can never be re-uploaded or truly deleted (only "yanked") | Always **bump the version first**. For repeated TestPyPI rehearsals use a throwaway like `1.0.1.dev1`. |
 | **uv + hatchling, NOT poetry** | Build backend is `hatchling.build`; tooling is `uv` | Use `uv build` / `uv publish`. |
@@ -51,9 +51,11 @@ trusted-publisher config — see Prerequisites.
 The release workflow authenticates with **Trusted Publishing (OIDC)** — there is **no
 stored token**. A project owner enables it **once** on PyPI.
 
-**Because `views-baseline` is not on PyPI yet, use a _pending_ publisher** (PyPI lets you
-trust a publisher for a project that does not exist yet; the first OIDC publish then
-creates the project):
+**Already done — this is history, not a step.** The project now exists on PyPI (1.0.0 published
+2026-07-31, 1.0.1 on 2026-08-02), so the trusted publisher is a normal one and needs no further
+setup. It was originally registered as a **pending** publisher, which is what PyPI offers for a
+project that does not exist yet; the first OIDC publish created the project. Kept for the next
+person setting up a *new* package from this template:
 
 > PyPI → your account → **Publishing** → **Add a pending publisher (GitHub)**:
 > - **PyPI Project Name:** `views-baseline`

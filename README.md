@@ -151,7 +151,7 @@ Key characteristics:
 Input DataFrame:
 
 * Must be indexed by `(time, entity)` as a MultiIndex
-* Must contain target columns specified in `config['targets']`
+* Must contain target columns specified in `config['regression_targets']` (the `targets` key was retired upstream in views-pipeline-core #380 and is now *rejected* — do not add it back)
 
 Example index:
 

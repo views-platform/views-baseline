@@ -36,12 +36,16 @@ Each module boundary is documented with an explicit contract. Where validation e
 `MODEL_GENOMES` encodes the required keys per model:
 
 ```python
-MODEL_GENOMES = {
-    "ZeroModel":          [],
-    "LocfModel":          [],
-    "AverageModel":       ["window_months"],
-    "ConflictologyModel": ["window_months", "n_samples"],
-    "MixtureBaseline":    ["window_months", "lambda_mix", "n_samples"],
+CORE_GENOME = ["steps", "time_steps", "prediction_format", "regression_targets", "level"]
+
+MODEL_GENOMES = {   # alias of ReproducibilityGate.Config.ALGORITHM_GENOMES
+    "ZeroModel":                     [],
+    "LocfModel":                     [],
+    "AverageModel":                  ["window_months"],
+    "ConflictologyModel":            ["window_months", "n_samples", "seed"],
+    "MixtureBaseline":               ["window_months", "lambda_mix", "n_samples", "seed"],
+    "ParametricConflictology":       ["window_months", "n_samples", "seed", "family", "transform"],
+    "ParametricHurdleConflictology": ["window_months", "n_samples", "seed", "family", "transform"],
 }
 ```
 
@@ -50,7 +54,7 @@ All model-specific parameters are required and must be explicitly declared in th
 **What is not validated:**
 
 - Value ranges: `window_months=0`, `window_months=-1`, `lambda_mix=2.0`, `n_samples=0` all pass validation.
-- `targets` is required by all models but is not listed in `MODEL_GENOMES` (it is assumed to always be present). If `targets` is missing from config, construction of the model object will raise a `KeyError` from within the factory method, not from the validation check.
+- ~~`targets` is required by all models but is not listed in `MODEL_GENOMES`~~ — **closed 2026-09-09 (issue #85).** This bullet is retained rather than deleted, because what it recorded is worth remembering: the gap was written down as accepted debt in March 2026, and it is exactly what the August outage was made of. views-pipeline-core retired the synthesised `targets` key on 2026-08-02 (#380); the catalog kept reading it; every baseline model raised the predicted `KeyError` from inside the factory method for five weeks, with the audit reporting success one line earlier. The catalog now reads `regression_targets`, and both it and `level` are declared in `CORE_GENOME`, so absence is a `MissingHyperparameterError` naming the key at the boundary. **Accepted debt in a boundary contract is a prediction, not an observation.**
 - `partition_dict` is passed directly to model constructors without any structural check. The expected structure is `{"test": (start, end)}` where `start` and `end` are integer month IDs, but this is not enforced.
 
 ---
@@ -63,7 +67,7 @@ All model-specific parameters are required and must be explicitly declared in th
 
 Each factory method maps config keys to constructor parameters. The mapping is explicit and readable:
 
-- `config["targets"]` → `targets=`
+- `config["regression_targets"]` → `targets=` (derived **once** in `__init__` as `self.targets`, not re-read at each of the seven factory sites, so a future rename of the platform's target vocabulary is one edit rather than seven)
 - `config["window_months"]` → `window_months=` (for `AverageModel`, `ConflictologyModel`, and `MixtureBaseline`)
 - `config["lambda_mix"]` → `lambda_mix=` (for `MixtureBaseline`)
 - `config["n_samples"]` → `n_samples=` (for `ConflictologyModel` and `MixtureBaseline`)
@@ -170,7 +174,7 @@ from views_pipeline_core.data.prediction_frame import PredictionFrame
 
 | Boundary | What is missing |
 |---|---|
-| Config → Catalog | No validation that `targets` is present; no value-range validation for numeric params |
+| Config → Catalog | No value-range validation for numeric params. (Target/level presence: **closed** — `regression_targets` and `level` are in `CORE_GENOME` since #85.) |
 | Catalog → Model | No constructor-level range checks; no type coercion |
 | Model → Pipeline | No validation of distributional output structure or shape |
 | Data → Model | No MultiIndex structure validation; no column presence check; no time-range sanity check |

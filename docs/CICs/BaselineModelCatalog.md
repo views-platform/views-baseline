@@ -48,7 +48,7 @@
 
 | Parameter | Type | Notes |
 |---|---|---|
-| `config` | `dict` | Must contain `"targets"` (List[str]) for all models. Model-specific keys per `MODEL_GENOMES`. |
+| `config` | `dict` | Must contain `"regression_targets"` (List[str]) for all models — read once in `__init__` as `self.targets`. Model-specific keys per `MODEL_GENOMES`, read lazily in `get_model()`. |
 | `partition_dict` | `dict` | Passed directly to each model constructor. Must contain `"test"` key. |
 | `loa` | `str` | Level-of-analysis string. Passed directly to each model constructor. |
 
@@ -70,7 +70,7 @@ The catalog stores a reference to `config` (not a copy). Mutations to `config` a
 |---|---|---|
 | Unknown `model_name` | `ValueError` with message listing available names | `"Model '{model_name}' is not in the catalog. Available: ..."` |
 | Required config key missing | `ValueError` listing missing keys | `"Model '{model_name}' requires config keys {missing} but they are missing"` |
-| `config` missing `"targets"` | `KeyError` (crash) | No explicit validation; `targets=self.config["targets"]` raises. |
+| `config` missing `"regression_targets"` | `KeyError` at **construction**, not at `get_model()` | Declared in `CORE_GENOME` since #85, so a pipeline run fails earlier and louder at `audit_manifest`. A direct caller that skips the gate still gets a `KeyError` — now from `__init__`, where the key is read, rather than from inside a factory method. |
 | `partition_dict` missing `"test"` | Deferred to model | Not validated in catalog; surfaces when the model calls `partition_dict["test"]`. |
 
 ---
@@ -92,18 +92,19 @@ from views_baseline.model.catalog import BaselineModelCatalog
 partition_dict = {"test": (493, 528)}
 
 # ZeroModel — no model-specific keys required
-config = {"targets": ["y1", "y2"]}
+config = {"regression_targets": ["y1", "y2"]}
 catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
 model = catalog.get_model("ZeroModel")
 
 # AverageModel — requires "window_months"
-config = {"targets": ["y1", "y2"], "window_months": 6}
+config = {"regression_targets": ["y1", "y2"], "window_months": 6}
 catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
 model = catalog.get_model("AverageModel")
 assert model.window_months == 6
 
 # MixtureBaseline — all model-specific params required
-config = {"targets": ["y1"], "window_months": 18, "lambda_mix": 0.05, "n_samples": 256}
+config = {"regression_targets": ["y1"], "window_months": 18, "lambda_mix": 0.05,
+          "n_samples": 256, "seed": 42}
 catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
 model = catalog.get_model("MixtureBaseline")
 assert model.window_months == 18
@@ -124,22 +125,27 @@ catalog.get_model("BayesianModel")
 # ValueError: "Model 'BayesianModel' is not in the catalog. Available: ..."
 
 # Missing required key for AverageModel
-config = {"targets": ["y1"]}  # no "window_months"
+config = {"regression_targets": ["y1"]}  # no "window_months"
 catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
 catalog.get_model("AverageModel")
 # ValueError: "Model 'AverageModel' requires config keys ['window_months'] but they are missing"
 
-# Missing "targets" in config (not in MODEL_GENOMES — crashes rather than raises ValueError)
+# Missing "regression_targets" — now fails at CONSTRUCTION, not inside a factory
 config = {"window_months": 6}
-catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
-catalog.get_model("AverageModel")   # KeyError: "targets" inside factory method
+BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
+# KeyError: 'regression_targets' from __init__
+# (In a pipeline run this never gets that far: `regression_targets` is in CORE_GENOME,
+#  so audit_manifest raises MissingHyperparameterError naming the key first.)
 
-# Mutating config after construction affects subsequent get_model calls
-config = {"targets": ["y1"]}
+# Mutating config after construction still affects MODEL-SPECIFIC keys, which are read
+# lazily in get_model() — but NO LONGER affects targets, which are copied in __init__.
+config = {"regression_targets": ["y1"], "window_months": 6}
 catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pg_id")
-config["targets"] = []   # mutation visible inside catalog
-model = catalog.get_model("ZeroModel")
-assert model.targets == []   # unexpected empty targets
+config["regression_targets"] = []      # no longer visible to the catalog
+config["window_months"] = 999          # still visible
+model = catalog.get_model("AverageModel")
+assert model.targets == ["y1"]         # copied at construction (#85)
+assert model.window_months == 999      # read at get_model() time
 ```
 
 ---
@@ -170,11 +176,11 @@ Files: `tests/test_catalog.py` and `tests/test_baseline.py` (the `list_models` c
 ## Evolution Notes
 
 - To add a new model, register it in both `MODEL_GENOMES` and `self.models`, and add a `_get_*` factory method. All model-specific parameters must be listed in `MODEL_GENOMES` — the catalog does not apply defaults.
-- If `"targets"` should also be validated (currently not in genomes), it can be added as a universal required key checked outside the model-specific genome logic.
+- ~~If `"targets"` should also be validated…~~ **Done (#85):** `regression_targets` and `level` are declared in `CORE_GENOME`, so both are audited by `audit_manifest` before the catalog is constructed.
 
 ---
 
 ## Known Deviations
 
-- The `"targets"` key is universally required for all models but is not listed in any `MODEL_GENOMES` entry. A missing `"targets"` key surfaces as a `KeyError` inside the factory method rather than a descriptive `ValueError` from the genome check.
-- The catalog stores a reference to `config`, not a copy. Post-construction mutations to the dict affect factory behaviour.
+- ~~The `"targets"` key is universally required … surfaces as a `KeyError` inside the factory method~~ — **resolved 2026-09-09 (#85).** This deviation was recorded in April 2026 and was the shape of the August outage: pipeline-core retired the key, the catalog kept reading it, and the failure was the predicted opaque `KeyError`. Now `regression_targets` is in `CORE_GENOME` and is read once in `__init__`.
+- The catalog stores a reference to `config`, not a copy, so post-construction mutations still affect the **model-specific** keys read lazily in `get_model()`. The target list is no longer affected: `self.targets = list(config["regression_targets"])` copies at construction (#85). This is a partial, not a full, fix — noted rather than extended, since no caller mutates a config mid-construction today.
