@@ -6,9 +6,9 @@
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-09-09                           |
 | Total Concerns    | 52                                   |
-| Open Concerns     | 26                                   |
-| Resolved Concerns | 25                                   |
-| Withdrawn         | 1 (C-27 — Tweedie removed)           |
+| Open Concerns     | 21                                   |
+| Resolved Concerns | 31 (incl. 1 withdrawn — C-27)         |
+| Last Review       | 2026-09-09 (`review-rr` strategic)    |
 
 ---
 
@@ -33,13 +33,14 @@ isolation.
 
 | Cluster | Root cause | Entries | Status |
 |---------|-----------|---------|--------|
-| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18, C-39 | Seam resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020); C-19 OCP half deferred (ADR-012); **C-39 new** — the manager-side format dispatch can silently bypass the frame path |
+| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18, C-39 | Seam resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020). **C-05 resolved 2026-09-09** — the positional index assumption no longer exists; `resolve_level` validates at the boundary. C-19's OCP half deferred (ADR-012); C-39 open — the manager-side format dispatch can silently bypass the frame path |
 | K2 — numpy-port byte-identity (epic #47) | pandas→numpy rewrite risking silent forecast drift + weak guard tests | C-32, C-33, C-34, C-35, C-36, C-37, C-29 | Resolved & merged (PR #60); only C-30 (numpy pin) deferred |
 | K3 — Seed / reproducibility | Seed not wired; determinism-only tests | C-10, C-24, C-25, C-29 | Resolved & merged (ADR-021, #31) |
-| K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | Open, cross-repo (pipeline-core / views-models); C-44 adds the private-API surface all of these are asserted across |
-| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42, C-48 | Data-side closed (C-06/C-07). Config-side **largely closed by #85**: `regression_targets` + `level` declared, and empty values now rejected (C-42). Residual: `run_type` read past the gate (C-48) |
-| K6 — Governance-doc drift | Docs lag code changes | C-21, C-28, C-40 | C-21/C-28 resolved; **third recurrence open** — eight ADRs cite files deleted by the epic #47 reorg (C-40). No check added when the first two closed |
-| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; **C-38 discharge condition met** (pipeline-core 3.0.0 on PyPI 2026-08-03; CI resolves); C-41 re-scoped — scipy arrives transitively, the defect is the undeclared *direct* import; C-47 new — 3.12/3.13 unusable |
+| K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | **C-14 resolved downstream** — views-models' readiness contract now expects point models to omit `n_posterior_samples` (291 tests pass). C-11 lowered to T3 on its own likelihood note. C-13/C-20 remain, both external |
+| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42, C-48 | **Closed except one key.** C-05/C-06/C-07/C-42 all resolved: index validated at the boundary (`resolve_level`), partition dict validated (`train_test_boundary`), `regression_targets`+`level` declared and empty values rejected. Residual: `run_type` read past the gate (C-48) |
+| K6 — Cross-references are prose, not assertions | Nothing checks that a path cited by a doc, ADR or register entry still exists — so every rename silently invalidates the artifacts describing it | C-21, C-28, C-40 | C-21/C-28 resolved; **C-40 open — third recurrence.** `docs/validate_docs.sh` checks headers and links but never a cited source path. Renamed 2026-09-09: the old name ("docs lag code changes") named the artifact, not the decision, and hid that the register itself had the same drift |
+| K8 — Guards authored by the guarded | A guard is written by the author of the thing it guards, against that author's model of failure — so it encodes the same blind spot and cannot fire on it | C-44, C-50, C-52 | **Open, and newly named 2026-09-09.** Demonstrated three times in one day: the C-10 forwarding guard silently disarmed by a config-key rename; `CORE_GENOME` deletions surviving all 277 tests; conformance fixtures pinned to the same literal as the code they guard (C-50). `/falsify guard` exists for this and is not run routinely |
+| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; **C-38 RESOLVED** — 1.0.2 published and a clean-room install verified, the first ever; C-41 re-scoped to T4 (scipy arrives transitively; the defect is the undeclared *direct* import); C-47 open — 3.12/3.13 unusable |
 
 ---
 
@@ -65,46 +66,6 @@ isolation.
 > These entries stay **Open** until the change is committed/merged, at which point they move to
 > Resolved with dates (header counts updated then).
 
-### C-03: Duplicated index extraction across all 5 model classes
-
-| Field | Value |
-|-------|-------|
-| ID | C-03 |
-| Tier | 4 |
-| Source | tech-debt-audit (2026-04-27) |
-| Trigger | When adding a sixth baseline model class, the developer must copy the `self.time_idx = df.index.names[0]` / `self.entity_idx = df.index.names[1]` pattern and the `test_start = self.partition_dict["test"][0]` extraction — omitting either silently produces incorrect index handling |
-| Location | `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` (index extraction), `baseline.py:44,82,101,142,168,222,261,328,382` (test_start extraction) |
-
-All five model classes (`ZeroModel`, `LocfModel`, `AverageModel`, `ConflictologyModel`, `MixtureBaseline`) independently extract `time_idx`, `entity_idx`, and `test_start` in their `fit()` and `predict()` methods. The pattern is identical in every case. This is a DRY violation but deliberately minimal — each model is intentionally self-contained. The risk is low because the pattern is simple and well-tested across all models. Could be extracted to a helper or base class if a sixth model is added.
-
-See also C-05 (related: same code locations, different problem — C-03 is duplication, C-05 is validation absence).
-
-> **Status (2026-07-19):** the distributional `predict()`-side duplication is reduced — the shared grid / RNG / entity→time→target fill scaffold now lives once in `helpers.sample_prediction_grid` (all four distributional models delegate; see C-19). **Still open:** the `fit()`-side `time_idx`/`entity_idx`/`test_start` extraction and the point-model (`ZeroModel`/`LocfModel`/`AverageModel`) `predict()` extraction remain duplicated — low value, deferred. (tech-debt-cleanup)
-
----
-
-### C-05: Unvalidated MultiIndex structure assumption across all model classes
-
-| Field | Value |
-|-------|-------|
-| ID | C-05 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-06-01) |
-| Trigger | When the upstream data loader in views-pipeline-core changes the index level ordering, or when a contributor passes a flat-indexed or 3-level DataFrame to a model — all 5 models silently extract wrong index names via positional `df.index.names[0]`/`[1]` |
-| Location | `views_baseline/model/baseline.py:30-31,83-84,143-144,223-224,329-330` |
-
-Every model class extracts `self.time_idx = df.index.names[0]` and `self.entity_idx = df.index.names[1]` in `fit()` without validating that the DataFrame has a 2-level MultiIndex or that the levels are in the expected `(time, entity)` order. If the index levels are reversed, the model would set `self.time_idx` to the entity name and vice versa. Subsequent time-based filtering (e.g., `df.index.get_level_values(self.time_idx) < test_start`) would compare entity IDs against a month boundary, producing structurally valid but semantically wrong predictions with no error signal. Currently mitigated only by the convention that views-pipeline-core's data loader always produces `(time, entity)` ordering.
-
-**Tier rationale (impact vs. likelihood):** The *impact* is Tier 1 — this is the register's clearest silent-correctness case (semantically wrong predictions, no error). It sits at Tier 2 because *likelihood* is low: the `(time, entity)` ordering is governed by a stable upstream convention. If that convention ever becomes configurable or a code path begins constructing model input DataFrames directly, re-evaluate for Tier 1.
-
-See also C-03 (related: same code locations, C-03 addresses duplication, C-05 addresses validation absence).
-
-**Forward link (FeatureFrame input, 2026-06-04):** this same direct consumption of the DataFrame `(time, entity)` MultiIndex is what makes views-baseline a *high-effort* consumer in the platform's FeatureFrame-input migration — point models read `df.index.names` / `df[targets]` directly, so an input-format switch breaks `fit()` unless adapted (unlike adapter-fronted engines such as hydranet/r2darts2). Adopting FeatureFrame input (which carries its own validation) could *subsume* this risk. Tracked at `views-platform/views-pipeline-core#161` (input path) and `views-platform/views-pipeline-core#162` (contract hardening); see ADR-019 (proposed, not implemented).
-
-> **Re-scope (2026-07-31, strategic review):** the FeatureFrame input boundary this entry's forward-link named as potentially subsuming it (**C-31**) is now resolved and merged — `to_feature_frame` validates loa↔level and rejects NaN / non-integer / overflow indices at the boundary. The positional-index root is largely closed on the frame path; residual exposure is only the raw-DataFrame dual-input path. **Downgraded to Tier 3 on 2026-07-31** on this evidence (positional-index root closed on the frame path; residual only on the raw-DataFrame dual-input path).
-
----
-
 ### C-09: Dependency topology rules enforced by convention only
 
 | Field | Value |
@@ -126,7 +87,7 @@ ADR-002 and ADR-013 define strict dependency topology rules: `model/` must have 
 | Field | Value |
 |-------|-------|
 | ID | C-11 |
-| Tier | 2 |
+| Tier | 3 |
 | Source | expert-review (2026-06-02) |
 | Trigger | When baseline models switch to PredictionFrame output (GitHub #8) but the ensemble configuration still uses `EnsembleManager` (DataFrame-only) — ensemble evaluation fails with FileNotFoundError for all baseline constituents because it looks for `.parquet` files and finds `.npy` |
 | Location | `views_baseline/manager/baseline_manager.py` (return types), `views_pipeline_core/managers/ensemble/ensemble.py:82` (DataFrame-only ensemble), `views_pipeline_core/managers/ensemble/prediction_frame_ensemble.py:109` (PF-only ensemble), GitHub issues #8-#11 |
@@ -135,6 +96,8 @@ GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame
 
 **Status update (review-rr 2026-06-04):** Investigation during the migration established that no ensemble lists any baseline model as a constituent (`models` list) — baselines appear only in `regression_point_baselines`/`regression_sample_baselines` for evaluation benchmarking. The realistic likelihood of a production ensemble break is therefore much lower than first assessed. Prerequisite tracked in GitHub issue #12. Keep open until the migration (PR #15) merges and issue #12 confirms the consuming ensemble's manager/format.
 
+> **Tier lowered to 3 (from 2) — 2026-09-09, `review-rr` strategic.** Its own status note establishes that no ensemble lists any baseline as a constituent, so it did not belong beside C-13 and C-39, neither of which carries a likelihood discount. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
+
 ---
 
 ### C-12: `skip_predictions_delivery` config key added without effect analysis
@@ -142,7 +105,7 @@ GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame
 | Field | Value |
 |-------|-------|
 | ID | C-12 |
-| Tier | 3 |
+| Tier | 4 |
 | Source | expert-review (2026-06-02) |
 | Trigger | When `skip_predictions_delivery: True` is added to baseline configs per GitHub issue #10 — prediction file delivery may be suppressed in the pipeline-core stage layer, causing downstream consumers to find no output files |
 | Location | GitHub issue #10, `views_pipeline_core/managers/forecasting/stage.py` (delivery logic), `views_pipeline_core/managers/prediction/io.py` (save path) |
@@ -152,6 +115,8 @@ Issue #10 requires adding `skip_predictions_delivery: True` to all PredictionFra
 **Status update (review-rr 2026-06-04):** The PFE production roadmap (pipeline-core `2026-06-01_pfe_production_roadmap.md` §4.4) clarifies that `skip_predictions_delivery` controls **only Track B** (the Arrow/parquet write); Track A+ (`.npy` for PF-ensemble consumption) is always written. PR #76 applied `True` to all 9 point-model configs, matching the deployed ranger models. The runtime effect is now understood; residual concern is only confirming no current downstream consumer reads baseline Track-B parquet. Likelihood downgraded; keep open until that consumer check is done.
 
 See also C-11 (related: both concern the PredictionFrame migration's downstream effects).
+
+> **Tier lowered to 4 (from 3) — 2026-09-09, `review-rr` strategic.** The PFE roadmap clarified the runtime effect; the residual is a single downstream-consumer check. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
 
 ---
 
@@ -168,22 +133,6 @@ See also C-11 (related: both concern the PredictionFrame migration's downstream 
 `_aggregate_prediction_frames()` performs raw `np.concatenate(axis=1)` for the `concat` method without checking that all constituent PredictionFrames have the same number of samples. A point model PF with shape `(N, 1)` concatenated with three 64-sample PFs produces `(N, 193)` where the point model contributes 0.5% of samples — statistically negligible but appearing as a full ensemble member. Downstream CRPS and calibration metrics are computed on this lopsided distribution, producing valid-looking but misleading results. The `arithmetic_mean` path is accidentally stricter (`np.stack` fails on shape mismatch). The older DataFrame-based `AggregationModule` (`aggregator.py:365-444`) has weighted resampling that handles heterogeneous counts correctly, but PFE lacks this. Currently theoretical — no mixed ensemble exists and baselines serve only as evaluation benchmarks, not ensemble constituents — but the guard should exist regardless.
 
 See also C-11 (related: both concern the PredictionFrame migration's interaction with ensemble infrastructure).
-
----
-
-### C-14: Point baselines cannot satisfy views-models' PF readiness contract (cross-repo catch-22)
-
-| Field | Value |
-|-------|-------|
-| ID | C-14 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-06-05) |
-| Trigger | When a contributor enables a point baseline (`ZeroModel`/`LocfModel`/`AverageModel`) for production by setting `prediction_format: "prediction_frame"` in its views-models config and runs the integration suite or `TestPFModelConfigReadiness` — the check fails (`n_posterior_samples` got `None`, `regression_targets` got `None`) because a deterministic model has no posterior samples |
-| Location | `views_baseline/infrastructure/reproducibility_gate.py:24` (`CORE_GENOME`, no `n_posterior_samples`); `views-models` `tests/test_pfe_production_readiness.py::TestPFModelConfigReadiness` (`_discover_pf_models()` asserts `n_posterior_samples` positive int + `regression_targets` non-empty); evidenced by `integration_test_2026-06-04` |
-
-A structural catch-22 spans the repo boundary. PR #15 made all baseline models — including the three deterministic point models — *always* return `dict[str, PredictionFrame]`. Consequently their config **must** declare `prediction_format: "prediction_frame"` (otherwise pipeline-core routes the returned `dict` through the DataFrame save path and crashes). But that declaration subjects them to views-models' readiness contract, which operationally defines `prediction_frame ⇒ sampled/distributional` and requires `n_posterior_samples` — a quantity deterministic point models cannot meaningfully supply. views-baseline's own `CORE_GENOME` does not include `n_posterior_samples`, so the contradiction is **invisible to this repo's gate and tests**; it surfaces only in the downstream suite as a loud test failure (not silent corruption). The resolution is cross-repo — a point-aware readiness check and a first-class point/stochastic content descriptor — tracked at views-models #81 and `views-platform/views-pipeline-core#159`; see ADR-018 ("What is explicitly NOT done here").
-
-See also C-13 (related root cause: the ecosystem treating PredictionFrame as inherently sampled) and C-12 (related: PF-migration config keys adopted from a downstream sniffer's mandatory list).
 
 ---
 
@@ -217,7 +166,7 @@ See also C-08 (the duplicated lazy import the adapter subsumes), C-16 (the migra
 | Tier | 3 |
 | Source | pr-review (2026-06-24) |
 | Trigger | When any platform code constructs a `PredictionFrame` from a zero-width sample array — e.g. a degenerate `n_samples=0` config reaching a distributional model — `views_frames.PredictionFrame` accepts it (`sample_count == 0`) instead of raising, producing a meaningless empty-sample frame that downstream evaluation/aggregation consumes as if valid |
-| Location | External: `views_frames.PredictionFrame` (no sample-count > 0 guard). Mitigated in this repo at `views_baseline/model/helpers.py` `to_prediction_frames` (raises on `y_pred.shape[1] == 0`); regression test `tests/test_baseline.py::test_conflictology_n_samples_zero_raises` |
+| Location | External: `views_frames.PredictionFrame` (no sample-count > 0 guard). Mitigated in this repo at `views_baseline/model/frames/output.py` `to_prediction_frames` (raises on `y_pred.shape[1] == 0`); regression test `tests/test_baseline.py::test_conflictology_n_samples_zero_raises` |
 | Narrative | The retired `views-pipeline-core` `PredictionFrame` rejected zero-sample arrays ("at least one sample column"); the extracted `views_frames` leaf dropped that validation (confirmed: `PredictionFrame(np.empty((2,0)), idx)` succeeds with `sample_count == 0`). For views-baseline this fail-loud guarantee (ADR-008) is **restored at the single construction seam** `to_prediction_frames`, so the repo's risk is mitigated. The platform-wide gap remains for any other code path that constructs `PredictionFrame` directly. Root-cause fix belongs in `views-frames` (a constructor guard); this entry tracks baseline's interaction and the cross-repo follow-up. |
 
 See also C-13 (the related sample-axis validation gap in PFE concat aggregation) and C-16 (the views-frames migration that surfaced this).
@@ -232,25 +181,9 @@ See also C-13 (the related sample-axis validation gap in PFE concat aggregation)
 | Tier | 4 |
 | Source | pr-review (2026-06-24) |
 | Trigger | When a downstream consumer needs run identity (`model`, `run_type`, `seed`, `run_id`, `data_version`) attached to a baseline forecast — the frames built by `to_prediction_frames` carry an empty `FrameMetadata`, so provenance must be reconstructed from outside the frame |
-| Location | `views_baseline/model/helpers.py` `to_prediction_frames` — `PredictionFrame(y_pred, index)` is constructed with no `metadata` argument |
+| Location | `views_baseline/model/frames/output.py` `to_prediction_frames` — `PredictionFrame(y_pred, index)` is constructed with no `metadata` argument |
 
 `to_prediction_frames` is the single construction chokepoint (ADR-020), which makes it the natural — and only — place to stamp `FrameMetadata` (views-frames v1.4.0 added `run_id`/`data_version`) if downstream ever wants run identity carried on the frame itself. Not required for the #21 migration and not a correctness issue; recorded as an enhancement opportunity that the seam makes trivial to add later. No current consumer requests it.
-
----
-
-### C-27: Tweedie `lam` is unbounded when the derived index `p` clamps to the ceiling (OOM + unclamped magnitude)
-
-| Field | Value |
-|-------|-------|
-| ID | C-27 |
-| Tier | 3 — **WITHDRAWN 2026-07-18** |
-| Source | review-diff (2026-07-18, epic #33 S9) |
-| Trigger | When `fit_tweedie` is called on a **low-zero-rate, low-dispersion** window (so the derived `p = 2 − m²/(var·lam0)` exceeds 2 and clamps to `2 − eps`), making `lam = m²/(var·(2−p)) ≈ 1000·m²/var` — e.g. a new/low-dispersion regression target routed to `ParametricConflictology(family="tweedie")` |
-| Location | `views_baseline/model/distributions.py` (`fit_tweedie` `lam` recompute; `sample_tweedie` `rng.gamma(..., size=total)` allocation); `views_baseline/model/baseline.py` (`ParametricConflictology.predict` native-zero path applies no clamp) |
-
-> **WITHDRAWN (2026-07-18):** the Tweedie family was **removed** from views-baseline in S9 (code deleted, not fixed), so this risk no longer exists. Diagnosis that drove the removal: on the real pgm data the OOM/ceiling case (`p≥2`) fired **zero** times (max clamped λ = 0.3); what actually occurred was the *benign* `p≤1` clamp on ~40% of active cells — windows with 1–2 events in 36 months that a continuous family fundamentally cannot represent. The only honest handling of that infeasibility was either clamp (hides misspecification) or empirical fallback (turns the parametric model back into conflictology) — neither acceptable — so Tweedie was excluded from the baseline. See ADR-022 (Tweedie exclusion record) and `reports/closeness_experiment/FINDINGS.md` §S9. Original narrative retained below for provenance.
-
-The Tweedie index `p` is derived from the window's mean/var/zero-rate and clamped to `(1+eps, 2−eps)` to stay in the compound Poisson-Gamma regime — but the clamp bounds only the *index*, not the rate. When `p` clamps to the ceiling, `lam` is recomputed as `1000·m²/var` and left unbounded. `sample_tweedie` then draws `rng.poisson(lam, size)` and allocates `rng.gamma(alpha, theta, size=total)` with `total = counts.sum()`; a pathological cell drives `lam` to 1e4–1e6 → a 1e7–1e9-element jump array → **OOM/hang**. Coupled second consequence: the native-zero path in `ParametricConflictology.predict` applies **neither** `clamp_log` **nor** `clamp_floor` (those guard the hurdle/log1p paths), so the same `lam` also yields an **unbounded emitted magnitude** — the failure class `EMIT_LOG_CEIL` exists to prevent. Did not fire in the S8 experiment because conflict windows are high-zero-rate/high-dispersion (`p` clamps toward 1, `lam` small); it is an atypical-but-realistic edge for a low-dispersion target. Tier 3 (not 2): needs an atypical window, no silent corruption in the intended zero-inflated regime, and the fix is a localized ceiling. **Not yet fixed** — a deliberate policy call: a single-sourced `_TWEEDIE_LAM_CEIL` (WARN on cap) bounds both the array size and the magnitude but under-preserves the mean in the already-approximate clamped-`p` regime. See also C-26 (the gumbel floor, fixed) as the sibling native-zero/positive-part numeric guard, and the `EMIT_LOG_CEIL` ceiling it mirrors.
 
 ---
 
@@ -275,47 +208,6 @@ See also C-29 (the golden tests that gate this), C-30 (their numpy-Generator cou
 > **Merged (2026-07-20, code-review #60 finding #6).** Two additions from the max-effort review: (1) the `_from_dataframe` code comment `"float64 block ... byte-identity with the pandas path"` (`model/frames/input.py`) is **now false** — `FeatureFrame.from_2d` immediately downcasts to float32, so the whole model layer (production df path included) computes on float32-rounded values; the comment is corrected in WS4. (2) The reach is a **reproducibility**, not merely precision, effect for non-float32-exact targets: `MixtureBaseline`'s global pool `v[v > 0]` and `ParametricHurdleConflictology`'s `pool == 0.0` / `pool > 0` zero-spike split are computed on float32 values, so a value that rounds across the 0 boundary changes the pool contents/size and reindexes the seeded `rng.choice` — the draws diverge from the pre-PR float64 path (still within the accepted FeatureFrame-canonical decision, but broader than "rounding").
 
 > **Re-tiered 2→4 (2026-07-31, strategic review):** the acute non-order-preserving-rewrite trigger has passed — the numpy port merged and `test_golden.py` stayed byte-identical. Retained as documentation of the float32 precision boundary, not a live structural risk; kept Open as a standing boundary note.
-
----
-
-### C-38: views-baseline 1.0.0 is published to PyPI but not installable until views-pipeline-core 3.0.0 ships there
-
-| Field | Value |
-|-------|-------|
-| ID | C-38 |
-| Tier | 3 |
-| Source | release (2026-07-31, PyPI v1.0.0 publish — deliberate "publish now anyway" tradeoff) |
-| Trigger | When anyone runs `pip install views-baseline` (or a `uv sync` / `uv pip install` that resolves it) from PyPI **before** `views-pipeline-core 3.0.0` is published there — dependency resolution fails hard because the required `views-pipeline-core>=3.0.0,<4.0.0` has no release on pypi.org (only 2.3.0 exists). The same unresolvable dependency keeps the `check` matrix in `run_tests.yml` red. |
-| Location | `pyproject.toml:36` (`"views-pipeline-core>=3.0.0,<4.0.0"`); `.github/workflows/run_tests.yml` (`check` job `uv sync`, and the header note documenting the expected-red state); external blocker `views-platform/views-pipeline-core#319` (publish 3.0.0 to PyPI) |
-
-views-baseline 1.0.0 was uploaded to PyPI via Trusted Publishing, reserving the name and version, **while one of its two hard dependencies is not on PyPI at all**. `views-frames>=1.3.0` resolves (it is published, 1.10.1); `views-pipeline-core>=3.0.0` does not — pipeline-core's newest PyPI release is 2.3.0, and 3.0.0 exists only in-repo (held from publication for non-technical reasons). Consequently the published artifact is **installable in name only**: every `pip install views-baseline` from a clean index errors at resolution, and the uv `check` CI job cannot `uv sync` for the same reason (documented, expected-red). The maintainer accepted this knowingly to reserve the release and complete the packaging pipeline ahead of the dependency; the working test gate remains the editable `views_pipeline` conda env, not the PyPI install.
-
-**Tier rationale (impact vs. likelihood):** the failure is **loud** (a resolution error, never silent corruption) and has a single, known discharge condition, so it is not Tier 2 fragility. Blast radius today is small — no consumer is expected to `pip install` this yet (the conda env is the sanctioned path) — but it is a genuine cross-repo coupling that increases friction and confusion until cleared, hence Tier 3. **Discharge:** resolve when views-pipeline-core 3.0.0 is published to PyPI (`#319`) and a clean `pip install views-baseline==1.0.0` resolves; the `check` CI job goes green at the same moment. Tracked from this repo by the pandas/packaging follow-up issue and cross-repo by pipeline-core #319.
-
-See also C-17 (the prior pin-hygiene entry — **inverted** here: 3.0.0 is now intentionally *required* rather than dangerously *admitted*), C-16 (the code break the `>=3.0.0` floor exists to require the fix for), and C-31/C-32 (the FeatureFrame-native work that made the frame path pandas-free, orthogonal to this distribution gap).
-
-> **RESOLVED (2026-09-09, v1.0.2).** Discharged and verified, not merely argued. `views-baseline
-> 1.0.2` published to PyPI via Trusted Publishing (run `34340933613`), and a clean-room
-> `uv pip install views-baseline==1.0.2` into an empty 3.11 venv **resolved and installed** — the
-> first time any version of this package has ever done so. 1.0.0 and 1.0.1 remain installable in
-> name only and should be treated as unusable. The install-back in
-> `docs/guides/publishing-to-pypi.md` §A has now been exercised once; it had never been run.
->
-> Verified in that clean environment: `audit_manifest` accepts a real `black_ranger` config and
-> `BaselineModelCatalog(...).get_model("MixtureBaseline")` returns a model with
-> `targets == ['lr_os_best']` — the exact call that raised `KeyError: 'targets'` for five weeks.
->
-> Note the residual, which belongs to C-47 and not here: the clean-room install succeeds on
-> **Python 3.11 only**. All 29 baseline environments are 3.11, so no shipped model is affected.
->
-> **DISCHARGE CONDITION MET (2026-09-09).** views-pipeline-core reached PyPI on **2026-08-03**
-> (3.0.0), and is now at 3.2.0 — 3.0.1 (08-11), 3.1.0 (08-13), 3.1.1 (08-14), 3.1.2 (08-26),
-> 3.2.0 (09-08). `views-baseline`'s `>=3.0.0,<4.0.0` floor therefore resolves, which is precisely
-> why teammates *can* install 1.0.1 and hit the #84 outage. Both halves of this entry are cleared by
-> events: the install block is gone, and the red CI it caused is being verified in #90. Moves to
-> **Resolved** when #92 publishes 1.0.2 and a clean-room `pip install` is demonstrated.
->
-> **Second-order consequence recorded (2026-09-09, repo-assimilation).** The red `check` matrix is not merely a cosmetic CI failure — it means **no merge to `development` or `main` is gated on the test suite at all**. Of the three jobs in `run_tests.yml`, only `lint` (`uvx ruff check .`, project-independent) and `build` (`uv build`) produce a meaningful signal; the 248-test suite executes solely in a maintainer's local editable `views_pipeline` conda env, at their discretion and on their machine. Every correctness guard the repo has invested in — the golden byte-identity tests, the pandas-free-path subprocess tripwire, the strict-xfail ratchets — is therefore advisory rather than enforced, and this holds for any contributor who does not have the editable env. This is the enabling condition beneath C-39 and C-44 (both would be caught by an integration test that cannot currently run in CI). It discharges at the same moment as the entry above: when pipeline-core 3.0.0 reaches PyPI, `uv sync` resolves and the suite becomes a real gate. Until then, branch protection should not be read as test protection.
 
 ---
 
@@ -358,9 +250,9 @@ See also C-21 and C-28 (the two prior, now-resolved drift instances — this is 
 | Field | Value |
 |-------|-------|
 | ID | C-41 |
-| Tier | 3 |
+| Tier | 4 |
 | Source | repo-assimilation (2026-09-09) |
-| Trigger | When a reviewer or downstream user installs views-baseline from a clean index (once C-38 clears) and imports `views_baseline.evaluation.closeness` to reproduce the ADR-022 equivalence result — the import raises `ModuleNotFoundError: scipy` because no declared dependency supplies it |
+| Trigger | When `views-evaluation` (or anything else in the pipeline-core dependency tree) stops requiring `scipy` — this package imports it directly while declaring nothing, so the break arrives with no signal from our own metadata. **Not** on install: scipy is supplied transitively today via `views-baseline → views-pipeline-core → views-evaluation (scipy>=1.11,<2)`, verified at 1.15.1/1.17.1 in clean environments. |
 | Location | `views_baseline/evaluation/closeness.py:18` (`from scipy.stats import energy_distance, wasserstein_distance`, module level); `pyproject.toml:31-43` (declares only `numpy`, `views-frames`, `views-pipeline-core`); `views_baseline/model/distributions/__init__.py:11` (docstring claims "numpy + scipy only" for a numpy-only package) |
 
 `evaluation/closeness.py` imports scipy at module level and is packaged into the wheel (`[tool.hatch.build.targets.wheel] packages = ["views_baseline"]` ships all of `views_baseline/`), yet scipy appears in no dependency list. Neither declared dependency supplies it transitively: `views-pipeline-core` declares no scipy requirement, and `views-frames` declares `scipy>=1.11,<2` only under its **`docs` extra**, which a normal install does not pull. The module is not incidental — it is the closeness harness that operationalises ADR-022's "indistinguishable from conflictology" verdict (C2ST / Wasserstein / energy distance) and backs `reports/closeness_experiment/FINDINGS.md`, so the first person to independently re-run the epic #33 evidence from a published wheel is the one who hits it. The failure is currently masked everywhere it would be noticed: the `views_pipeline` conda env has scipy installed, and CI never reaches the test step (C-38). A secondary inaccuracy compounds the confusion: `model/distributions/__init__.py` advertises a scipy dependency for a package whose families are implemented purely in numpy.
@@ -383,41 +275,7 @@ See also C-17 (the same failure mode — an undeclared dependency working locall
 > stays 3 but the trigger becomes "when views-evaluation or pipeline-core stops requiring scipy",
 > not "when anyone installs".
 
----
-
-### C-42: The reproducibility gate does not audit `level` or `targets`, the two config keys every model path dereferences
-
-| Field | Value |
-|-------|-------|
-| ID | C-42 |
-| Tier | 3 |
-| Source | repo-assimilation (2026-09-09) |
-| Trigger | When a contributor adds a new baseline model config in views-models (or trims an existing one) and omits `level` or `targets` — verify the failure is a `MissingHyperparameterError` naming the key, not a bare `KeyError` raised past a gate that has already declared the config valid |
-| Location | `views_baseline/infrastructure/reproducibility_gate.py:24` (`CORE_GENOME = ["steps", "time_steps", "prediction_format"]`), `:27-41` (`ALGORITHM_GENOMES` — `targets` appears in no genome list); dereferenced unguarded at `views_baseline/manager/baseline_manager.py:79` (`self.config["level"]`) and `views_baseline/model/catalog.py:57,62,67-70,75-81,86-92,98-106,113-120` (`self.config["targets"]` in all seven factories) |
-
-`ReproducibilityGate.Config.audit_manifest` is the declared boundary contract for configuration (ADR-009/ADR-021): it exists so a malformed config fails at the boundary with `REPRODUCIBILITY CONTRACT VIOLATED` naming the missing key. Two keys escape it entirely. `level` is read by `_setup_model_and_data` immediately after the audit passes; `targets` is read by every one of the seven catalog factory methods and is listed in **no** genome, so `get_model`'s own `missing = [k for k in self.MODEL_GENOMES[model_name] if k not in self.config]` check cannot catch it either. A config missing either key therefore clears both validation layers and dies on a bare `KeyError` inside the object graph — the precise failure mode the gate was built to eliminate, and the one an ADR-009 reader would assume is impossible. The gate is also importable by views-models for *static* config validation, so the omission propagates: a downstream repo checking its configs against `CORE_GENOME` gets a false green.
-
-See also C-07 (the sibling gap on the *data* side — `targets` columns in the input frame — resolved by the `to_feature_frame` boundary; this is the unclosed *config* side of the same pair). Part of causal cluster **K5 — Input-boundary validation**.
-
-> **TIER CORRECTED + FIX IMPLEMENTED (2026-09-09, epic #85).** This entry was registered at
-> **Tier 3** as a diagnostics concern — "a missing key gives a bare `KeyError` instead of a named
-> contract violation" — with a *hypothetical future* trigger ("when a contributor omits `level` or
-> `targets`"). Both judgements were wrong, and the register is more useful for saying so than for
-> hiding it:
->
-> - The trigger had **already fired**, five weeks earlier. views-pipeline-core retired the
->   synthesised `targets` key on 2026-08-02 (#380); `catalog.py` kept reading it; **all 29 baseline
->   models had been unrunnable since**. This was a live production outage, not a latent quality issue
->   — Tier 1 by the register's own definition once the read side is counted.
-> - The reason I mis-read it is itself the finding: I checked whether the key was *validated* and
->   assumed it was *present*, because `tests/conftest.py` supplied it. I had described that exact
->   trap in **C-44** one entry earlier and then walked into it. A fixture is not evidence about
->   production.
->
-> **Fix (working tree, epic #85):** the catalog reads `regression_targets`, derived once in
-> `__init__`; `regression_targets` and `level` are declared in `CORE_GENOME` (#87); a conformance
-> test builds all seven models from real merged views-models configs (#88). Stays **Open** until
-> merged and released. Superseded in substance by #85; the ID is retained with its error visible.
+> **Tier lowered to 4 (from 3) — 2026-09-09, `review-rr` strategic.** The stated trigger was falsified — scipy arrives transitively via views-evaluation — leaving declaration hygiene with a remote trigger. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
 
 ---
 
@@ -1074,10 +932,71 @@ Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but
 | Resolved | 2026-07-31 |
 | Resolution | `numpy>=1.26,<3` declared in `pyproject.toml` `[project] dependencies`, matching sibling house style (views-frames, views-datafactory) and making numpy a first-class direct dependency (imported across ~10 runtime modules). The golden-test/Generator-stream coupling note stays in `tests/test_golden.py`; the `<3` ceiling matches siblings and those streams are stream-stable (NEP-19). |
 
+### C-03: Duplicated index extraction across all 5 model classes — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-03 |
+| Resolved | 2026-09-09 |
+| Resolution | Dissolved by the epic #47 reorg rather than fixed directly. The duplicated `df.index.names[0]/[1]` extraction no longer exists anywhere in the package — verified 2026-09-09: `grep -rn 'index.names\[0\]' views_baseline/` returns nothing. Index handling is single-sourced in `model/frames/input.py` (`_index_arrays`) and `model/spatial.py` (`resolve_level`), and the `partition_dict['test'][0]` half was closed by `train_test_boundary` (C-06). No model class extracts index names positionally. |
+
+---
+
+### C-05: Unvalidated MultiIndex structure assumption across all model classes — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-05 |
+| Resolved | 2026-09-09 |
+| Resolution | Closed at the boundary. `model/spatial.py::resolve_level` validates the DataFrame's index names against the **declared** `loa` and raises when they disagree (ADR-003 — declarations are authoritative), and `model/frames/input.py::_index_arrays` additionally rejects NaN, fractional and out-of-int64 identifiers before the cast. The positional `df.index.names[0]/[1]` assumption the entry describes no longer exists — verified 2026-09-09. Tests: `tests/test_input.py`, `tests/test_dual_input.py`. |
+
+---
+
+### C-14: Point baselines cannot satisfy views-models' PF readiness contract (cross-repo catch-22) — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-14 |
+| Resolved | 2026-09-09 |
+| Resolution | Resolved **downstream, not here** — and the entry was stale for some time before anyone checked. views-models rewrote its readiness contract to expect exactly this shape: point models omit `n_posterior_samples` and emit `(N, 1)`, stochastic models declare a positive int. Verified 2026-09-09 by running `views-models/tests/test_pfe_production_readiness.py`: **291 passed, 0 failed**, with all 9 point baselines declaring `prediction_format: prediction_frame` and correctly omitting `n_posterior_samples`. The catch-22 does not exist. The original trigger is preserved verbatim, because the wrong claim is this entry's whole value: *"When a contributor enables a point baseline (`ZeroModel`/`LocfModel`/`AverageModel`) for production by setting `prediction_format: "prediction_frame"` in its views-models config and runs the integration suite or `TestPFModelConfigReadiness` — the check fails (`n_posterior_samples` got `None`, `regression_targets` got `None`) because a deterministic model has no posterior samples."* Found by a falsification audit of the claim "nothing downstream is blocked by this repo" — the register was asserting an outbound block that had already been cleared, which is the one kind of staleness that can stop someone else's work for no reason. |
+
+---
+
+### C-38: views-baseline 1.0.0 is published to PyPI but not installable until views-pipeline-core 3.0.0 ships there — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-38 |
+| Resolved | 2026-09-09 |
+| Resolution | Discharged by evidence. views-pipeline-core reached PyPI on 2026-08-03 (3.0.0; now 3.2.0), and `views-baseline 1.0.2` was published 2026-09-09 (run 34340933613). A clean-room `uv pip install views-baseline==1.0.2` into an empty 3.11 venv **resolved and installed** — the first time any version of this package has done so; 1.0.0 and 1.0.1 remain installable in name only and should be treated as unusable. Verified in that environment that `audit_manifest` accepts a real `black_ranger` config and `get_model('MixtureBaseline')` returns `targets == ['lr_os_best']`. Residual (Python 3.12/3.13 unusable) is tracked separately as C-47. |
+
+---
+
+### C-42: The reproducibility gate does not audit `level` or `targets`, the two config keys every model path dereferences — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-42 |
+| Resolved | 2026-09-09 |
+| Resolution | Closed by epic #85, and the entry's own calibration error is preserved in its history rather than erased: it was registered at Tier 3 as a diagnostics concern with a hypothetical trigger, while in fact all 29 baseline models had been dead for five weeks. `CORE_GENOME` now declares `regression_targets` and `level`; the catalog reads `regression_targets`; empty and scalar-string values are rejected (a later finding — `regression_targets: []` had passed the whole gate and produced a run that wrote nothing). Merged `2b3d3b4`, released v1.0.2. Residual: `run_type` is still read past the gate — tracked as C-48. |
+
+---
+
+### C-27: Tweedie `lam` is unbounded when the derived index `p` clamps to the ceiling (OOM + unclamped magnitude) — WITHDRAWN — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-27 |
+| Resolved | 2026-07-18 |
+| Resolution | **Withdrawn 2026-07-18**, not fixed: the Tweedie family was removed from the parametric registry after the S9 closeness evaluation excluded it (ADR-022 / `reports/closeness_experiment/FINDINGS.md`). `fit_tweedie`/`sample_tweedie` no longer exist, so the unbounded-`lam` path is unreachable. Filed here rather than under Open Concerns, where it had been sitting with its status encoded in the Tier cell. |
+
+---
+
 ## Register Conventions
 
 - **ID format:** `C-xx` for concerns, `D-xx` for disagreements. IDs are permanent — gaps in numbering indicate merged or resolved entries
 - **Sources:** `repo-assimilation`, `expert-review`, `test-review`, `falsification-audit`, `clean-architecture-review`, `pr-review`, `tech-debt-audit`, `incident`
 - **Resolution:** Move to "Resolved Concerns" with resolution date and summary when addressed
-- **Header counts:** Manually maintained — update whenever a concern is added or resolved
+- **Header counts:** Manually maintained — update whenever a concern is added or resolved. `Open + Resolved = Total`; there is no separate Withdrawn count (folded into Resolved, 2026-09-09 — a separate row let a withdrawn entry sit under Open Concerns while the arithmetic still balanced). Guarded by `tests/test_falsification_done_claim.py`.
+- **Status and filing must agree:** an entry whose body declares itself RESOLVED, or whose stated discharge condition is met, belongs in `## Resolved Concerns`. Same guard.
 - **Cross-repo:** This register tracks views-baseline-specific risks only. Entries may reference external code locations (e.g., pipeline-core ensemble managers) when the risk is about baseline's interaction with that code. The root-cause fix may belong in another repo, but the risk to baseline is tracked here. The parent risk for C-59 (filename coupling across engine repos) is tracked in the `views-pipeline-core` register.
