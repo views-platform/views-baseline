@@ -569,7 +569,7 @@ def test_mixture_predict_reproducible(mixture_df, partition_dict, targets):
 def test_catalog_get_zero_model(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets}
+    config = {"regression_targets": targets}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     model = catalog.get_model("ZeroModel")
     assert isinstance(model, ZeroModel)
@@ -578,7 +578,7 @@ def test_catalog_get_zero_model(partition_dict, targets):
 def test_catalog_get_average_model(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets, "window_months": 6}
+    config = {"regression_targets": targets, "window_months": 6}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     model = catalog.get_model("AverageModel")
     assert isinstance(model, AverageModel)
@@ -588,7 +588,7 @@ def test_catalog_get_average_model(partition_dict, targets):
 def test_catalog_unknown_model_raises(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets}
+    config = {"regression_targets": targets}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     with pytest.raises(ValueError, match="NoSuchModel"):
         catalog.get_model("NoSuchModel")
@@ -597,7 +597,7 @@ def test_catalog_unknown_model_raises(partition_dict, targets):
 def test_catalog_missing_required_key_raises(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets}  # missing "window_months" required by AverageModel
+    config = {"regression_targets": targets}  # missing "window_months" required by AverageModel
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     with pytest.raises(ValueError, match="window_months"):
         catalog.get_model("AverageModel")
@@ -606,7 +606,7 @@ def test_catalog_missing_required_key_raises(partition_dict, targets):
 def test_catalog_list_models(partition_dict, targets):
     from views_baseline.model.catalog import BaselineModelCatalog
 
-    config = {"targets": targets}
+    config = {"regression_targets": targets}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
     names = catalog.list_models()
     expected = {

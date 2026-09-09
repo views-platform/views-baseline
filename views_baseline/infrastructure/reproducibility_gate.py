@@ -21,7 +21,22 @@ class ReproducibilityGate:
         """Gates related to configuration and hyperparameter integrity."""
 
         # Core keys required by ALL baseline models regardless of algorithm.
-        CORE_GENOME = ["steps", "time_steps", "prediction_format"]
+        #
+        # `regression_targets` and `level` were promoted here after the pipeline-core
+        # #380 outage (issue #85): both are dereferenced unconditionally on every run —
+        # `level` at `manager/baseline_manager.py` one line after this audit returns, and
+        # `regression_targets` by all seven catalog factories — but neither was declared,
+        # so a config missing one cleared both validation layers and died on a bare
+        # KeyError deep in a factory. ADR-009 recorded that gap as accepted debt in March
+        # 2026; it is what the outage was made of. Verified against all 29 shipped
+        # baseline configs before promotion (29/29 declare both).
+        CORE_GENOME = [
+            "steps",
+            "time_steps",
+            "prediction_format",
+            "regression_targets",
+            "level",
+        ]
 
         # Algorithm-specific keys (audited only when the algorithm matches).
         ALGORITHM_GENOMES = {
@@ -107,6 +122,29 @@ class ReproducibilityGate:
                     "REPRODUCIBILITY CONTRACT VIOLATED: "
                     f"Mandatory parameters set to None: {explicit_nones}. "
                     "Implicit defaults are forbidden."
+                )
+                logger.error(msg)
+                raise MissingHyperparameterError(msg)
+
+            # 5. Reject empty values for all required keys.
+            #
+            # An empty list is the same claim as None — "declared, but says nothing" —
+            # and it arrives by a path None cannot: pipeline-core's
+            # `get_combined_config` rewrites `regression_targets: None` to `[]` before
+            # the manager ever sees it, so check 4 is unreachable in-pipeline for
+            # exactly the key most worth guarding. Without this, an empty
+            # `regression_targets` passes the whole gate, every model is built with no
+            # targets, and the run reports success having written no PredictionFrames
+            # at all. Scalars (`time_steps`, `seed`) have no length and are skipped.
+            empties = [
+                k for k in all_required
+                if hasattr(config.get(k), "__len__") and len(config[k]) == 0
+            ]
+            if empties:
+                msg = (
+                    "REPRODUCIBILITY CONTRACT VIOLATED: "
+                    f"Mandatory parameters are empty: {empties}. "
+                    "An empty value declares nothing; implicit defaults are forbidden."
                 )
                 logger.error(msg)
                 raise MissingHyperparameterError(msg)

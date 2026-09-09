@@ -4,9 +4,9 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-07-31                           |
-| Total Concerns    | 38                                   |
-| Open Concerns     | 12                                   |
+| Last Updated      | 2026-09-09                           |
+| Total Concerns    | 52                                   |
+| Open Concerns     | 26                                   |
 | Resolved Concerns | 25                                   |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -33,13 +33,13 @@ isolation.
 
 | Cluster | Root cause | Entries | Status |
 |---------|-----------|---------|--------|
-| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18 | Resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020); only C-19 OCP half deferred (ADR-012) |
+| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18, C-39 | Seam resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020); C-19 OCP half deferred (ADR-012); **C-39 new** — the manager-side format dispatch can silently bypass the frame path |
 | K2 — numpy-port byte-identity (epic #47) | pandas→numpy rewrite risking silent forecast drift + weak guard tests | C-32, C-33, C-34, C-35, C-36, C-37, C-29 | Resolved & merged (PR #60); only C-30 (numpy pin) deferred |
 | K3 — Seed / reproducibility | Seed not wired; determinism-only tests | C-10, C-24, C-25, C-29 | Resolved & merged (ADR-021, #31) |
-| K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20 | Open, cross-repo (pipeline-core / views-models) |
-| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07 | Partly subsumed by K1; C-06/C-07 residual |
-| K6 — Governance-doc drift | Docs lag code changes | C-21, C-28 | C-28 resolved; C-21 residual sites |
-| K7 — Distribution / packaging | Cross-repo dependency on unpublished pipeline-core | C-38, C-17 | C-17 superseded; C-38 live, blocked on pipeline-core #319 |
+| K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | Open, cross-repo (pipeline-core / views-models); C-44 adds the private-API surface all of these are asserted across |
+| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42, C-48 | Data-side closed (C-06/C-07). Config-side **largely closed by #85**: `regression_targets` + `level` declared, and empty values now rejected (C-42). Residual: `run_type` read past the gate (C-48) |
+| K6 — Governance-doc drift | Docs lag code changes | C-21, C-28, C-40 | C-21/C-28 resolved; **third recurrence open** — eight ADRs cite files deleted by the epic #47 reorg (C-40). No check added when the first two closed |
+| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; **C-38 discharge condition met** (pipeline-core 3.0.0 on PyPI 2026-08-03; CI resolves); C-41 re-scoped — scipy arrives transitively, the defect is the undeclared *direct* import; C-47 new — 3.12/3.13 unusable |
 
 ---
 
@@ -195,7 +195,7 @@ See also C-13 (related root cause: the ecosystem treating PredictionFrame as inh
 | Tier | 3 |
 | Source | expert-review (2026-06-24) |
 | Trigger | When a contributor applies the #21 migration only to its two *listed* sites (`helpers.py`, `baseline.py:285`) — `MixtureBaseline.predict()` at `baseline.py:402` retains the old `identifiers=` constructor and ships half-migrated; and when adding a sixth model, three parallel registries (catalog dispatch dict, `ALGORITHM_GENOMES`, `_get_*` method) must be edited in lockstep or the model is silently unavailable/unvalidated |
-| Location | `views_baseline/model/baseline.py:285,402` (two of three construction sites), `views_baseline/model/helpers.py:136` (the third); `views_baseline/model/catalog.py:24-30` + `views_baseline/infrastructure/reproducibility_gate.py:27` + `catalog.py:53-88` (three parallel registries) |
+| Location | **Post-reorg (2026-09-09):** `views_baseline/model/catalog.py:24-32` (dispatch dict) + `catalog.py:55-120` (seven `_get_*` factories) + `views_baseline/infrastructure/reproducibility_gate.py:27-41` (`ALGORITHM_GENOMES`) + `views_baseline/model/models/{point,distributional}/__init__.py` (re-export lists) + the `pytest.mark.parametrize` lists in `tests/test_protocol.py`, `tests/test_catalog.py`. **Pre-reorg (historical, files now deleted):** `model/baseline.py:285,402`, `model/helpers.py:136` |
 
 `PredictionFrame` is constructed at three independent sites and #21's location list names only two of them — an omission surface that ships a working point/Conflictology path while `MixtureBaseline` (`baseline.py:402`) breaks. Separately, adding a model is an Open/Closed violation: it requires coordinated edits to the catalog dispatch dict, the genome table, and a `_get_*` factory method (ADR-012 codifies the ritual). Both are the same structural issue — construction and registration logic spread across files instead of localized behind one seam. No correctness impact today beyond the half-migration risk; the cost is maintainability and a recurring edit surface for every platform change and every new model. Mitigation: collapse all frame construction into one boundary adapter (point and sample), and replace the three registries with a single registration table keyed by model name.
 
@@ -204,6 +204,8 @@ See also C-08 (the duplicated lazy import the adapter subsumes), C-16 (the migra
 > **Status (2026-07-19):** the **distributional output-construction / predict-scaffold** half is **resolved**. All four distributional models (`ConflictologyModel`, `MixtureBaseline`, `ParametricConflictology`, `ParametricHurdleConflictology`) now build output through one helper — `helpers.sample_prediction_grid(..., draw_cell)`, the distributional analogue of `build_prediction_frame` — which routes to the single `to_prediction_frames` seam; each `predict()` supplies only a per-cell `draw_cell(cid, target, rng)` closure. Behaviour-identical (byte-identity reproducibility tests, 174/174; ruff clean; `baseline.py` 586→529 LOC). The original half-migration trigger (`MixtureBaseline` old constructor) was already closed by the views-frames epic (ADR-020). **Still deferred:** the three-parallel-registries OCP half (catalog dispatch + `ALGORITHM_GENOMES` + `_get_*` factory) per ADR-012. (tech-debt-cleanup)
 
 > **Re-confirmed (2026-07-20, falsify probe P2):** the PR-1 reorg did not change the OCP posture — `catalog.py` still hardcodes a 7-entry dispatch dict + seven `_get_*` methods, so adding a model remains a modification of existing files plus an `ALGORITHM_GENOMES` edit (not a pure extension). Guarded by `tests/test_falsification_reorg_principles.py::test_ocp_catalog_does_not_hardcode_model_registry` (strict xfail — ratchets when a single registration table replaces the three registries). Consolidation stays deferred per ADR-012 (catalog < ~10 models).
+
+> **Re-confirmed (2026-09-09, repo-assimilation):** the registry count has grown from three sites to **five**. The epic #47 reorg added the per-package re-export lists (`models/point/__init__.py`, `models/distributional/__init__.py`) as a fourth coordinated edit, and the model-parametrized test lists are a fifth; the construction half remains resolved (one `to_prediction_frames` seam). Location field refreshed to post-reorg paths — the pre-reorg paths recorded above are retained as history and are also cited as *current* by eight ADRs (see C-40). Consolidation still deferred per ADR-012.
 
 ---
 
@@ -291,6 +293,292 @@ views-baseline 1.0.0 was uploaded to PyPI via Trusted Publishing, reserving the 
 **Tier rationale (impact vs. likelihood):** the failure is **loud** (a resolution error, never silent corruption) and has a single, known discharge condition, so it is not Tier 2 fragility. Blast radius today is small — no consumer is expected to `pip install` this yet (the conda env is the sanctioned path) — but it is a genuine cross-repo coupling that increases friction and confusion until cleared, hence Tier 3. **Discharge:** resolve when views-pipeline-core 3.0.0 is published to PyPI (`#319`) and a clean `pip install views-baseline==1.0.0` resolves; the `check` CI job goes green at the same moment. Tracked from this repo by the pandas/packaging follow-up issue and cross-repo by pipeline-core #319.
 
 See also C-17 (the prior pin-hygiene entry — **inverted** here: 3.0.0 is now intentionally *required* rather than dangerously *admitted*), C-16 (the code break the `>=3.0.0` floor exists to require the fix for), and C-31/C-32 (the FeatureFrame-native work that made the frame path pandas-free, orthogonal to this distribution gap).
+
+> **DISCHARGE CONDITION MET (2026-09-09).** views-pipeline-core reached PyPI on **2026-08-03**
+> (3.0.0), and is now at 3.2.0 — 3.0.1 (08-11), 3.1.0 (08-13), 3.1.1 (08-14), 3.1.2 (08-26),
+> 3.2.0 (09-08). `views-baseline`'s `>=3.0.0,<4.0.0` floor therefore resolves, which is precisely
+> why teammates *can* install 1.0.1 and hit the #84 outage. Both halves of this entry are cleared by
+> events: the install block is gone, and the red CI it caused is being verified in #90. Moves to
+> **Resolved** when #92 publishes 1.0.2 and a clean-room `pip install` is demonstrated.
+>
+> **Second-order consequence recorded (2026-09-09, repo-assimilation).** The red `check` matrix is not merely a cosmetic CI failure — it means **no merge to `development` or `main` is gated on the test suite at all**. Of the three jobs in `run_tests.yml`, only `lint` (`uvx ruff check .`, project-independent) and `build` (`uv build`) produce a meaningful signal; the 248-test suite executes solely in a maintainer's local editable `views_pipeline` conda env, at their discretion and on their machine. Every correctness guard the repo has invested in — the golden byte-identity tests, the pandas-free-path subprocess tripwire, the strict-xfail ratchets — is therefore advisory rather than enforced, and this holds for any contributor who does not have the editable env. This is the enabling condition beneath C-39 and C-44 (both would be caught by an integration test that cannot currently run in CI). It discharges at the same moment as the entry above: when pipeline-core 3.0.0 reaches PyPI, `uv sync` resolves and the suite becomes a real gate. Until then, branch protection should not be read as test protection.
+
+---
+
+### C-39: Frame-declared run silently degrades to the pandas path via the `_data_format` `getattr` default
+
+| Field | Value |
+|-------|-------|
+| ID | C-39 |
+| Tier | 2 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When views-pipeline-core renames, relocates, or stops setting the private `_data_format` attribute on `ForecastingModelManager` (or changes its assignment to run after `_load_source` is first called) — verify that a `data_format: feature_frame` config still takes the `load_frame_cache` branch rather than silently falling through to `read_dataframe` |
+| Location | `views_baseline/manager/baseline_manager.py:70` (the `getattr(self, "_data_format", DATA_FORMAT_DATAFRAME)` dispatch), `:53-72` (the docstring that forbids exactly this fallback) |
+
+`_load_source` dispatches the frame-native seam on `getattr(self, "_data_format", DATA_FORMAT_DATAFRAME)`. Its own docstring states the design intent explicitly — *"There is deliberately NO silent `getattr(..., None)` fallback from the frame path back to pandas: a frames-declared config that has lost its cache must fail loud, never silently degrade to a pandas run (pipeline-core register C-214)"* — but the dispatch expression itself is that fallback, entered through a different door. The guarded case is a *missing frame cache* (raised loudly by `_get_cached_frame_path()`); the unguarded case is a *missing or renamed attribute*, where the default silently selects pandas. Because both branches return a valid model input and every downstream model has accepted either shape since ADR-019, the run completes and emits plausible `PredictionFrame`s with no error, no warning, and no log line naming the format actually used — the declared `data_format` is simply not honoured. Likelihood is real rather than theoretical: `_data_format` is an underscore-private member of an external, actively-refactored package (see C-44), and no test would catch the rename because every manager test fakes the attribute (`tests/conftest.py:99-122` constructs via `__new__`).
+
+**Tier rationale (impact vs. likelihood):** the outcome is a silent, unsignalled substitution of the data path — the pandas branch is byte-identical by design today, so the immediate numeric impact is nil, which keeps this off Tier 1. But it defeats a declared contract without any signal and its trigger is a routine upstream refactor, which is precisely Tier 2 structural fragility. Mitigation would be an explicit presence check plus a log line stating the resolved format.
+
+See also C-44 (the private-API coupling that makes the trigger likely), C-09 (the sibling "enforced by convention only" topology gap). Part of causal cluster **K1 — Frames boundary**.
+
+---
+
+### C-40: ADR source-path drift after the epic #47 reorg — eight ADRs cite deleted files, including the model-addition checklist
+
+| Field | Value |
+|-------|-------|
+| ID | C-40 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When a contributor follows ADR-012 to add a new baseline model, or runs ADR-013's stated compliance command `grep -n "from views_pipeline_core" views_baseline/model/baseline.py` to verify the coupling contract — both target files deleted by the reorg, so the checklist misdirects and the verification cannot execute |
+| Location | `docs/ADRs/012_model_addition_protocol.md:25,29,164`; `docs/ADRs/013_pipeline_core_coupling.md:27,30,35,38,41,49,143,154,171`; `docs/ADRs/011_rng_determinism_contract.md:138,148,181`; `docs/ADRs/003_authority_of_declarations_over_inference.md:155,157,162,197`; `docs/ADRs/020_views_frames_adapter_and_level_contract.md:28,100`; `docs/ADRs/004_rules_for_evaluation_and_stability.md:175`; `docs/ADRs/018_predictionframe_use_in_views_baseline.md:29`; `docs/ADRs/021_zero_magic_and_explicit_defaults.md:89`; `docs/CICs/ConflictologyModel.md`, `docs/CICs/MixtureBaseline.md`; the missing check in `docs/validate_docs.sh` |
+
+The epic #47 reorg split `views_baseline/model/baseline.py` into `model/models/point/*.py` + `model/models/distributional/*.py` and `model/helpers.py` into `model/grid.py` + `model/frames/{input,output,pooling}.py`, but the ADR corpus was not swept. Eight ADRs and two CICs still give those paths as *current-state prescriptions*, not as history. Two sites are load-bearing rather than cosmetic: **ADR-012** is the authoritative model-addition checklist and its Step 1 reads `**File:** views_baseline/model/baseline.py`, also directing distributional models to "construct `PredictionFrame` objects directly" — the exact practice ADR-020's single-seam decision superseded; and **ADR-013** publishes a grep command against `model/baseline.py` as its compliance verification, so the coupling contract now has no working check. The drift is structurally invisible to the repo's own tooling: `docs/validate_docs.sh` validates header fields, template status, and cross-document links, but never that a **source path cited by a doc exists on disk**. Against a governance ratio of 3.3 lines of prose per line of source, a contributor's most likely first action is to trust the ADR over the tree.
+
+See also C-21 and C-28 (the two prior, now-resolved drift instances — this is the third recurrence, and the first to survive because no check was added when they were closed). Part of causal cluster **K6 — Governance-doc drift**.
+
+---
+
+### C-41: `scipy` is an undeclared runtime dependency of the shipped `evaluation` module
+
+| Field | Value |
+|-------|-------|
+| ID | C-41 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When a reviewer or downstream user installs views-baseline from a clean index (once C-38 clears) and imports `views_baseline.evaluation.closeness` to reproduce the ADR-022 equivalence result — the import raises `ModuleNotFoundError: scipy` because no declared dependency supplies it |
+| Location | `views_baseline/evaluation/closeness.py:18` (`from scipy.stats import energy_distance, wasserstein_distance`, module level); `pyproject.toml:31-43` (declares only `numpy`, `views-frames`, `views-pipeline-core`); `views_baseline/model/distributions/__init__.py:11` (docstring claims "numpy + scipy only" for a numpy-only package) |
+
+`evaluation/closeness.py` imports scipy at module level and is packaged into the wheel (`[tool.hatch.build.targets.wheel] packages = ["views_baseline"]` ships all of `views_baseline/`), yet scipy appears in no dependency list. Neither declared dependency supplies it transitively: `views-pipeline-core` declares no scipy requirement, and `views-frames` declares `scipy>=1.11,<2` only under its **`docs` extra**, which a normal install does not pull. The module is not incidental — it is the closeness harness that operationalises ADR-022's "indistinguishable from conflictology" verdict (C2ST / Wasserstein / energy distance) and backs `reports/closeness_experiment/FINDINGS.md`, so the first person to independently re-run the epic #33 evidence from a published wheel is the one who hits it. The failure is currently masked everywhere it would be noticed: the `views_pipeline` conda env has scipy installed, and CI never reaches the test step (C-38). A secondary inaccuracy compounds the confusion: `model/distributions/__init__.py` advertises a scipy dependency for a package whose families are implemented purely in numpy.
+
+See also C-17 (the same failure mode — an undeclared dependency working locally and only surfacing off the dev machine — previously registered for `views-frames` and resolved by declaring it). Part of causal cluster **K7 — Distribution / packaging**.
+
+> **TRIGGER CORRECTED (2026-09-09, #94 review).** The entry claimed the import "raises
+> `ModuleNotFoundError: scipy`" on a clean install because "views-pipeline-core declares no scipy
+> requirement". Directly true, and misleading: `views-baseline -> views-pipeline-core ->
+> views-evaluation` requires `scipy>=1.11,<2.0` (and `views-transformation-library`,
+> `scikit-learn` and `pyod` do too, all reached the same way), so **scipy is installed on any real
+> install of this package** — verified at 1.15.1 in the working env, and `tests/test_closeness.py`
+> passes on it. The stated failure cannot fire on the install path the trigger names, and the
+> "masked because CI never reaches the test step" clause is retired by #90.
+>
+> The residual defect is real but different, and smaller: `evaluation/closeness.py` imports scipy
+> **directly** while declaring nothing, so the package depends on a transitive pin it does not
+> control. If views-evaluation drops scipy, this breaks with no signal from our own metadata. That
+> is dependency hygiene (PEP 508: declare what you import), not a live install failure — the tier
+> stays 3 but the trigger becomes "when views-evaluation or pipeline-core stops requiring scipy",
+> not "when anyone installs".
+
+---
+
+### C-42: The reproducibility gate does not audit `level` or `targets`, the two config keys every model path dereferences
+
+| Field | Value |
+|-------|-------|
+| ID | C-42 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When a contributor adds a new baseline model config in views-models (or trims an existing one) and omits `level` or `targets` — verify the failure is a `MissingHyperparameterError` naming the key, not a bare `KeyError` raised past a gate that has already declared the config valid |
+| Location | `views_baseline/infrastructure/reproducibility_gate.py:24` (`CORE_GENOME = ["steps", "time_steps", "prediction_format"]`), `:27-41` (`ALGORITHM_GENOMES` — `targets` appears in no genome list); dereferenced unguarded at `views_baseline/manager/baseline_manager.py:79` (`self.config["level"]`) and `views_baseline/model/catalog.py:57,62,67-70,75-81,86-92,98-106,113-120` (`self.config["targets"]` in all seven factories) |
+
+`ReproducibilityGate.Config.audit_manifest` is the declared boundary contract for configuration (ADR-009/ADR-021): it exists so a malformed config fails at the boundary with `REPRODUCIBILITY CONTRACT VIOLATED` naming the missing key. Two keys escape it entirely. `level` is read by `_setup_model_and_data` immediately after the audit passes; `targets` is read by every one of the seven catalog factory methods and is listed in **no** genome, so `get_model`'s own `missing = [k for k in self.MODEL_GENOMES[model_name] if k not in self.config]` check cannot catch it either. A config missing either key therefore clears both validation layers and dies on a bare `KeyError` inside the object graph — the precise failure mode the gate was built to eliminate, and the one an ADR-009 reader would assume is impossible. The gate is also importable by views-models for *static* config validation, so the omission propagates: a downstream repo checking its configs against `CORE_GENOME` gets a false green.
+
+See also C-07 (the sibling gap on the *data* side — `targets` columns in the input frame — resolved by the `to_feature_frame` boundary; this is the unclosed *config* side of the same pair). Part of causal cluster **K5 — Input-boundary validation**.
+
+> **TIER CORRECTED + FIX IMPLEMENTED (2026-09-09, epic #85).** This entry was registered at
+> **Tier 3** as a diagnostics concern — "a missing key gives a bare `KeyError` instead of a named
+> contract violation" — with a *hypothetical future* trigger ("when a contributor omits `level` or
+> `targets`"). Both judgements were wrong, and the register is more useful for saying so than for
+> hiding it:
+>
+> - The trigger had **already fired**, five weeks earlier. views-pipeline-core retired the
+>   synthesised `targets` key on 2026-08-02 (#380); `catalog.py` kept reading it; **all 29 baseline
+>   models had been unrunnable since**. This was a live production outage, not a latent quality issue
+>   — Tier 1 by the register's own definition once the read side is counted.
+> - The reason I mis-read it is itself the finding: I checked whether the key was *validated* and
+>   assumed it was *present*, because `tests/conftest.py` supplied it. I had described that exact
+>   trap in **C-44** one entry earlier and then walked into it. A fixture is not evidence about
+>   production.
+>
+> **Fix (working tree, epic #85):** the catalog reads `regression_targets`, derived once in
+> `__init__`; `regression_targets` and `level` are declared in `CORE_GENOME` (#87); a conformance
+> test builds all seven models from real merged views-models configs (#88). Stays **Open** until
+> merged and released. Superseded in substance by #85; the ID is retained with its error visible.
+
+---
+
+### C-43: Point and distributional models derive their prediction grid from different sources and emit different row orders
+
+| Field | Value |
+|-------|-------|
+| ID | C-43 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When a caller passes a different frame to `predict()` than to `fit()` — e.g. a future forecast path that fits on the training partition and predicts on a trimmed or extended panel, or a sweep that reuses a fitted model across partitions — verify that distributional models still cover the intended entity set, since they ignore the predict frame's entities entirely |
+| Location | `views_baseline/model/models/point/locf.py:63-66` and `average.py:66-69`, `zero.py:52-54` (grid from the **predict** frame via `entities_at`) vs. `views_baseline/model/models/distributional/conflictology.py:65-71`, `mixture.py:97-104`, `parametric.py:87-95`, `parametric_hurdle.py:108-115` (grid from **fit-time** `self.entity_ids`); ordering divergence at `views_baseline/model/grid.py:78-91` (first-appearance) vs. `views_baseline/model/frames/pooling.py:109` (`np.unique`, ascending) |
+
+The two model families answer "which entities am I predicting for?" from different places. Point models read the predict frame, select entities present at `train_end` via `entities_at`, and filter against fitted state. Distributional models call `to_level(df)` — deliberately the *lightest* input boundary, taking only the spatial level — and then build the grid from `self.entity_ids` captured during `fit`, so the predict frame's contents have **no influence on the output grid at all**. Today `_setup_model_and_data` hands the identical `df_source` to both calls, so membership agrees and nothing is wrong; the risk is that this equality is an accident of one call site rather than an enforced invariant, and nothing in the code or tests asserts it. A related consequence is already live: the two families order rows differently for the same input (first-appearance vs. ascending entity id), so any downstream consumer that aligns positionally rather than through the `SpatioTemporalIndex` would mis-join point against distributional frames. A third, quieter effect: `sample_prediction_grid`'s `filter_entities(entity_ids, fitted_state, model_name)` call is a structural no-op for all four distributional models, since both arguments derive from the same `window_pool` return — the entity-drop warning that exists on the point path has no counterpart on the sample path.
+
+See also C-05 (the broader "index structure assumed, not validated" family, now mitigated at the boundary) and C-19 (the OCP registry — a new model must independently rediscover which convention to follow).
+
+---
+
+### C-44: Four private views-pipeline-core members are load-bearing, and every test defines them by mock
+
+| Field | Value |
+|-------|-------|
+| ID | C-44 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When views-pipeline-core refactors any underscore-private member of `ForecastingModelManager` — specifically `_data_format`, `_get_cached_frame_path`, `_get_cached_data_path`, or `_resolve_evaluation_sequence_number` — verify views-baseline still runs, because the 449-line manager suite stubs all four and will stay green through the break |
+| Location | `views_baseline/manager/baseline_manager.py:70-72` (`_data_format`, `_get_cached_frame_path()`, `_get_cached_data_path()`), `:97` (`_resolve_evaluation_sequence_number`), `:109-141` (`_model_path.get_latest_model_artifact_path`, `_config_manager.add_config`); mocked at `tests/conftest.py:90-122` (`__new__` bypass + `SimpleNamespace`) |
+
+The manager is the single sanctioned coupling point to views-pipeline-core (ADR-013), but the surface it couples to is **private API**: four underscore-prefixed members of the base `ForecastingModelManager`, none of which carry a stability guarantee. This is a normal cost of the template-method integration and is not itself a defect. What makes it a tracked risk is that the coupling is verified against nothing: `make_manager` constructs the manager through `__new__`, bypassing `__init__` entirely, and attaches hand-built `SimpleNamespace` stand-ins for `_model_path`, `_data_loader`, and `_config_manager` plus a fake `_resolve_evaluation_sequence_number`. The mock, not the dependency, therefore defines the contract — a pipeline-core rename would leave all 248 tests green while production breaks. There is no integration test that instantiates the real base class. Compounding it, CI cannot install pipeline-core at all today (C-38), so even an integration test would not run there.
+
+See also C-39 (the specific silent-degradation instance this coupling enables), C-09 (topology rules enforced by convention only), C-13/C-14 (the other cross-repo contracts asserted only from this side). Part of causal cluster **K4 — PredictionFrame-as-sampled ecosystem**.
+
+> **Instance confirmed (2026-09-09, epic #85).** This entry predicted that "the mock, not the
+> dependency, defines the contract." That is what happened, on a different surface than the four
+> private members named above: `tests/conftest.py` manufactured the `targets` config key that
+> views-pipeline-core had deleted, so **248 tests stayed green for five weeks while every production
+> model raised `KeyError`**. The suite could not fail, because the fixture had drifted out of contact
+> with the dependency and nothing compared them.
+>
+> Partially mitigated by #88, which builds every model from a checked-in copy of a real merged
+> views-models config and asserts the fixtures carry no key pipeline-core would reject. The residual
+> risk is unchanged and worth restating: a *copy* can still drift. It catches a key rename — the
+> failure that happened — not a value change, and it does not exercise the four private
+> pipeline-core members, which remain verified only against `SimpleNamespace` stand-ins.
+
+---
+
+### C-45: No public API surface — a published package whose every consumer imports deep private paths
+
+| Field | Value |
+|-------|-------|
+| ID | C-45 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When the next internal reorganisation moves or renames a module under `views_baseline/model/` or `views_baseline/manager/` — verify which downstream import statements break, since there is no top-level re-export to absorb the move and the package now carries a public version number |
+| Location | `views_baseline/__init__.py` (empty), plus 6 further empty package inits: `model/__init__.py`, `manager/__init__.py`, `infrastructure/__init__.py`, `evaluation/__init__.py`, `model/frames/__init__.py`, `model/models/__init__.py`; consumers import `views_baseline.manager.baseline_manager` and `views_baseline.model.models.distributional` directly |
+
+The distribution root exports nothing — no names, no `__all__`, no docstring — so there is no stable façade between the internal module layout and the outside world. Downstream code (views-models, and every test in this repo) must reach through the full internal path: `from views_baseline.manager.baseline_manager import BaselineForecastingModelManager`, `from views_baseline.model.models.distributional import ConflictologyModel`. Every internal file move is therefore a breaking change for consumers, with nothing available to soften it. This is no longer hypothetical on two counts: epic #47 already performed exactly such a reorganisation (`model/baseline.py` → `model/models/**`), and the package now ships to PyPI under semantic versioning, where consumers reasonably expect a 1.x minor release not to move their import paths. The three inits that *do* re-export (`models/point`, `models/distributional`, `distributions`) show the pattern is understood — it simply stops one level below the root.
+
+See also C-40 (the doc corpus that still cites the pre-reorg paths — the same move, unabsorbed on the documentation side).
+
+---
+
+### C-46: `MixtureBaseline`'s global pool is serialised into an artifact that exists only to carry a timestamp
+
+| Field | Value |
+|-------|-------|
+| ID | C-46 |
+| Tier | 4 |
+| Source | repo-assimilation (2026-09-09) |
+| Trigger | When `MixtureBaseline` is first run at `pgm` level (~10k grid cells × the full training panel) rather than the `cm` level and toy fixtures exercised so far — check the size of the written `.pkl` against the artifact directory's budget |
+| Location | `views_baseline/model/models/distributional/mixture.py:64-72` (`self.global_pool[t] = v[v > 0].astype(np.float64)` — all positive values across the whole training panel, per target), pickled at `views_baseline/manager/baseline_manager.py:44-51` |
+
+`MixtureBaseline.fit` retains, per target, every positive value in the entire training panel as a float64 array — deliberately, since the global pool is what avoids the zero-probability trap, and deliberately float64 to keep the seeded `rng.choice` stream byte-identical (ADR-011). `_train_model_artifact` then pickles the whole fitted object. The artifact, however, is never unpickled: `_evaluate_model_artifact` and `_forecast_model_artifact` both re-fit from scratch and read only `path_artifact.stem[-15:]` — the file exists solely so a downstream ensemble can resolve a timestamp from its filename. The result is that the largest fitted state in the package is written to disk on every training run for a filename. No correctness impact; the cost is disk and serialisation time, and it scales with the panel rather than with the window.
+
+See also C-32 (the float64 retention is the byte-identity requirement that makes the pool expensive), C-22 (the same artifact's missing provenance metadata).
+
+---
+
+### C-47: `views-baseline` declares support for Python 3.12/3.13 but cannot be installed on either
+
+| Field | Value |
+|-------|-------|
+| ID | C-47 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09, found by the #90 CI restoration) |
+| Trigger | When anyone runs `pip install views-baseline` on Python 3.12 or 3.13 — trusting `requires-python = ">=3.11,<3.14"` or the `Programming Language :: Python :: 3.12/3.13` classifiers — the install fails building `pandas` from source. Also fires whenever someone restores the full CI matrix, which will go red again for this reason and not an obvious one. |
+| Location | `pyproject.toml:14` (`requires-python`), `:22-23` (the 3.12/3.13 classifiers); `.github/workflows/run_tests.yml` (matrix narrowed to 3.11 with the explanation); external root cause `viewser 6.6.4` (`pandas<2.0.0,>=1.4.0`) reached via `views-pipeline-core>=3.0.0` |
+
+`views-pipeline-core` depends on `viewser>=6.6.4`, which pins `pandas<2.0.0,>=1.4.0`. The last pandas 1.x release, 1.5.3, publishes wheels for **cp38-cp311 only**. On Python 3.12 or 3.13 the resolver therefore has to build pandas 1.5.3 from source, which fails immediately — `ModuleNotFoundError: No module named 'pkg_resources'` under modern setuptools build isolation, and would very likely fail on Cython/numpy incompatibility even if that were patched. The package's declared support for 3.12 and 3.13 is consequently **false, and has been false since the `>=3.0.0` pipeline-core floor was adopted** — it is not a regression introduced by the #85 work, which merely made it visible by getting CI far enough to resolve dependencies at all.
+
+The metadata is deliberately **not** narrowed here. What a distribution claims to support is a release decision with downstream visibility, the constraint belongs to a dependency two hops upstream, and narrowing then re-widening `requires-python` across releases is worse than stating the gap once. The CI matrix is narrowed to 3.11 instead, so the pipeline is honestly green rather than permanently two-thirds red — the permanently-red condition being exactly what let C-42/#84 survive five weeks unnoticed.
+
+**Discharge:** when `viewser` drops the `pandas<2` pin (pandas 2.x supports 3.12/3.13), restore the full matrix and confirm. If viewser does not move, narrow `requires-python` and the classifiers at the next release instead. See also C-38 (the prior packaging-claim entry, discharged), C-41 (undeclared `scipy` — the other way this package's dependency metadata is wrong). Part of causal cluster **K7 — Distribution / packaging**.
+
+---
+
+### C-48: `run_type` is dereferenced one line after the gate passes, and is not audited
+
+| Field | Value |
+|-------|-------|
+| ID | C-48 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 3) |
+| Trigger | When a caller reaches `_train_model_artifact` with a config that has no `run_type` — a direct-API user, a downstream static validation built on the contract this gate advertises, or a pipeline-core change to when `run_type` is injected — the audit reports success and the next line raises a bare `KeyError: 'run_type'`, the exact #84 shape |
+| Location | `views_baseline/manager/baseline_manager.py:44-46` (`_setup_model_and_data()` runs the audit, then `self.config["run_type"]`); absent from `views_baseline/infrastructure/reproducibility_gate.py` `CORE_GENOME`; `views-pipeline-core` `configuration.py:464` declares `_SAFETY_CRITICAL_KEYS = frozenset({"level", "run_type", "prediction_format"})` |
+
+Epic #85 closed this gap for `level` and `regression_targets` and left it open one key over. pipeline-core names an authoritative trio of safety-critical keys; `CORE_GENOME` now covers two of the three.
+
+It is **deliberately not** in `CORE_GENOME`, and the reason is the one C-24 taught: `run_type` is injected at runtime (it is a CLI argument, not a config-file key), so requiring it would break the *static* downstream validation this class exists to enable — the very contract its docstring advertises and C-42's sibling entry is about. Promoting it demands the same coordinated verification C-24 required for `seed`, and #85 did not do that work.
+
+The honest interim is a documented asymmetry rather than a silent one: `tests/test_reproducibility_gate.py`'s `_KEYS_DEREFERENCED_ON_EVERY_RUN` now records `run_type`'s exclusion and why, so the completeness guard no longer certifies an incomplete list as complete. **Discharge:** verify `run_type` is present in the merged config at audit time for all run types, then promote it — or record that it cannot be, and move the read before the audit. See also C-24 (the sequencing precedent), C-42, C-44.
+
+---
+
+### C-49: CI runs and passes but is not a required status check — green is advisory, not blocking
+
+| Field | Value |
+|-------|-------|
+| ID | C-49 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 6) |
+| Trigger | When a contributor merges a PR whose `check (3.11)` job is red — GitHub will not stop them, because neither branch declares required status checks. Also fires if someone enables required checks using a job name from a pre-2026-09-09 run (`check (3.12)`/`check (3.13)`), which no longer exist and would block every PR forever |
+| Location | GitHub branch protection for `main` and `development` (both return `required_status_checks: null`); `.github/workflows/run_tests.yml` |
+
+Epic #85's premise is that "nothing was gating merges" is a root cause of the five-week #84 outage. #90 fixed the *running* half — the suite now resolves and passes in CI for the first time since 2026-08-02 — but not the *gating* half: a red run still does not block a merge on either protected branch. `development` requires no review either, so a broken PR can land unimpeded.
+
+This is a repository-settings change, not a code change, which is why it is registered rather than done: it is the maintainer's call, and it should be made now that the job is reliably green rather than while it was red. **Discharge:** add `check (3.11)`, `lint` and `build` as required status checks on `development` and `main`. Note the job-name hazard above when doing so. See also C-38/C-47 (why the job could not run), C-44.
+
+---
+
+### C-50: the catalog reimplements pipeline-core's target vocabulary instead of consuming `combined_targets()`
+
+| Field | Value |
+|-------|-------|
+| ID | C-50 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 8) |
+| Trigger | When views-pipeline-core retires or renames `regression_targets` the way it retired `targets` in #380 — this package breaks identically, and **every conformance test stays green**, because `tests/test_config_conformance.py` hardcodes the same literal the catalog does |
+| Location | `views_baseline/model/catalog.py` (`self.config["regression_targets"]`); `tests/test_config_conformance.py` (`MERGED_CONFIGS` literals); the unused alternative is `views_pipeline_core.managers.configuration.configuration.combined_targets`, used at 13+ read sites inside pipeline-core |
+
+`combined_targets(config)` is the canonical accessor pipeline-core created *in the same change* that caused #84, on a package already declared as a hard dependency. views-baseline is now the only reader in the platform reimplementing the vocabulary by hand.
+
+Calling it directly from `model/catalog.py` is blocked by ADR-013 (no module-level pipeline-core imports under `model/`), and routing it through the manager was rejected in #85 on the grounds that it would leave one of seven config keys arriving by a different mechanism than the other six — a split convention. Both remain true, so this is a **recorded consequence of a deliberate decision, not an oversight**.
+
+What the decision costs, stated plainly so a future reader can re-weigh it: the guard added in #88 cannot detect the failure it was built for. It pins the fixtures to the same literal as the code, so a rename moves both together and the tests pass while every model dies. Only the views-models runtime smoke test would catch it. **Discharge:** either adopt `combined_targets` at the manager seam (accepting the split convention) or add a test that asserts our literal still matches pipeline-core's derivation. See also C-19 (the OCP registry this is entangled with), C-42, D-04.
+
+---
+
+### C-51: the lint gate resolves an unpinned `ruff`, so an upstream release can red every open PR
+
+| Field | Value |
+|-------|-------|
+| ID | C-51 |
+| Tier | 4 |
+| Source | expert-review (2026-09-09, #94 review addendum) |
+| Trigger | When Astral stabilises or changes a rule in the selected `E`/`F`/`W`/`I` sets — every open PR goes red on code that passes locally under the dev-group ruff, with no repo change to bisect |
+| Location | `.github/workflows/run_tests.yml` (`uvx ruff check .`, no version); `pyproject.toml` `[dependency-groups] dev` (`ruff>=0.8`, a floor with no ceiling) |
+
+The lint job deliberately runs project-independently so it stays green when the project cannot resolve — which was the right call while `check` was red, and is why it was the only signal for five weeks. The cost is that it pins nothing: `uvx ruff` takes whatever is newest at job time, which is also a different version than the dev group installs locally. This is the "gate red for a reason nobody re-diagnosed" class the workflow header now spends ten lines apologising for, one layer up. Low tier because the failure is loud, immediate, and fixed by a one-line pin. **Discharge:** pin `uvx ruff@<version>` in step with the dev group.
+
+---
+
+### C-52: the conformance fixture is keyed by algorithm, so broadening its coverage fails its own completeness test
+
+| Field | Value |
+|-------|-------|
+| ID | C-52 |
+| Tier | 4 |
+| Source | expert-review (2026-09-09, #94 review addendum) |
+| Trigger | When a contributor adds a second real config for an algorithm already covered — e.g. `ParametricConflictology` with `family="zinb"` — `test_every_catalogued_algorithm_has_a_conformance_fixture` fails, because it asserts set equality between algorithm names and fixture keys |
+| Location | `tests/test_config_conformance.py` (`MERGED_CONFIGS` keyed by algorithm; the equality assertion in `test_every_catalogued_algorithm_has_a_conformance_fixture`) |
+
+The completeness guard exists so the fixture set cannot silently shrink as the catalog grows. Keyed by algorithm name, it also caps the fixture set at exactly one config per algorithm — so the guard's shape punishes broadening it. views-models ships 29 baseline configs spanning 8 distinct `family x transform` combinations; this file covers 2. A constructor-level rejection introduced for an uncovered combination would ship green. **Discharge:** key `MERGED_CONFIGS` by a fixture label carrying its source model name, and assert that the set of algorithms *covered* is a superset of the catalog rather than equal to the fixture keys.
 
 ---
 

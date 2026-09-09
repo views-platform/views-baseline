@@ -4,14 +4,17 @@ name: Publish Package
 # (create a Release from a vX.Y.Z tag). Auth is PyPI Trusted Publishing (OIDC) —
 # no stored API token. See docs/guides/publishing-to-pypi.md.
 #
-# One-time PyPI setup (project Settings -> Publishing -> add a trusted publisher,
-# or a *pending* publisher for the first-ever release before the project exists):
+# One-time PyPI setup (already done for this project — kept for reference when
+# bootstrapping a NEW package: a *pending* publisher covers the first-ever release):
 #   Publisher: GitHub  |  Owner: views-platform  |  Repo: views-baseline
 #   Workflow:  publish_package.yml  |  Environment: (leave blank)
 #
-# NOTE: views-baseline depends on views-pipeline-core (>=3.0.0), which is not yet
-# on PyPI — `pip install views-baseline` will not resolve until that dependency is
-# published. Uploading here still succeeds and reserves the name/version.
+# NOTE: views-pipeline-core (>=3.0.0) reached PyPI on 2026-08-03 and is now at 3.2.0,
+# so `pip install views-baseline` resolves. 1.0.0 and 1.0.1 were published while it did
+# not, and were installable in name only. 1.0.2 is therefore the FIRST release whose
+# clean-room install-back can actually be exercised — do it (docs/guides/publishing-to-pypi.md
+# §A). This note said the opposite until 2026-09-09; it was the third copy of that claim
+# and the one the doc sweep missed.
 
 on:
   release:

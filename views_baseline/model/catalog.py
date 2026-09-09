@@ -16,6 +16,18 @@ class BaselineModelCatalog:
     def __init__(self, config: dict, partition_dict: dict, loa: str):
         """
         Catalog of available baseline models.
+
+        Reads the views-pipeline-core config vocabulary: ``regression_targets``.
+        (``targets`` was a synthesised backward-compatibility key, retired in
+        pipeline-core #380; ``combined_targets()`` now *raises* on a config that
+        still carries it.) Derived once here rather than at each of the seven
+        factory sites, so a future rename of the platform's target vocabulary is
+        one edit, not seven.
+
+        ``classification_targets`` is deliberately not read: no baseline is wired
+        for a classification target today, and no baseline config declares one.
+        See ADR-012 when that changes — the decision is per-model (Zero/LOCF carry
+        over cleanly; the magnitude-fitting families do not), not catalog-wide.
         """
         self.config = config
         self.partition_dict = partition_dict
@@ -30,6 +42,27 @@ class BaselineModelCatalog:
             "ParametricConflictology": self._get_parametric_conflictology,
             "ParametricHurdleConflictology": self._get_parametric_hurdle,
         }
+
+    @property
+    def targets(self) -> list:
+        """The target names, read from the one config key that carries them.
+
+        Derived on access rather than stored in ``__init__`` so that
+        :meth:`list_models` stays a pure accessor with no config precondition — it is
+        declared Stable in ADR-004 and "no side effects" in this class's CIC, and
+        enumerating the catalog must not require a config that carries targets.
+
+        Rejects a bare string: ``regression_targets="lr_ged_sb"`` would otherwise
+        ``list()`` into nine single-character targets, which both the gate (presence and
+        non-emptiness only) and the models accept without complaint.
+        """
+        raw = self.config["regression_targets"]
+        if isinstance(raw, str):
+            raise ValueError(
+                f"regression_targets must be a sequence of target names, got the string "
+                f"{raw!r}. A bare string would be split into one target per character."
+            )
+        return list(raw)
 
     def get_model(self, model_name: str):
         """
@@ -54,17 +87,17 @@ class BaselineModelCatalog:
 
     def _get_zero_model(self):
         return ZeroModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.targets, partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_locf_model(self):
         return LocfModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.targets, partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_average_model(self):
         return AverageModel(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -72,7 +105,7 @@ class BaselineModelCatalog:
 
     def _get_conflictology_model(self):
         return ConflictologyModel(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -82,7 +115,7 @@ class BaselineModelCatalog:
 
     def _get_mixture_model(self):
         return MixtureBaseline(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             lambda_mix=self.config["lambda_mix"],
             n_samples=self.config["n_samples"],
@@ -95,7 +128,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on an unsupported family or an illegal family×transform.
         return ParametricConflictology(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -109,7 +142,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on a non-continuous family or an illegal family×transform.
         return ParametricHurdleConflictology(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,

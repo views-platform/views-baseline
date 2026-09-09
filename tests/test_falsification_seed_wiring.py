@@ -35,7 +35,7 @@ def _df():
 
 def _catalog(seed):
     cfg = {
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
         "window_months": 6,
         "n_samples": 16,
         "lambda_mix": 0.5,
@@ -73,7 +73,7 @@ def test_different_seed_produces_different_output(algo):
 @pytest.mark.parametrize("algo", ["ConflictologyModel", "MixtureBaseline"])
 def test_catalog_requires_seed(algo):
     """ADR-021: the catalog must NOT silently default seed — a config without it fails loud."""
-    cfg = {"targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5}
+    cfg = {"regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5}
     cat = BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
     with pytest.raises(ValueError, match="seed"):
         cat.get_model(algo)

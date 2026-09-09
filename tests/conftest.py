@@ -9,7 +9,6 @@ MANAGER_BASE_CONFIG = {
     "algorithm": "LocfModel",
     "level": "pgm",
     "time_steps": 36,
-    "targets": ["synth_target"],
     "regression_targets": ["synth_target"],
     "regression_point_metrics": ["MSE"],
     "prediction_format": "prediction_frame",

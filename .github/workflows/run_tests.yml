@@ -2,10 +2,22 @@ name: Lint and Test
 
 # uv-based CI (mirrors the views-frames / views-datafactory / views-reporting pattern).
 #
-# NOTE: `uv sync` cannot currently resolve the dependency graph because
-# views-pipeline-core (>=3.0.0) is not on PyPI yet, so this workflow is expected to
-# be red until that dependency is published. The editable `views_pipeline` conda env
-# is the working test gate meanwhile (README / CONTRIBUTING).
+# This workflow RUNS and passes again as of 2026-09-09 (issue #90). It is NOT yet a
+# blocking gate: neither `main` nor `development` declares required status checks
+# (verified via the branch-protection API), so a red run here still does not stop a
+# merge. Turning these into required checks is a repository-settings change for the
+# maintainer — worth doing now that the job is reliably green, and tracked in C-49.
+# If you enable it, use the CURRENT job name `check (3.11)`; the pre-2026-09-09 runs
+# report `check (3.12)`/`check (3.13)`, which no longer exist and would block every PR.
+#
+# History, so the next person does not re-diagnose it: it was red from 2026-08-02 and the
+# note here blamed views-pipeline-core not being on PyPI. pipeline-core 3.0.0 published on
+# 2026-08-03 and the workflow was never re-run, so the note went stale and the real cause
+# went unseen for five weeks — which is also how the #84 outage survived, since nothing was
+# gating merges. The actual blocker was different and would have outlived the publish:
+# uv resolves a universal lockfile including win32, and
+# pipeline-core -> viewser -> docker<6 -> pywin32==227 has no wheels above cp39. Fixed by
+# `[tool.uv] environments = ["sys_platform == 'linux'"]` in pyproject.toml.
 
 on:
   push:
@@ -19,9 +31,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Lint runs project-independently (uvx), so it stays a reliable green signal even
-  # while `uv sync` cannot resolve views-pipeline-core (see the header note) — the
-  # `check` job below is gated behind that resolution and is expected red until then.
+  # Lint runs project-independently (uvx), so it does not depend on the project
+  # resolving. Kept separate for that reason, though `check` now resolves too.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -34,7 +45,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.11 only, and not by preference (issue #95).
+        #
+        # views-pipeline-core -> viewser 6.6.4 -> `pandas<2.0.0,>=1.4.0`, and pandas 1.5.3
+        # (the last 1.x) publishes wheels for cp38-cp311 only. On 3.12/3.13 the resolver
+        # must build pandas from source, which fails outright:
+        #   ModuleNotFoundError: No module named 'pkg_resources'
+        # So views-baseline is not installable on 3.12/3.13 at all — a transitive
+        # constraint two hops upstream, not something this repo can fix, and true long
+        # before this matrix was written.
+        #
+        # `pyproject.toml` still declares `requires-python = ">=3.11,<3.14"` and 3.12/3.13
+        # classifiers. That claim is currently false; it is tracked in the register (C-47)
+        # rather than quietly narrowed here, because what the package claims to support is
+        # a distribution decision, not a CI one.
+        #
+        # Restore the full matrix when viewser drops the `pandas<2` pin.
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
