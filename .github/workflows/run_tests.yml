@@ -2,7 +2,13 @@ name: Lint and Test
 
 # uv-based CI (mirrors the views-frames / views-datafactory / views-reporting pattern).
 #
-# This workflow is a REAL merge gate again as of 2026-09-09 (issue #90).
+# This workflow RUNS and passes again as of 2026-09-09 (issue #90). It is NOT yet a
+# blocking gate: neither `main` nor `development` declares required status checks
+# (verified via the branch-protection API), so a red run here still does not stop a
+# merge. Turning these into required checks is a repository-settings change for the
+# maintainer — worth doing now that the job is reliably green, and tracked in C-49.
+# If you enable it, use the CURRENT job name `check (3.11)`; the pre-2026-09-09 runs
+# report `check (3.12)`/`check (3.13)`, which no longer exist and would block every PR.
 #
 # History, so the next person does not re-diagnose it: it was red from 2026-08-02 and the
 # note here blamed views-pipeline-core not being on PyPI. pipeline-core 3.0.0 published on

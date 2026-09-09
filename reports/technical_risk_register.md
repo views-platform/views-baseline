@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-09-09                           |
-| Total Concerns    | 47                                   |
-| Open Concerns     | 21                                   |
+| Total Concerns    | 52                                   |
+| Open Concerns     | 26                                   |
 | Resolved Concerns | 25                                   |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -37,9 +37,9 @@ isolation.
 | K2 — numpy-port byte-identity (epic #47) | pandas→numpy rewrite risking silent forecast drift + weak guard tests | C-32, C-33, C-34, C-35, C-36, C-37, C-29 | Resolved & merged (PR #60); only C-30 (numpy pin) deferred |
 | K3 — Seed / reproducibility | Seed not wired; determinism-only tests | C-10, C-24, C-25, C-29 | Resolved & merged (ADR-021, #31) |
 | K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | Open, cross-repo (pipeline-core / views-models); C-44 adds the private-API surface all of these are asserted across |
-| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42 | Data-side closed (C-06/C-07 resolved); **config-side open** — the gate omits `level`/`targets` (C-42) |
+| K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42, C-48 | Data-side closed (C-06/C-07). Config-side **largely closed by #85**: `regression_targets` + `level` declared, and empty values now rejected (C-42). Residual: `run_type` read past the gate (C-48) |
 | K6 — Governance-doc drift | Docs lag code changes | C-21, C-28, C-40 | C-21/C-28 resolved; **third recurrence open** — eight ADRs cite files deleted by the epic #47 reorg (C-40). No check added when the first two closed |
-| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; C-38 live (blocked on pipeline-core #319, and gating the test suite); C-41 new — `scipy` undeclared |
+| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; **C-38 discharge condition met** (pipeline-core 3.0.0 on PyPI 2026-08-03; CI resolves); C-41 re-scoped — scipy arrives transitively, the defect is the undeclared *direct* import; C-47 new — 3.12/3.13 unusable |
 
 ---
 
@@ -353,6 +353,22 @@ See also C-21 and C-28 (the two prior, now-resolved drift instances — this is 
 
 See also C-17 (the same failure mode — an undeclared dependency working locally and only surfacing off the dev machine — previously registered for `views-frames` and resolved by declaring it). Part of causal cluster **K7 — Distribution / packaging**.
 
+> **TRIGGER CORRECTED (2026-09-09, #94 review).** The entry claimed the import "raises
+> `ModuleNotFoundError: scipy`" on a clean install because "views-pipeline-core declares no scipy
+> requirement". Directly true, and misleading: `views-baseline -> views-pipeline-core ->
+> views-evaluation` requires `scipy>=1.11,<2.0` (and `views-transformation-library`,
+> `scikit-learn` and `pyod` do too, all reached the same way), so **scipy is installed on any real
+> install of this package** — verified at 1.15.1 in the working env, and `tests/test_closeness.py`
+> passes on it. The stated failure cannot fire on the install path the trigger names, and the
+> "masked because CI never reaches the test step" clause is retired by #90.
+>
+> The residual defect is real but different, and smaller: `evaluation/closeness.py` imports scipy
+> **directly** while declaring nothing, so the package depends on a transitive pin it does not
+> control. If views-evaluation drops scipy, this breaks with no signal from our own metadata. That
+> is dependency hygiene (PEP 508: declare what you import), not a live install failure — the tier
+> stays 3 but the trigger becomes "when views-evaluation or pipeline-core stops requiring scipy",
+> not "when anyone installs".
+
 ---
 
 ### C-42: The reproducibility gate does not audit `level` or `targets`, the two config keys every model path dereferences
@@ -483,6 +499,86 @@ See also C-32 (the float64 retention is the byte-identity requirement that makes
 The metadata is deliberately **not** narrowed here. What a distribution claims to support is a release decision with downstream visibility, the constraint belongs to a dependency two hops upstream, and narrowing then re-widening `requires-python` across releases is worse than stating the gap once. The CI matrix is narrowed to 3.11 instead, so the pipeline is honestly green rather than permanently two-thirds red — the permanently-red condition being exactly what let C-42/#84 survive five weeks unnoticed.
 
 **Discharge:** when `viewser` drops the `pandas<2` pin (pandas 2.x supports 3.12/3.13), restore the full matrix and confirm. If viewser does not move, narrow `requires-python` and the classifiers at the next release instead. See also C-38 (the prior packaging-claim entry, discharged), C-41 (undeclared `scipy` — the other way this package's dependency metadata is wrong). Part of causal cluster **K7 — Distribution / packaging**.
+
+---
+
+### C-48: `run_type` is dereferenced one line after the gate passes, and is not audited
+
+| Field | Value |
+|-------|-------|
+| ID | C-48 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 3) |
+| Trigger | When a caller reaches `_train_model_artifact` with a config that has no `run_type` — a direct-API user, a downstream static validation built on the contract this gate advertises, or a pipeline-core change to when `run_type` is injected — the audit reports success and the next line raises a bare `KeyError: 'run_type'`, the exact #84 shape |
+| Location | `views_baseline/manager/baseline_manager.py:44-46` (`_setup_model_and_data()` runs the audit, then `self.config["run_type"]`); absent from `views_baseline/infrastructure/reproducibility_gate.py` `CORE_GENOME`; `views-pipeline-core` `configuration.py:464` declares `_SAFETY_CRITICAL_KEYS = frozenset({"level", "run_type", "prediction_format"})` |
+
+Epic #85 closed this gap for `level` and `regression_targets` and left it open one key over. pipeline-core names an authoritative trio of safety-critical keys; `CORE_GENOME` now covers two of the three.
+
+It is **deliberately not** in `CORE_GENOME`, and the reason is the one C-24 taught: `run_type` is injected at runtime (it is a CLI argument, not a config-file key), so requiring it would break the *static* downstream validation this class exists to enable — the very contract its docstring advertises and C-42's sibling entry is about. Promoting it demands the same coordinated verification C-24 required for `seed`, and #85 did not do that work.
+
+The honest interim is a documented asymmetry rather than a silent one: `tests/test_reproducibility_gate.py`'s `_KEYS_DEREFERENCED_ON_EVERY_RUN` now records `run_type`'s exclusion and why, so the completeness guard no longer certifies an incomplete list as complete. **Discharge:** verify `run_type` is present in the merged config at audit time for all run types, then promote it — or record that it cannot be, and move the read before the audit. See also C-24 (the sequencing precedent), C-42, C-44.
+
+---
+
+### C-49: CI runs and passes but is not a required status check — green is advisory, not blocking
+
+| Field | Value |
+|-------|-------|
+| ID | C-49 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 6) |
+| Trigger | When a contributor merges a PR whose `check (3.11)` job is red — GitHub will not stop them, because neither branch declares required status checks. Also fires if someone enables required checks using a job name from a pre-2026-09-09 run (`check (3.12)`/`check (3.13)`), which no longer exist and would block every PR forever |
+| Location | GitHub branch protection for `main` and `development` (both return `required_status_checks: null`); `.github/workflows/run_tests.yml` |
+
+Epic #85's premise is that "nothing was gating merges" is a root cause of the five-week #84 outage. #90 fixed the *running* half — the suite now resolves and passes in CI for the first time since 2026-08-02 — but not the *gating* half: a red run still does not block a merge on either protected branch. `development` requires no review either, so a broken PR can land unimpeded.
+
+This is a repository-settings change, not a code change, which is why it is registered rather than done: it is the maintainer's call, and it should be made now that the job is reliably green rather than while it was red. **Discharge:** add `check (3.11)`, `lint` and `build` as required status checks on `development` and `main`. Note the job-name hazard above when doing so. See also C-38/C-47 (why the job could not run), C-44.
+
+---
+
+### C-50: the catalog reimplements pipeline-core's target vocabulary instead of consuming `combined_targets()`
+
+| Field | Value |
+|-------|-------|
+| ID | C-50 |
+| Tier | 3 |
+| Source | expert-review (2026-09-09, #94 review finding 8) |
+| Trigger | When views-pipeline-core retires or renames `regression_targets` the way it retired `targets` in #380 — this package breaks identically, and **every conformance test stays green**, because `tests/test_config_conformance.py` hardcodes the same literal the catalog does |
+| Location | `views_baseline/model/catalog.py` (`self.config["regression_targets"]`); `tests/test_config_conformance.py` (`MERGED_CONFIGS` literals); the unused alternative is `views_pipeline_core.managers.configuration.configuration.combined_targets`, used at 13+ read sites inside pipeline-core |
+
+`combined_targets(config)` is the canonical accessor pipeline-core created *in the same change* that caused #84, on a package already declared as a hard dependency. views-baseline is now the only reader in the platform reimplementing the vocabulary by hand.
+
+Calling it directly from `model/catalog.py` is blocked by ADR-013 (no module-level pipeline-core imports under `model/`), and routing it through the manager was rejected in #85 on the grounds that it would leave one of seven config keys arriving by a different mechanism than the other six — a split convention. Both remain true, so this is a **recorded consequence of a deliberate decision, not an oversight**.
+
+What the decision costs, stated plainly so a future reader can re-weigh it: the guard added in #88 cannot detect the failure it was built for. It pins the fixtures to the same literal as the code, so a rename moves both together and the tests pass while every model dies. Only the views-models runtime smoke test would catch it. **Discharge:** either adopt `combined_targets` at the manager seam (accepting the split convention) or add a test that asserts our literal still matches pipeline-core's derivation. See also C-19 (the OCP registry this is entangled with), C-42, D-04.
+
+---
+
+### C-51: the lint gate resolves an unpinned `ruff`, so an upstream release can red every open PR
+
+| Field | Value |
+|-------|-------|
+| ID | C-51 |
+| Tier | 4 |
+| Source | expert-review (2026-09-09, #94 review addendum) |
+| Trigger | When Astral stabilises or changes a rule in the selected `E`/`F`/`W`/`I` sets — every open PR goes red on code that passes locally under the dev-group ruff, with no repo change to bisect |
+| Location | `.github/workflows/run_tests.yml` (`uvx ruff check .`, no version); `pyproject.toml` `[dependency-groups] dev` (`ruff>=0.8`, a floor with no ceiling) |
+
+The lint job deliberately runs project-independently so it stays green when the project cannot resolve — which was the right call while `check` was red, and is why it was the only signal for five weeks. The cost is that it pins nothing: `uvx ruff` takes whatever is newest at job time, which is also a different version than the dev group installs locally. This is the "gate red for a reason nobody re-diagnosed" class the workflow header now spends ten lines apologising for, one layer up. Low tier because the failure is loud, immediate, and fixed by a one-line pin. **Discharge:** pin `uvx ruff@<version>` in step with the dev group.
+
+---
+
+### C-52: the conformance fixture is keyed by algorithm, so broadening its coverage fails its own completeness test
+
+| Field | Value |
+|-------|-------|
+| ID | C-52 |
+| Tier | 4 |
+| Source | expert-review (2026-09-09, #94 review addendum) |
+| Trigger | When a contributor adds a second real config for an algorithm already covered — e.g. `ParametricConflictology` with `family="zinb"` — `test_every_catalogued_algorithm_has_a_conformance_fixture` fails, because it asserts set equality between algorithm names and fixture keys |
+| Location | `tests/test_config_conformance.py` (`MERGED_CONFIGS` keyed by algorithm; the equality assertion in `test_every_catalogued_algorithm_has_a_conformance_fixture`) |
+
+The completeness guard exists so the fixture set cannot silently shrink as the catalog grows. Keyed by algorithm name, it also caps the fixture set at exactly one config per algorithm — so the guard's shape punishes broadening it. views-models ships 29 baseline configs spanning 8 distinct `family x transform` combinations; this file covers 2. A constructor-level rejection introduced for an uncovered combination would ship green. **Discharge:** key `MERGED_CONFIGS` by a fixture label carrying its source model name, and assert that the set of algorithms *covered* is a superset of the catalog rather than equal to the fixture keys.
 
 ---
 

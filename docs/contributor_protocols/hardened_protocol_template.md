@@ -93,8 +93,7 @@ Rules:
   apply defaults — all values must be explicitly declared in `config_hyperparameters.py`.
 - Parameters (those with defaults) are **not** listed in `MODEL_GENOMES`. They are
   accessed via `config.get(key, default)` in the factory method.
-- `targets` and `partition_dict` are universal inputs (all models require them) but are not
-  listed in `MODEL_GENOMES` — this is a known gap documented in ADR-009.
+- `partition_dict` is a universal input (all models require it) but is not listed in `MODEL_GENOMES`. (`regression_targets` WAS in this position and is no longer: it is declared in `CORE_GENOME` as of #85, after the gap this sentence described became a five-week outage — see ADR-009.)
 
 When adding a new model, update `MODEL_GENOMES` in the same commit as the constructor. A
 `MODEL_GENOMES` entry that does not match the constructor is a silent validation gap.

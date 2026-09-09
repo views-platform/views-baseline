@@ -98,8 +98,13 @@ ReproducibilityGate.Config.audit_manifest(config)  # no error
 CORE_PARAMS = set(ReproducibilityGate.Config.CORE_GENOME)
 ALGO_PARAMS = ReproducibilityGate.Config.ALGORITHM_GENOMES
 
-hp = get_hp_config()  # from config_hyperparameters.py
-missing = CORE_PARAMS - set(hp.keys())
+# NOTE: validate the MERGED config, not config_hyperparameters.py alone. `level` and
+# `prediction_format` live in config_meta.py in every shipped baseline, and
+# `regression_targets` is meta-only in 11 of 29 — so checking `hp` alone reports every
+# healthy model as broken. (Before #85 this snippet happened to work because CORE_GENOME
+# held only hyperparameter-file keys; it no longer does.)
+merged = {**get_hp_config(), **get_meta_config()}
+missing = CORE_PARAMS - set(merged.keys())
 assert not missing, f"Config missing core params: {missing}"
 ```
 

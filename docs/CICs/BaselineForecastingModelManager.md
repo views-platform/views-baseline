@@ -73,7 +73,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 | Source | What is consumed | Notes |
 |---|---|---|
 | `model_path` (constructor) | `ModelPathManager` instance | Provides `.artifacts` path. `.data_raw` is no longer accessed directly (data path comes from base class `_cached_data_path`). |
-| `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"level"`, `"algorithm"`, `"regression_targets"` (`targets` was retired upstream in pipeline-core #380; see #85). |
+| `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"algorithm"`, and every `CORE_GENOME` key — `"steps"`, `"time_steps"`, `"prediction_format"`, `"regression_targets"`, `"level"` — all audited by `audit_manifest` before the catalog is built. (`targets` was retired upstream in pipeline-core #380; see #85. `run_type` is read one line after the audit but is NOT audited — it is injected at runtime, not declared in a config file; see C-48.) |
 | `_data_loader.partition_dict` | `dict` | Must contain `"test"` key. |
 | `_config_manager` | `ConfigurationManager` | Used by base class and accessed directly in `_evaluate_model_artifact` and `_forecast_model_artifact` via `add_config()` to persist the artifact timestamp. |
 
@@ -157,6 +157,10 @@ manager.config = {
     "level": "pg_id",
     "algorithm": "LocfModel",
     "regression_targets": ["y1", "y2"],
+    # CORE_GENOME keys — audit_manifest raises before the catalog is reached without them
+    "steps": [*range(1, 37)],
+    "time_steps": 36,
+    "prediction_format": "prediction_frame",
 }
 # Training
 model = manager._train_model_artifact()   # fits, pickles, returns model
@@ -196,15 +200,25 @@ preds = mgr._evaluate_model_artifact(eval_type="temporal")
 
 ```python
 # Using an algorithm name not registered in the catalog
-manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "SVR", "regression_targets": ["y1"]}
+manager.config = {
+    "run_type": "eval", "level": "pg_id", "algorithm": "SVR",
+    "regression_targets": ["y1"], "steps": [1], "time_steps": 36,
+    "prediction_format": "prediction_frame",
+}
 manager._evaluate_model_artifact(eval_type="temporal")
-# ValueError: "Model 'SVR' is not in the catalog. Available: ..."
+# MissingHyperparameterError: "Unknown algorithm 'SVR'. Available: [...]"
+# (the GATE rejects it first — the catalog's own ValueError is unreachable in a
+#  pipeline run, though still raised on the direct-API path)
 
 # Missing required config key
-manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "AverageModel", "regression_targets": ["y1"]}
+manager.config = {
+    "run_type": "eval", "level": "pg_id", "algorithm": "AverageModel",
+    "regression_targets": ["y1"], "steps": [1], "time_steps": 36,
+    "prediction_format": "prediction_frame",
+}
 # Missing "window_months"
 manager._evaluate_model_artifact(eval_type="temporal")
-# ValueError: "Model 'AverageModel' requires config keys ['window_months'] but they are missing"
+# MissingHyperparameterError: "Algorithm 'AverageModel' requires missing parameters: ['window_months']"
 
 # Indexing _forecast_model_artifact by position (it returns dict[str, PredictionFrame], keyed by target)
 forecast = manager._forecast_model_artifact()
