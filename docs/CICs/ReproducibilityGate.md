@@ -25,7 +25,7 @@ The class is importable by downstream packages (e.g. views-models) so they can v
 
 ## Responsibilities and Guarantees
 
-**`Config.CORE_GENOME`**: Class attribute. List of config keys required by every baseline model: `["steps", "time_steps", "prediction_format"]`.
+**`Config.CORE_GENOME`**: Class attribute. List of config keys required by every baseline model: `["steps", "time_steps", "prediction_format", "regression_targets", "level"]`. `regression_targets` and `level` were promoted in #85 — both are dereferenced unconditionally on every run (`level` by the manager one line after this audit returns, `regression_targets` by all seven catalog builders), so their absence must be a named contract violation rather than a `KeyError` deeper in.
 
 **`Config.ALGORITHM_GENOMES`**: Class attribute. Dict mapping each algorithm name to its list of additional required config keys. This dict is the single source of truth; `BaselineModelCatalog.MODEL_GENOMES` is an alias to it.
 
@@ -85,9 +85,11 @@ from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGa
 # Valid config — passes silently
 config = {
     "algorithm": "AverageModel",
-    "targets": ["y1"],
+    "regression_targets": ["y1"],
+    "level": "pgm",
     "steps": [*range(1, 37)],
     "time_steps": 36,
+    "prediction_format": "prediction_frame",
     "window_months": 60,
 }
 ReproducibilityGate.Config.audit_manifest(config)  # no error
@@ -107,17 +109,26 @@ assert not missing, f"Config missing core params: {missing}"
 
 ```python
 # Missing core key — raises
-config = {"algorithm": "ZeroModel", "targets": ["y1"], "time_steps": 36}
+config = {
+    "algorithm": "ZeroModel", "regression_targets": ["y1"], "level": "pgm",
+    "time_steps": 36, "prediction_format": "prediction_frame",
+}
 ReproducibilityGate.Config.audit_manifest(config)
 # MissingHyperparameterError: Missing core parameters: ['steps']
 
 # None value — raises
-config = {"algorithm": "ZeroModel", "targets": ["y1"], "steps": None, "time_steps": 36}
+config = {
+    "algorithm": "ZeroModel", "regression_targets": ["y1"], "level": "pgm",
+    "steps": None, "time_steps": 36, "prediction_format": "prediction_frame",
+}
 ReproducibilityGate.Config.audit_manifest(config)
 # MissingHyperparameterError: Mandatory parameters set to None: ['steps']
 
 # Unknown algorithm — raises
-config = {"algorithm": "SVR", "targets": ["y1"], "steps": [1], "time_steps": 36}
+config = {
+    "algorithm": "SVR", "regression_targets": ["y1"], "level": "pgm",
+    "steps": [1], "time_steps": 36, "prediction_format": "prediction_frame",
+}
 ReproducibilityGate.Config.audit_manifest(config)
 # MissingHyperparameterError: Unknown algorithm 'SVR'. Available: [...]
 ```

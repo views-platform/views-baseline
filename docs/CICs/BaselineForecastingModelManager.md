@@ -73,7 +73,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 | Source | What is consumed | Notes |
 |---|---|---|
 | `model_path` (constructor) | `ModelPathManager` instance | Provides `.artifacts` path. `.data_raw` is no longer accessed directly (data path comes from base class `_cached_data_path`). |
-| `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"level"`, `"algorithm"`, `"targets"`. |
+| `self.config` | `dict` | Set via property inherited from base class. Must contain `"run_type"`, `"level"`, `"algorithm"`, `"regression_targets"` (`targets` was retired upstream in pipeline-core #380; see #85). |
 | `_data_loader.partition_dict` | `dict` | Must contain `"test"` key. |
 | `_config_manager` | `ConfigurationManager` | Used by base class and accessed directly in `_evaluate_model_artifact` and `_forecast_model_artifact` via `add_config()` to persist the artifact timestamp. |
 
@@ -156,7 +156,7 @@ manager.config = {
     "run_type": "calibration",
     "level": "pg_id",
     "algorithm": "LocfModel",
-    "targets": ["y1", "y2"],
+    "regression_targets": ["y1", "y2"],
 }
 # Training
 model = manager._train_model_artifact()   # fits, pickles, returns model
@@ -196,12 +196,12 @@ preds = mgr._evaluate_model_artifact(eval_type="temporal")
 
 ```python
 # Using an algorithm name not registered in the catalog
-manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "SVR", "targets": ["y1"]}
+manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "SVR", "regression_targets": ["y1"]}
 manager._evaluate_model_artifact(eval_type="temporal")
 # ValueError: "Model 'SVR' is not in the catalog. Available: ..."
 
 # Missing required config key
-manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "AverageModel", "targets": ["y1"]}
+manager.config = {"run_type": "eval", "level": "pg_id", "algorithm": "AverageModel", "regression_targets": ["y1"]}
 # Missing "window_months"
 manager._evaluate_model_artifact(eval_type="temporal")
 # ValueError: "Model 'AverageModel' requires config keys ['window_months'] but they are missing"
