@@ -125,3 +125,26 @@ class ReproducibilityGate:
                 )
                 logger.error(msg)
                 raise MissingHyperparameterError(msg)
+
+            # 5. Reject empty values for all required keys.
+            #
+            # An empty list is the same claim as None — "declared, but says nothing" —
+            # and it arrives by a path None cannot: pipeline-core's
+            # `get_combined_config` rewrites `regression_targets: None` to `[]` before
+            # the manager ever sees it, so check 4 is unreachable in-pipeline for
+            # exactly the key most worth guarding. Without this, an empty
+            # `regression_targets` passes the whole gate, every model is built with no
+            # targets, and the run reports success having written no PredictionFrames
+            # at all. Scalars (`time_steps`, `seed`) have no length and are skipped.
+            empties = [
+                k for k in all_required
+                if hasattr(config.get(k), "__len__") and len(config[k]) == 0
+            ]
+            if empties:
+                msg = (
+                    "REPRODUCIBILITY CONTRACT VIOLATED: "
+                    f"Mandatory parameters are empty: {empties}. "
+                    "An empty value declares nothing; implicit defaults are forbidden."
+                )
+                logger.error(msg)
+                raise MissingHyperparameterError(msg)

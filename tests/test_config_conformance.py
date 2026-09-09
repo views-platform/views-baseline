@@ -55,22 +55,49 @@ _RETIRED_EVALUATION_KEYS = (
 _PARTITION = {"test": (493, 540)}
 
 # Core keys every shipped baseline config carries, verified across all 29 on 2026-09-09.
+#
+# This block is sized to pipeline-core's `CoreConfigSniffer`, not to CORE_GENOME. An
+# earlier version carried only the five genome keys, which made the module docstring's
+# claim ("configs pipeline-core would accept") false: the sniffer runs as the first
+# statement of `ModelManager.execute_single_run` and rejects a config missing `name`,
+# `creator` or `rolling_origin_stride`, plus a regression metric key. A fixture trimmed
+# to our own genome is a hand-roll, and the whole point of this file is not to build the
+# guard on a hand-roll (#94 review, finding 7).
 _CORE = {
+    # CORE_GENOME
     "steps": [*range(1, 37)],
     "time_steps": 36,
     "prediction_format": "prediction_frame",
     "level": "pgm",
+    # additionally required by CoreConfigSniffer.MANDATORY_KEYS_UNIVERSAL/_MODEL
+    "name": "conformance_fixture",
+    "creator": "views-baseline conformance suite",
+    "rolling_origin_stride": 1,
+    # from config_deployment.py. Kept on the LEGACY key rather than ADR-057's `maturity`
+    # because all 29 shipped baseline configs are still on it — the fixture is supposed to
+    # mirror what really ships, not what pipeline-core would prefer. It warns, and the
+    # sniffer reads it as maturity='candidate'. Revisit when views-models migrates.
+    "deployment_status": "shadow",
+    # required by the sniffer whenever prediction_format == "prediction_frame"
+    "skip_predictions_delivery": True,
 }
 
 MERGED_CONFIGS = {
     # zero_pgmbaseline / locf_pgmbaseline — no algorithm-specific keys
-    "ZeroModel": {**_CORE, "algorithm": "ZeroModel", "regression_targets": ["lr_ged_sb"]},
-    "LocfModel": {**_CORE, "algorithm": "LocfModel", "regression_targets": ["lr_ged_sb"]},
+    "ZeroModel": {
+        **_CORE, "algorithm": "ZeroModel",
+        "regression_targets": ["lr_ged_sb"], "regression_point_metrics": ["MSE"],
+    },
+    "LocfModel": {
+        **_CORE, "algorithm": "LocfModel",
+        "regression_targets": ["lr_ged_sb"], "regression_point_metrics": ["MSE"],
+    },
     # average_pgmbaseline
     "AverageModel": {
         **_CORE,
         "algorithm": "AverageModel",
         "regression_targets": ["lr_ged_sb"],
+        "regression_point_metrics": ["MSE"],
         "window_months": 18,
     },
     # light_strider
@@ -78,6 +105,7 @@ MERGED_CONFIGS = {
         **_CORE,
         "algorithm": "ConflictologyModel",
         "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "regression_sample_metrics": ["twCRPS"],
         "window_months": 36,
         "n_samples": 64,
         "seed": 42,
@@ -87,6 +115,7 @@ MERGED_CONFIGS = {
         **_CORE,
         "algorithm": "MixtureBaseline",
         "regression_targets": ["lr_os_best"],
+        "regression_sample_metrics": ["twCRPS"],
         "window_months": 18,
         "lambda_mix": 0.05,
         "n_samples": 256,
@@ -97,6 +126,7 @@ MERGED_CONFIGS = {
         **_CORE,
         "algorithm": "ParametricConflictology",
         "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "regression_sample_metrics": ["twCRPS"],
         "window_months": 36,
         "n_samples": 64,
         "seed": 42,
@@ -108,6 +138,7 @@ MERGED_CONFIGS = {
         **_CORE,
         "algorithm": "ParametricHurdleConflictology",
         "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "regression_sample_metrics": ["twCRPS"],
         "window_months": 36,
         "n_samples": 64,
         "seed": 42,
@@ -145,6 +176,24 @@ def test_fixture_carries_no_retired_evaluation_key(algorithm):
         f"{algorithm}: conformance fixture carries retired evaluation key(s) {present}. "
         f"pipeline-core's combined_targets() raises on these, so this is not a config any "
         f"real run could produce."
+    )
+
+
+def test_shared_test_fixtures_carry_no_retired_evaluation_key():
+    """The incident fixture itself must stay clean (#94 review, finding 9).
+
+    `MANAGER_BASE_CONFIG` in conftest is the dict that manufactured `targets` for five
+    weeks. This PR deletes the line; nothing stopped it coming back. Re-adding a retired
+    key there to make some legacy manager test pass — the same one-line convenience that
+    created #84 — would otherwise leave every guard in this repo green.
+    """
+    from conftest import MANAGER_BASE_CONFIG
+
+    present = [k for k in _RETIRED_EVALUATION_KEYS if k in MANAGER_BASE_CONFIG]
+    assert not present, (
+        f"conftest.MANAGER_BASE_CONFIG carries retired evaluation key(s) {present}. "
+        f"pipeline-core's combined_targets() raises on these — this is the exact fixture "
+        f"drift that caused #84."
     )
 
 
@@ -187,3 +236,32 @@ def test_catalog_does_not_alias_the_config_target_list(algorithm):
     )
     model = catalog.get_model(algorithm)
     assert model.targets is not config["regression_targets"]
+
+
+@pytest.mark.parametrize("algorithm", sorted(MERGED_CONFIGS))
+def test_fixture_is_accepted_by_pipeline_cores_own_sniffer(algorithm):
+    """The fixtures must be configs pipeline-core would actually run (#94 review, #7).
+
+    `test_fixture_carries_no_retired_evaluation_key` compares one module literal against
+    another and so cannot fail on any change to this package — it is fixture hygiene, not
+    evidence. This test is the one that can fail: it hands each fixture to
+    `CoreConfigSniffer`, which pipeline-core runs as the first statement of
+    `ModelManager.execute_single_run`. If a fixture drifts into a shape no real run could
+    produce, the conformance guard above is being built on a hand-roll — which is the
+    precise mistake that let #84 survive.
+
+    Skipped where pipeline-core is absent; it is the only test here that needs it.
+    """
+    sniffer = pytest.importorskip(
+        "views_pipeline_core.modules.validation.core_config_sniffer"
+    )
+    # The sniffer takes the OUTER partition dict, keyed by run_type, whose values are
+    # {"train": (a, b), "test": (c, d)}. `_PARTITION` above is the inner one — the shape
+    # views-baseline actually receives (`self._data_loader.partition_dict`), which is why
+    # models read `partition_dict["test"]` directly. Test span must be
+    # time_steps + MAX_SHIFT_COUNT = 36 + 12 = 48 months.
+    sniffer.CoreConfigSniffer(
+        MERGED_CONFIGS[algorithm],
+        {"calibration": {"train": (121, 396), "test": (397, 444)}},
+        target="model",
+    ).sniff_all("calibration")

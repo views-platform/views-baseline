@@ -1,5 +1,3 @@
-import re
-
 import pytest
 
 from views_baseline.infrastructure.exceptions import MissingHyperparameterError
@@ -17,18 +15,33 @@ def test_core_genome_is_list_of_strings():
     assert len(genome) > 0
 
 
-# Every key here is dereferenced unconditionally on a real run, so its absence must be a
-# contract violation and not a KeyError deep in a factory. Asserted by name, deliberately:
-# a test parametrized over CORE_GENOME cannot catch a key being *removed* from it (the
-# parametrize list simply shrinks and the case stops running). Found by the #89 guard
-# audit — mutations M5/M6 deleted `regression_targets` and `level` from the genome and the
-# entire 277-test suite stayed green.
+# Keys whose absence must be a *named contract violation*, with the reason each one
+# earns that. Asserted by name, deliberately: a test parametrized over CORE_GENOME
+# cannot catch a key being removed from it (the parametrize list simply shrinks and the
+# case stops running) — which is exactly how mutations M5/M6 survived the #89 audit with
+# the whole suite green.
+#
+# The reasons are not uniform, and an earlier version of this dict wrongly claimed they
+# were (#94 review). Two distinct failure modes:
+#
+#   * dereferenced unconditionally -> absence is a bare KeyError past a passing audit,
+#     the #84 shape;
+#   * read with a silent default -> absence is not an error at all, which is worse:
+#     `prediction_format` is never read in this package, and pipeline-core reads it as
+#     `.get("prediction_format", "dataframe")`, so omitting it silently routes a
+#     PredictionFrame-only model down the dataframe emission path.
+#
+# NOT in this dict, and deliberately: `run_type`, which `_train_model_artifact` reads one
+# line after the audit passes and which pipeline-core lists in its own
+# `_SAFETY_CRITICAL_KEYS`. It is injected at runtime rather than declared in a config
+# file, so requiring it here would break the static downstream validation this gate
+# advertises (see C-48). Tracked, not silently absorbed.
 _KEYS_DEREFERENCED_ON_EVERY_RUN = {
-    "steps": "pipeline-core evaluation/forecast horizon",
-    "time_steps": "manager._generate_predictions output_length",
-    "prediction_format": "pipeline-core stage dispatch",
-    "regression_targets": "BaselineModelCatalog.__init__ (all 7 builders)",
-    "level": "manager._setup_model_and_data -> loa",
+    "steps": "dereferenced — pipeline-core evaluation/forecast horizon",
+    "time_steps": "dereferenced — manager._generate_predictions output_length",
+    "prediction_format": "silent default — pipeline-core .get(..., 'dataframe')",
+    "regression_targets": "dereferenced — BaselineModelCatalog.targets (all 7 builders)",
+    "level": "dereferenced — manager._setup_model_and_data -> loa",
 }
 
 
@@ -63,7 +76,13 @@ def test_each_core_key_is_enforced_not_merely_listed(missing_key):
         "level": "pgm",
     }
     del config[missing_key]
-    with pytest.raises(MissingHyperparameterError, match=re.escape(missing_key)):
+    # Exact list, not `re.escape(missing_key)`: pytest's `match` is re.search, so
+    # "steps" also matches a message naming only "time_steps" — the same substring
+    # looseness this file removes 100 lines below, re-introduced (#94 review, finding 5).
+    with pytest.raises(
+        MissingHyperparameterError,
+        match=rf"Missing core parameters: \['{missing_key}'\]",
+    ):
         ReproducibilityGate.Config.audit_manifest(config)
 
 
@@ -323,5 +342,39 @@ def test_extra_keys_ignored():
         "prediction_format": "prediction_frame",
         "totally_unknown_key": "should be fine",
         "another_extra": 999,
+    }
+    ReproducibilityGate.Config.audit_manifest(config)
+
+
+def test_audit_manifest_rejects_empty_required_value():
+    """An empty list declares nothing (#94 review, finding 2).
+
+    `regression_targets: []` passed every check before: presence yes, non-None yes. The
+    run then built every model with no targets and reported success having written no
+    PredictionFrames. It is reachable in production precisely because check 4 is not:
+    pipeline-core's `get_combined_config` rewrites `regression_targets: None` to `[]`
+    before the manager sees it.
+    """
+    config = {
+        "algorithm": "ZeroModel",
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "regression_targets": [],
+        "level": "pgm",
+    }
+    with pytest.raises(MissingHyperparameterError, match=r"empty: \['regression_targets'\]"):
+        ReproducibilityGate.Config.audit_manifest(config)
+
+
+def test_audit_manifest_accepts_scalar_required_values():
+    """The emptiness check must not trip on ints — they have no length."""
+    config = {
+        "algorithm": "ZeroModel",
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "regression_targets": ["y1"],
+        "level": "pgm",
     }
     ReproducibilityGate.Config.audit_manifest(config)

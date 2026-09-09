@@ -251,13 +251,19 @@ def test_catalog_forwards_all_config_params(algo, cls):
 
     # partition_dict and loa are injected by the catalog itself, not from config.
     injected = {"self", "partition_dict", "loa"}
+    # Constructor params whose config key has a different name. Without this map the
+    # rename to `regression_targets` made `pname not in config` true for `targets`, so
+    # this guard silently stopped checking the one parameter the C-10 class is about
+    # while still reporting green (#94 review, finding 1).
+    config_key = {"targets": "regression_targets"}
     for pname in inspect.signature(cls.__init__).parameters:
-        if pname in injected or pname not in config:
+        key = config_key.get(pname, pname)
+        if pname in injected or key not in config:
             continue
-        assert getattr(model, pname) == config[pname], (
-            f"{algo}: constructor param '{pname}' was not forwarded from config "
-            f"(got {getattr(model, pname)!r}, expected {config[pname]!r}) — a silently "
-            f"dropped parameter (C-10 class)."
+        assert getattr(model, pname) == config[key], (
+            f"{algo}: constructor param '{pname}' was not forwarded from config key "
+            f"'{key}' (got {getattr(model, pname)!r}, expected {config[key]!r}) — a "
+            f"silently dropped parameter (C-10 class)."
         )
 
 
@@ -287,11 +293,37 @@ def test_catalog_forwards_all_config_params_parametric(algo, cls, family):
     model = catalog.get_model(algo)
 
     injected = {"self", "partition_dict", "loa"}
+    # Constructor params whose config key has a different name. Without this map the
+    # rename to `regression_targets` made `pname not in config` true for `targets`, so
+    # this guard silently stopped checking the one parameter the C-10 class is about
+    # while still reporting green (#94 review, finding 1).
+    config_key = {"targets": "regression_targets"}
     for pname in inspect.signature(cls.__init__).parameters:
-        if pname in injected or pname not in config:
+        key = config_key.get(pname, pname)
+        if pname in injected or key not in config:
             continue
-        assert getattr(model, pname) == config[pname], (
-            f"{algo}: constructor param '{pname}' was not forwarded from config "
-            f"(got {getattr(model, pname)!r}, expected {config[pname]!r}) — a silently "
-            f"dropped parameter (C-10 class)."
+        assert getattr(model, pname) == config[key], (
+            f"{algo}: constructor param '{pname}' was not forwarded from config key "
+            f"'{key}' (got {getattr(model, pname)!r}, expected {config[key]!r}) — a "
+            f"silently dropped parameter (C-10 class)."
         )
+
+
+def test_list_models_needs_no_targets_in_config():
+    """`list_models()` is a Stable, side-effect-free accessor (ADR-004; the CIC).
+
+    Deriving targets in `__init__` made enumerating the catalog raise
+    `KeyError: 'regression_targets'` — a precondition no caller enumerating algorithms
+    has reason to satisfy (#94 review, finding 3/A3).
+    """
+    catalog = BaselineModelCatalog(config={}, partition_dict={}, loa="pgm")
+    assert "ZeroModel" in catalog.list_models()
+
+
+def test_catalog_rejects_a_scalar_target_string():
+    """A bare string would `list()` into one target per character (#94 review, finding 11)."""
+    catalog = BaselineModelCatalog(
+        config={"regression_targets": "lr_ged_sb"}, partition_dict={}, loa="pgm"
+    )
+    with pytest.raises(ValueError, match="sequence of target names"):
+        catalog.get_model("ZeroModel")

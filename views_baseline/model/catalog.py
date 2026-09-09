@@ -32,7 +32,6 @@ class BaselineModelCatalog:
         self.config = config
         self.partition_dict = partition_dict
         self.loa = loa
-        self.targets = list(config["regression_targets"])
 
         self.models = {
             "ZeroModel": self._get_zero_model,
@@ -43,6 +42,27 @@ class BaselineModelCatalog:
             "ParametricConflictology": self._get_parametric_conflictology,
             "ParametricHurdleConflictology": self._get_parametric_hurdle,
         }
+
+    @property
+    def targets(self) -> list:
+        """The target names, read from the one config key that carries them.
+
+        Derived on access rather than stored in ``__init__`` so that
+        :meth:`list_models` stays a pure accessor with no config precondition — it is
+        declared Stable in ADR-004 and "no side effects" in this class's CIC, and
+        enumerating the catalog must not require a config that carries targets.
+
+        Rejects a bare string: ``regression_targets="lr_ged_sb"`` would otherwise
+        ``list()`` into nine single-character targets, which both the gate (presence and
+        non-emptiness only) and the models accept without complaint.
+        """
+        raw = self.config["regression_targets"]
+        if isinstance(raw, str):
+            raise ValueError(
+                f"regression_targets must be a sequence of target names, got the string "
+                f"{raw!r}. A bare string would be split into one target per character."
+            )
+        return list(raw)
 
     def get_model(self, model_name: str):
         """
