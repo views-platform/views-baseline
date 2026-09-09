@@ -294,6 +294,20 @@ views-baseline 1.0.0 was uploaded to PyPI via Trusted Publishing, reserving the 
 
 See also C-17 (the prior pin-hygiene entry — **inverted** here: 3.0.0 is now intentionally *required* rather than dangerously *admitted*), C-16 (the code break the `>=3.0.0` floor exists to require the fix for), and C-31/C-32 (the FeatureFrame-native work that made the frame path pandas-free, orthogonal to this distribution gap).
 
+> **RESOLVED (2026-09-09, v1.0.2).** Discharged and verified, not merely argued. `views-baseline
+> 1.0.2` published to PyPI via Trusted Publishing (run `34340933613`), and a clean-room
+> `uv pip install views-baseline==1.0.2` into an empty 3.11 venv **resolved and installed** — the
+> first time any version of this package has ever done so. 1.0.0 and 1.0.1 remain installable in
+> name only and should be treated as unusable. The install-back in
+> `docs/guides/publishing-to-pypi.md` §A has now been exercised once; it had never been run.
+>
+> Verified in that clean environment: `audit_manifest` accepts a real `black_ranger` config and
+> `BaselineModelCatalog(...).get_model("MixtureBaseline")` returns a model with
+> `targets == ['lr_os_best']` — the exact call that raised `KeyError: 'targets'` for five weeks.
+>
+> Note the residual, which belongs to C-47 and not here: the clean-room install succeeds on
+> **Python 3.11 only**. All 29 baseline environments are 3.11, so no shipped model is affected.
+>
 > **DISCHARGE CONDITION MET (2026-09-09).** views-pipeline-core reached PyPI on **2026-08-03**
 > (3.0.0), and is now at 3.2.0 — 3.0.1 (08-11), 3.1.0 (08-13), 3.1.1 (08-14), 3.1.2 (08-26),
 > 3.2.0 (09-08). `views-baseline`'s `>=3.0.0,<4.0.0` floor therefore resolves, which is precisely
