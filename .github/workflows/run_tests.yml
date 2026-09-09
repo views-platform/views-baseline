@@ -2,10 +2,16 @@ name: Lint and Test
 
 # uv-based CI (mirrors the views-frames / views-datafactory / views-reporting pattern).
 #
-# NOTE: `uv sync` cannot currently resolve the dependency graph because
-# views-pipeline-core (>=3.0.0) is not on PyPI yet, so this workflow is expected to
-# be red until that dependency is published. The editable `views_pipeline` conda env
-# is the working test gate meanwhile (README / CONTRIBUTING).
+# This workflow is a REAL merge gate again as of 2026-09-09 (issue #90).
+#
+# History, so the next person does not re-diagnose it: it was red from 2026-08-02 and the
+# note here blamed views-pipeline-core not being on PyPI. pipeline-core 3.0.0 published on
+# 2026-08-03 and the workflow was never re-run, so the note went stale and the real cause
+# went unseen for five weeks — which is also how the #84 outage survived, since nothing was
+# gating merges. The actual blocker was different and would have outlived the publish:
+# uv resolves a universal lockfile including win32, and
+# pipeline-core -> viewser -> docker<6 -> pywin32==227 has no wheels above cp39. Fixed by
+# `[tool.uv] environments = ["sys_platform == 'linux'"]` in pyproject.toml.
 
 on:
   push:
@@ -19,9 +25,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Lint runs project-independently (uvx), so it stays a reliable green signal even
-  # while `uv sync` cannot resolve views-pipeline-core (see the header note) — the
-  # `check` job below is gated behind that resolution and is expected red until then.
+  # Lint runs project-independently (uvx), so it does not depend on the project
+  # resolving. Kept separate for that reason, though `check` now resolves too.
   lint:
     runs-on: ubuntu-latest
     steps:

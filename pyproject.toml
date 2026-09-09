@@ -47,6 +47,19 @@ Homepage = "https://github.com/views-platform/views-baseline"
 Repository = "https://github.com/views-platform/views-baseline"
 Changelog = "https://github.com/views-platform/views-baseline/releases"
 
+# uv resolves a UNIVERSAL lockfile across every platform its markers admit, including
+# win32. views-pipeline-core -> viewser -> docker<6.0.0 -> pywin32{sys_platform=='win32'}==227,
+# and pywin32 227 published no wheels above cp39, so the win32 split is unsatisfiable on
+# Python 3.11-3.13 and `uv sync` fails on Linux CI for a platform CI never runs.
+#
+# Constraining resolution to Linux is uv's documented remedy for exactly this (it is the
+# hint uv itself emits). The published wheel is unaffected: it stays `py3-none-any` with no
+# platform markers of its own — this bounds the DEV/CI resolution, not the distribution.
+# Revisit if a Windows or macOS contributor needs `uv sync`; the conda `views_pipeline` env
+# is the sanctioned dev path today and it is Linux.
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
