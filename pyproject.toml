@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "views-baseline"
-version = "1.0.1"
+version = "1.0.2"
 description = "VIEWS conflict-forecasting baseline models — point (Zero/LOCF/Average) and distributional (conflictology, mixture, parametric) baselines that emit views-frames PredictionFrames."
 authors = [
     { name = "Sonja Häffner", email = "sonhaf@prio.org" },
