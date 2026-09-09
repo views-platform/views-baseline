@@ -33,7 +33,7 @@ isolation.
 
 | Cluster | Root cause | Entries | Status |
 |---------|-----------|---------|--------|
-| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18, C-39 | Seam resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020); C-19 OCP half deferred (ADR-012); **C-39 new** — the manager-side format dispatch can silently bypass the frame path |
+| K1 — Frames boundary (DIP/SDP) | Model layer coupled to concrete platform data types; no baseline-owned seam | C-16, C-08, C-31, C-19, C-05, C-18, C-39 | Seam resolved via `to_prediction_frames` + `to_feature_frame` (ADR-019/020). **C-05 resolved 2026-09-09** — the positional index assumption no longer exists; `resolve_level` validates at the boundary. C-19's OCP half deferred (ADR-012); C-39 open — the manager-side format dispatch can silently bypass the frame path |
 | K2 — numpy-port byte-identity (epic #47) | pandas→numpy rewrite risking silent forecast drift + weak guard tests | C-32, C-33, C-34, C-35, C-36, C-37, C-29 | Resolved & merged (PR #60); only C-30 (numpy pin) deferred |
 | K3 — Seed / reproducibility | Seed not wired; determinism-only tests | C-10, C-24, C-25, C-29 | Resolved & merged (ADR-021, #31) |
 | K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | **C-14 resolved downstream** — views-models' readiness contract now expects point models to omit `n_posterior_samples` (291 tests pass). C-11 lowered to T3 on its own likelihood note. C-13/C-20 remain, both external |
@@ -87,7 +87,7 @@ ADR-002 and ADR-013 define strict dependency topology rules: `model/` must have 
 | Field | Value |
 |-------|-------|
 | ID | C-11 |
-| Tier | 3 (was 2; lowered 2026-09-09 — see status note: no ensemble lists a baseline constituent) |
+| Tier | 3 |
 | Source | expert-review (2026-06-02) |
 | Trigger | When baseline models switch to PredictionFrame output (GitHub #8) but the ensemble configuration still uses `EnsembleManager` (DataFrame-only) — ensemble evaluation fails with FileNotFoundError for all baseline constituents because it looks for `.parquet` files and finds `.npy` |
 | Location | `views_baseline/manager/baseline_manager.py` (return types), `views_pipeline_core/managers/ensemble/ensemble.py:82` (DataFrame-only ensemble), `views_pipeline_core/managers/ensemble/prediction_frame_ensemble.py:109` (PF-only ensemble), GitHub issues #8-#11 |
@@ -96,6 +96,8 @@ GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame
 
 **Status update (review-rr 2026-06-04):** Investigation during the migration established that no ensemble lists any baseline model as a constituent (`models` list) — baselines appear only in `regression_point_baselines`/`regression_sample_baselines` for evaluation benchmarking. The realistic likelihood of a production ensemble break is therefore much lower than first assessed. Prerequisite tracked in GitHub issue #12. Keep open until the migration (PR #15) merges and issue #12 confirms the consuming ensemble's manager/format.
 
+> **Tier lowered to 3 (from 2) — 2026-09-09, `review-rr` strategic.** Its own status note establishes that no ensemble lists any baseline as a constituent, so it did not belong beside C-13 and C-39, neither of which carries a likelihood discount. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
+
 ---
 
 ### C-12: `skip_predictions_delivery` config key added without effect analysis
@@ -103,7 +105,7 @@ GitHub issues #8–#11 migrate baseline output from DataFrame to PredictionFrame
 | Field | Value |
 |-------|-------|
 | ID | C-12 |
-| Tier | 4 (was 3; lowered 2026-09-09 — runtime effect now understood, residual is one consumer check) |
+| Tier | 4 |
 | Source | expert-review (2026-06-02) |
 | Trigger | When `skip_predictions_delivery: True` is added to baseline configs per GitHub issue #10 — prediction file delivery may be suppressed in the pipeline-core stage layer, causing downstream consumers to find no output files |
 | Location | GitHub issue #10, `views_pipeline_core/managers/forecasting/stage.py` (delivery logic), `views_pipeline_core/managers/prediction/io.py` (save path) |
@@ -113,6 +115,8 @@ Issue #10 requires adding `skip_predictions_delivery: True` to all PredictionFra
 **Status update (review-rr 2026-06-04):** The PFE production roadmap (pipeline-core `2026-06-01_pfe_production_roadmap.md` §4.4) clarifies that `skip_predictions_delivery` controls **only Track B** (the Arrow/parquet write); Track A+ (`.npy` for PF-ensemble consumption) is always written. PR #76 applied `True` to all 9 point-model configs, matching the deployed ranger models. The runtime effect is now understood; residual concern is only confirming no current downstream consumer reads baseline Track-B parquet. Likelihood downgraded; keep open until that consumer check is done.
 
 See also C-11 (related: both concern the PredictionFrame migration's downstream effects).
+
+> **Tier lowered to 4 (from 3) — 2026-09-09, `review-rr` strategic.** The PFE roadmap clarified the runtime effect; the residual is a single downstream-consumer check. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
 
 ---
 
@@ -246,7 +250,7 @@ See also C-21 and C-28 (the two prior, now-resolved drift instances — this is 
 | Field | Value |
 |-------|-------|
 | ID | C-41 |
-| Tier | 4 (was 3; lowered 2026-09-09 — the stated trigger was falsified, see below) |
+| Tier | 4 |
 | Source | repo-assimilation (2026-09-09) |
 | Trigger | When `views-evaluation` (or anything else in the pipeline-core dependency tree) stops requiring `scipy` — this package imports it directly while declaring nothing, so the break arrives with no signal from our own metadata. **Not** on install: scipy is supplied transitively today via `views-baseline → views-pipeline-core → views-evaluation (scipy>=1.11,<2)`, verified at 1.15.1/1.17.1 in clean environments. |
 | Location | `views_baseline/evaluation/closeness.py:18` (`from scipy.stats import energy_distance, wasserstein_distance`, module level); `pyproject.toml:31-43` (declares only `numpy`, `views-frames`, `views-pipeline-core`); `views_baseline/model/distributions/__init__.py:11` (docstring claims "numpy + scipy only" for a numpy-only package) |
@@ -270,6 +274,8 @@ See also C-17 (the same failure mode — an undeclared dependency working locall
 > is dependency hygiene (PEP 508: declare what you import), not a live install failure — the tier
 > stays 3 but the trigger becomes "when views-evaluation or pipeline-core stops requiring scipy",
 > not "when anyone installs".
+
+> **Tier lowered to 4 (from 3) — 2026-09-09, `review-rr` strategic.** The stated trigger was falsified — scipy arrives transitively via views-evaluation — leaving declaration hygiene with a remote trigger. Recorded here rather than in the Tier cell: the schema specifies that cell as a bare integer, and prose in it is where retired entries have twice gone unnoticed (C-27).
 
 ---
 
