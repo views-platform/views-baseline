@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-09-09                           |
-| Total Concerns    | 46                                   |
-| Open Concerns     | 20                                   |
+| Total Concerns    | 47                                   |
+| Open Concerns     | 21                                   |
 | Resolved Concerns | 25                                   |
 | Withdrawn         | 1 (C-27 — Tweedie removed)           |
 
@@ -39,7 +39,7 @@ isolation.
 | K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | Open, cross-repo (pipeline-core / views-models); C-44 adds the private-API surface all of these are asserted across |
 | K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42 | Data-side closed (C-06/C-07 resolved); **config-side open** — the gate omits `level`/`targets` (C-42) |
 | K6 — Governance-doc drift | Docs lag code changes | C-21, C-28, C-40 | C-21/C-28 resolved; **third recurrence open** — eight ADRs cite files deleted by the epic #47 reorg (C-40). No check added when the first two closed |
-| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41 | C-17 superseded; C-38 live (blocked on pipeline-core #319, and gating the test suite); C-41 new — `scipy` undeclared |
+| K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; C-38 live (blocked on pipeline-core #319, and gating the test suite); C-41 new — `scipy` undeclared |
 
 ---
 
@@ -465,6 +465,24 @@ See also C-40 (the doc corpus that still cites the pre-reorg paths — the same 
 `MixtureBaseline.fit` retains, per target, every positive value in the entire training panel as a float64 array — deliberately, since the global pool is what avoids the zero-probability trap, and deliberately float64 to keep the seeded `rng.choice` stream byte-identical (ADR-011). `_train_model_artifact` then pickles the whole fitted object. The artifact, however, is never unpickled: `_evaluate_model_artifact` and `_forecast_model_artifact` both re-fit from scratch and read only `path_artifact.stem[-15:]` — the file exists solely so a downstream ensemble can resolve a timestamp from its filename. The result is that the largest fitted state in the package is written to disk on every training run for a filename. No correctness impact; the cost is disk and serialisation time, and it scales with the panel rather than with the window.
 
 See also C-32 (the float64 retention is the byte-identity requirement that makes the pool expensive), C-22 (the same artifact's missing provenance metadata).
+
+---
+
+### C-47: `views-baseline` declares support for Python 3.12/3.13 but cannot be installed on either
+
+| Field | Value |
+|-------|-------|
+| ID | C-47 |
+| Tier | 3 |
+| Source | repo-assimilation (2026-09-09, found by the #90 CI restoration) |
+| Trigger | When anyone runs `pip install views-baseline` on Python 3.12 or 3.13 — trusting `requires-python = ">=3.11,<3.14"` or the `Programming Language :: Python :: 3.12/3.13` classifiers — the install fails building `pandas` from source. Also fires whenever someone restores the full CI matrix, which will go red again for this reason and not an obvious one. |
+| Location | `pyproject.toml:14` (`requires-python`), `:22-23` (the 3.12/3.13 classifiers); `.github/workflows/run_tests.yml` (matrix narrowed to 3.11 with the explanation); external root cause `viewser 6.6.4` (`pandas<2.0.0,>=1.4.0`) reached via `views-pipeline-core>=3.0.0` |
+
+`views-pipeline-core` depends on `viewser>=6.6.4`, which pins `pandas<2.0.0,>=1.4.0`. The last pandas 1.x release, 1.5.3, publishes wheels for **cp38-cp311 only**. On Python 3.12 or 3.13 the resolver therefore has to build pandas 1.5.3 from source, which fails immediately — `ModuleNotFoundError: No module named 'pkg_resources'` under modern setuptools build isolation, and would very likely fail on Cython/numpy incompatibility even if that were patched. The package's declared support for 3.12 and 3.13 is consequently **false, and has been false since the `>=3.0.0` pipeline-core floor was adopted** — it is not a regression introduced by the #85 work, which merely made it visible by getting CI far enough to resolve dependencies at all.
+
+The metadata is deliberately **not** narrowed here. What a distribution claims to support is a release decision with downstream visibility, the constraint belongs to a dependency two hops upstream, and narrowing then re-widening `requires-python` across releases is worse than stating the gap once. The CI matrix is narrowed to 3.11 instead, so the pipeline is honestly green rather than permanently two-thirds red — the permanently-red condition being exactly what let C-42/#84 survive five weeks unnoticed.
+
+**Discharge:** when `viewser` drops the `pandas<2` pin (pandas 2.x supports 3.12/3.13), restore the full matrix and confirm. If viewser does not move, narrow `requires-python` and the classifiers at the next release instead. See also C-38 (the prior packaging-claim entry, discharged), C-41 (undeclared `scipy` — the other way this package's dependency metadata is wrong). Part of causal cluster **K7 — Distribution / packaging**.
 
 ---
 

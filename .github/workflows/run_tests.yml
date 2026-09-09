@@ -39,7 +39,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.11 only, and not by preference (issue #95).
+        #
+        # views-pipeline-core -> viewser 6.6.4 -> `pandas<2.0.0,>=1.4.0`, and pandas 1.5.3
+        # (the last 1.x) publishes wheels for cp38-cp311 only. On 3.12/3.13 the resolver
+        # must build pandas from source, which fails outright:
+        #   ModuleNotFoundError: No module named 'pkg_resources'
+        # So views-baseline is not installable on 3.12/3.13 at all — a transitive
+        # constraint two hops upstream, not something this repo can fix, and true long
+        # before this matrix was written.
+        #
+        # `pyproject.toml` still declares `requires-python = ">=3.11,<3.14"` and 3.12/3.13
+        # classifiers. That claim is currently false; it is tracked in the register (C-47)
+        # rather than quietly narrowed here, because what the package claims to support is
+        # a distribution decision, not a CI one.
+        #
+        # Restore the full matrix when viewser drops the `pandas<2` pin.
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
