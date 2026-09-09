@@ -16,16 +16,19 @@ its own state.** Nothing here blocks a consumer — these are soft falsification
 not of "unblocked" — but a register that says a downstream repo is blocked when it is not
 is worse than no register, because it is trusted.
 
-**Status: all four now pass.** They were written red — as falsification stubs encoding the
-corrected contract rather than the current one — and went green when `review-rr strategic`
-reconciled the register on 2026-09-09 (C-03, C-05, C-14, C-38, C-42 resolved; C-27 refiled).
-They are kept as permanent guards, because the drift they caught was introduced twice in one
-day by the epic that was cleaning up drift.
+**Status: written red, now green.** They encoded the corrected contract rather than the
+current one, and went green when `review-rr strategic` reconciled the register on 2026-09-09
+(C-03, C-05, C-14, C-38, C-42 resolved; C-27 refiled). They are kept as permanent guards,
+because the drift they caught was introduced twice in one day by the epic that was cleaning
+up drift.
 
-They are cheap: four assertions over a markdown file, no imports from the package. What they
-cannot do is judge whether an entry is *true* — only whether the register contradicts itself.
-C-14 was caught because it declared a block while sitting in the open section, not because a
-test knew views-models had moved on; that took running the downstream suite.
+**Two guards, not four.** The first draft had two more, asserting "C-14 must not be open" and
+"C-42 must not contain this phrase" — tombstones that could only fail if those exact entries
+returned, which they will not. `/review-diff` caught them, and they were exactly the K8
+pattern this commit adds to the register. What survives is general.
+
+What these cannot do is judge whether an entry is *true* — only whether the register
+contradicts itself. C-14 was caught by running views-models' suite, not by a test.
 """
 
 import pathlib
@@ -56,65 +59,36 @@ def _entry_bodies(section: str) -> dict[str, str]:
     return {parts[i]: parts[i + 1] for i in range(1, len(parts) - 1, 2)}
 
 
-def test_no_open_entry_declares_itself_resolved():
-    """An entry cannot be both open and resolved (#94-era drift, found 2026-09-09).
+# Any marker by which an entry declares itself finished. An entry carrying one of these
+# while filed under Open Concerns is self-contradicting, whatever the counts say.
+_TERMINAL_MARKERS = ("RESOLVED", "DISCHARGED", "WITHDRAWN")
 
-    C-38's body was updated to "RESOLVED (2026-09-09, v1.0.2)" with the clean-room install
-    as evidence, but the entry was never moved out of Open Concerns and is still counted
-    among the open 26. The register's structure and its prose disagree, and the structure
-    is what a reader skims.
+
+def test_no_open_entry_declares_itself_terminal():
+    """An entry cannot be both open and finished (drift found 2026-09-09).
+
+    Three instances existed simultaneously: C-38's body said "RESOLVED (2026-09-09,
+    v1.0.2)" while filed under Open; C-27 had been withdrawn in July with its status
+    encoded in the Tier cell; C-42's stated discharge condition had been met. The header
+    arithmetic balanced throughout, because a separate Withdrawn count absorbed the
+    discrepancy — the structure and the prose disagreed and nothing noticed.
+
+    Deliberately general. The first draft of this file hardcoded "C-14 must not be open"
+    and "C-42 must not contain this phrase" — assertions that could only fail if those
+    exact entries came back, i.e. never. That is the K8 pattern this same commit adds to
+    the register: a guard written by the author of the thing guarded, encoding the
+    author's model of failure. What is *not* mechanically decidable — whether an entry's
+    claim is still true of the world — is not faked here. C-14 was caught by running
+    views-models' suite, not by a test.
     """
-    contradictory = [
-        cid
+    offenders = {
+        cid: [m for m in _TERMINAL_MARKERS if re.search(rf"\*\*{m}\b", body)]
         for cid, body in _entry_bodies(_open_section()).items()
-        if re.search(r"\*\*RESOLVED\b", body)
-    ]
-    assert not contradictory, (
-        f"Entries in '## Open Concerns' whose bodies declare themselves RESOLVED: "
-        f"{sorted(contradictory)}. Move them to '## Resolved Concerns' and correct the "
-        f"header counts, or remove the RESOLVED marker."
-    )
-
-
-def test_no_open_entry_has_a_met_discharge_condition():
-    """C-42 says it "Stays Open until merged and released". Both have happened.
-
-    Merged as 2b3d3b4 (PR #94) and released as v1.0.2 on 2026-09-09. An entry whose own
-    stated discharge condition is satisfied but which remains open is indistinguishable,
-    to a reader, from live work.
-    """
-    raw = _entry_bodies(_open_section()).get("C-42", "")
-    # The phrase spans a blockquote line break ("> "), so normalise before matching —
-    # a naive literal search silently passes and reports no finding.
-    body = re.sub(r"\s*\n>?\s*", " ", raw)
-    assert "Stays **Open** until merged and released" not in body, (
-        "C-42 still carries the discharge condition 'Stays Open until merged and "
-        "released'. views-baseline 1.0.2 was merged (2b3d3b4) and released on 2026-09-09, "
-        "so the condition is met: resolve it, or state a new condition."
-    )
-
-
-def test_c14_does_not_claim_a_downstream_block_that_no_longer_exists():
-    """C-14 asserts views-models is blocked by this repo. Verified false, 2026-09-09.
-
-    Its trigger says enabling a point baseline with ``prediction_format:
-    "prediction_frame"`` fails ``TestPFModelConfigReadiness`` because a deterministic model
-    has no posterior samples. All 29 shipped configs now declare that format, the 9 point
-    baselines correctly omit ``n_posterior_samples``, and views-models'
-    ``tests/test_pfe_production_readiness.py`` passes **291 tests, 0 failures** — the test
-    was rewritten to handle exactly this case ("point models omit n_posterior_samples and
-    emit (N, 1)").
-
-    This is the finding that matters most in this audit: a register entry claiming an
-    outbound block that does not exist is the one kind of staleness that can stop someone
-    else's work for no reason.
-    """
-    open_ids = set(_entry_bodies(_open_section()))
-    assert "C-14" not in open_ids, (
-        "C-14 is still open and still asserts that point baselines cannot satisfy "
-        "views-models' PF readiness contract. views-models resolved this on their side; "
-        "the contract now explicitly accommodates point models. Resolve C-14 with that as "
-        "evidence, or restate what remains true."
+    }
+    offenders = {c: m for c, m in offenders.items() if m}
+    assert not offenders, (
+        f"Entries under '## Open Concerns' that declare themselves finished: {offenders}. "
+        f"Move each to '## Resolved Concerns' and correct the header, or drop the marker."
     )
 
 
