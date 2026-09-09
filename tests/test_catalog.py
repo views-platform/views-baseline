@@ -11,7 +11,7 @@ from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
 
 def test_catalog_lists_all_models():
-    config = {"targets": ["y1"], "window_months": 3}
+    config = {"regression_targets": ["y1"], "window_months": 3}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -28,7 +28,7 @@ def test_catalog_lists_all_models():
 
 
 def test_catalog_returns_zero_model():
-    config = {"targets": ["y1"]}
+    config = {"regression_targets": ["y1"]}
     partition_dict = {"test": (493, 540)}
     loa = "pg_id"
 
@@ -36,13 +36,13 @@ def test_catalog_returns_zero_model():
     model = catalog.get_model("ZeroModel")
 
     assert isinstance(model, ZeroModel)
-    assert model.targets == config["targets"]
+    assert model.targets == config["regression_targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
 
 
 def test_catalog_returns_locf_model():
-    config = {"targets": ["y1", "y2"]}
+    config = {"regression_targets": ["y1", "y2"]}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -50,13 +50,13 @@ def test_catalog_returns_locf_model():
     model = catalog.get_model("LocfModel")
 
     assert isinstance(model, LocfModel)
-    assert model.targets == config["targets"]
+    assert model.targets == config["regression_targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
 
 
 def test_catalog_returns_average_model():
-    config = {"targets": ["y1"], "window_months": 6}
+    config = {"regression_targets": ["y1"], "window_months": 6}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -64,14 +64,14 @@ def test_catalog_returns_average_model():
     model = catalog.get_model("AverageModel")
 
     assert isinstance(model, AverageModel)
-    assert model.targets == config["targets"]
+    assert model.targets == config["regression_targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
     assert model.window_months == config["window_months"]
 
 
 def test_catalog_returns_conflictology_model():
-    config = {"targets": ["y1", "y2"], "window_months": 5, "n_samples": 128, "seed": 7}
+    config = {"regression_targets": ["y1", "y2"], "window_months": 5, "n_samples": 128, "seed": 7}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -79,7 +79,7 @@ def test_catalog_returns_conflictology_model():
     model = catalog.get_model("ConflictologyModel")
 
     assert isinstance(model, ConflictologyModel)
-    assert model.targets == config["targets"]
+    assert model.targets == config["regression_targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
     assert model.window_months == config["window_months"]
@@ -88,7 +88,7 @@ def test_catalog_returns_conflictology_model():
 
 
 def test_catalog_missing_n_samples_for_conflictology_raises():
-    config = {"targets": ["y1"], "window_months": 5}
+    config = {"regression_targets": ["y1"], "window_months": 5}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -98,7 +98,7 @@ def test_catalog_missing_n_samples_for_conflictology_raises():
 
 
 def test_catalog_missing_keys_for_mixture_raises():
-    config = {"targets": ["y1"]}
+    config = {"regression_targets": ["y1"]}
     partition_dict = {"test": (445, 492)}
     loa = "pg_id"
 
@@ -108,7 +108,7 @@ def test_catalog_missing_keys_for_mixture_raises():
 
 
 def test_catalog_raises_for_unknown_model():
-    config = {"targets": ["y1"]}
+    config = {"regression_targets": ["y1"]}
     partition_dict = {"test": (493, 540)}
     loa = "pg_id"
 
@@ -120,7 +120,7 @@ def test_catalog_raises_for_unknown_model():
 
 def test_catalog_returns_mixture_model():
     config = {
-        "targets": ["y1"], "window_months": 18, "lambda_mix": 0.05,
+        "regression_targets": ["y1"], "window_months": 18, "lambda_mix": 0.05,
         "n_samples": 256, "seed": 11,
     }
     partition_dict = {"test": (493, 540)}
@@ -130,7 +130,7 @@ def test_catalog_returns_mixture_model():
     model = catalog.get_model("MixtureBaseline")
 
     assert isinstance(model, MixtureBaseline)
-    assert model.targets == config["targets"]
+    assert model.targets == config["regression_targets"]
     assert model.partition_dict is partition_dict
     assert model.loa == loa
     assert model.window_months == 18
@@ -141,7 +141,7 @@ def test_catalog_returns_mixture_model():
 
 def test_catalog_returns_parametric_conflictology():
     config = {
-        "targets": ["y1"], "window_months": 5, "n_samples": 128,
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 128,
         "seed": 7, "family": "nb", "transform": "none",
     }
     catalog = BaselineModelCatalog(
@@ -159,7 +159,7 @@ def test_catalog_returns_parametric_conflictology():
 
 def test_catalog_returns_parametric_hurdle():
     config = {
-        "targets": ["y1", "y2"], "window_months": 9, "n_samples": 256,
+        "regression_targets": ["y1", "y2"], "window_months": 9, "n_samples": 256,
         "seed": 11, "family": "gumbel", "transform": "log1p",
     }
     catalog = BaselineModelCatalog(
@@ -176,7 +176,8 @@ def test_catalog_returns_parametric_hurdle():
 
 def test_catalog_missing_family_for_parametric_raises():
     config = {
-        "targets": ["y1"], "window_months": 5, "n_samples": 128, "seed": 7, "transform": "none",
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 128, "seed": 7,
+        "transform": "none",
     }
     catalog = BaselineModelCatalog(
         config=config, partition_dict={"test": (445, 492)}, loa="pg_id"
@@ -188,7 +189,7 @@ def test_catalog_missing_family_for_parametric_raises():
 def test_catalog_illegal_family_transform_fails_loud():
     """ADR-021/ADR-022: nb + log1p is a contract violation, surfaced at construction."""
     config = {
-        "targets": ["y1"], "window_months": 5, "n_samples": 128,
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 128,
         "seed": 7, "family": "nb", "transform": "log1p",
     }
     catalog = BaselineModelCatalog(
@@ -200,7 +201,7 @@ def test_catalog_illegal_family_transform_fails_loud():
 
 def test_catalog_continuous_family_rejected_by_no_hurdle_via_catalog():
     config = {
-        "targets": ["y1"], "window_months": 5, "n_samples": 128,
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 128,
         "seed": 7, "family": "lognormal", "transform": "none",
     }
     catalog = BaselineModelCatalog(
@@ -212,7 +213,7 @@ def test_catalog_continuous_family_rejected_by_no_hurdle_via_catalog():
 
 def test_catalog_count_family_rejected_by_hurdle_via_catalog():
     config = {
-        "targets": ["y1"], "window_months": 5, "n_samples": 128,
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 128,
         "seed": 7, "family": "nb", "transform": "none",
     }
     catalog = BaselineModelCatalog(
@@ -238,7 +239,7 @@ def test_catalog_forwards_all_config_params(algo, cls):
 
     # Distinct, non-default values for every possible constructor param.
     config = {
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
         "window_months": 7,
         "n_samples": 13,
         "lambda_mix": 0.3,
@@ -273,7 +274,7 @@ def test_catalog_forwards_all_config_params_parametric(algo, cls, family):
     import inspect
 
     config = {
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
         "window_months": 7,
         "n_samples": 13,
         "seed": 99,

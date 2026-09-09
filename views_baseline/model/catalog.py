@@ -16,10 +16,23 @@ class BaselineModelCatalog:
     def __init__(self, config: dict, partition_dict: dict, loa: str):
         """
         Catalog of available baseline models.
+
+        Reads the views-pipeline-core config vocabulary: ``regression_targets``.
+        (``targets`` was a synthesised backward-compatibility key, retired in
+        pipeline-core #380; ``combined_targets()`` now *raises* on a config that
+        still carries it.) Derived once here rather than at each of the seven
+        factory sites, so a future rename of the platform's target vocabulary is
+        one edit, not seven.
+
+        ``classification_targets`` is deliberately not read: no baseline is wired
+        for a classification target today, and no baseline config declares one.
+        See ADR-012 when that changes — the decision is per-model (Zero/LOCF carry
+        over cleanly; the magnitude-fitting families do not), not catalog-wide.
         """
         self.config = config
         self.partition_dict = partition_dict
         self.loa = loa
+        self.targets = list(config["regression_targets"])
 
         self.models = {
             "ZeroModel": self._get_zero_model,
@@ -54,17 +67,17 @@ class BaselineModelCatalog:
 
     def _get_zero_model(self):
         return ZeroModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.targets, partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_locf_model(self):
         return LocfModel(
-            targets=self.config["targets"], partition_dict=self.partition_dict, loa=self.loa
+            targets=self.targets, partition_dict=self.partition_dict, loa=self.loa
         )
 
     def _get_average_model(self):
         return AverageModel(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -72,7 +85,7 @@ class BaselineModelCatalog:
 
     def _get_conflictology_model(self):
         return ConflictologyModel(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -82,7 +95,7 @@ class BaselineModelCatalog:
 
     def _get_mixture_model(self):
         return MixtureBaseline(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             lambda_mix=self.config["lambda_mix"],
             n_samples=self.config["n_samples"],
@@ -95,7 +108,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on an unsupported family or an illegal family×transform.
         return ParametricConflictology(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,
@@ -109,7 +122,7 @@ class BaselineModelCatalog:
         # family/transform/seed are required, audited genome keys (ADR-021/ADR-022); the
         # constructor fails loud on a non-continuous family or an illegal family×transform.
         return ParametricHurdleConflictology(
-            targets=self.config["targets"],
+            targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
             loa=self.loa,

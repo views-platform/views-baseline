@@ -21,7 +21,22 @@ class ReproducibilityGate:
         """Gates related to configuration and hyperparameter integrity."""
 
         # Core keys required by ALL baseline models regardless of algorithm.
-        CORE_GENOME = ["steps", "time_steps", "prediction_format"]
+        #
+        # `regression_targets` and `level` were promoted here after the pipeline-core
+        # #380 outage (issue #85): both are dereferenced unconditionally on every run —
+        # `level` at `manager/baseline_manager.py` one line after this audit returns, and
+        # `regression_targets` by all seven catalog factories — but neither was declared,
+        # so a config missing one cleared both validation layers and died on a bare
+        # KeyError deep in a factory. ADR-009 recorded that gap as accepted debt in March
+        # 2026; it is what the outage was made of. Verified against all 29 shipped
+        # baseline configs before promotion (29/29 declare both).
+        CORE_GENOME = [
+            "steps",
+            "time_steps",
+            "prediction_format",
+            "regression_targets",
+            "level",
+        ]
 
         # Algorithm-specific keys (audited only when the algorithm matches).
         ALGORITHM_GENOMES = {

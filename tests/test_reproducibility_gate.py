@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from views_baseline.infrastructure.exceptions import MissingHyperparameterError
@@ -13,6 +15,56 @@ def test_core_genome_is_list_of_strings():
     assert isinstance(genome, list)
     assert all(isinstance(k, str) for k in genome)
     assert len(genome) > 0
+
+
+# Every key here is dereferenced unconditionally on a real run, so its absence must be a
+# contract violation and not a KeyError deep in a factory. Asserted by name, deliberately:
+# a test parametrized over CORE_GENOME cannot catch a key being *removed* from it (the
+# parametrize list simply shrinks and the case stops running). Found by the #89 guard
+# audit — mutations M5/M6 deleted `regression_targets` and `level` from the genome and the
+# entire 277-test suite stayed green.
+_KEYS_DEREFERENCED_ON_EVERY_RUN = {
+    "steps": "pipeline-core evaluation/forecast horizon",
+    "time_steps": "manager._generate_predictions output_length",
+    "prediction_format": "pipeline-core stage dispatch",
+    "regression_targets": "BaselineModelCatalog.__init__ (all 7 builders)",
+    "level": "manager._setup_model_and_data -> loa",
+}
+
+
+def test_core_genome_declares_every_unconditionally_read_key():
+    """Removing a key from CORE_GENOME must break a test, not just production (#85)."""
+    genome = set(ReproducibilityGate.Config.CORE_GENOME)
+    missing = {k: why for k, why in _KEYS_DEREFERENCED_ON_EVERY_RUN.items() if k not in genome}
+    assert not missing, (
+        f"CORE_GENOME no longer declares {sorted(missing)}. Each is read unconditionally "
+        f"on every run ({missing}), so dropping it from the genome restores the failure "
+        f"mode of #84: the gate passes and the run dies on a bare KeyError."
+    )
+
+
+@pytest.mark.parametrize("missing_key", sorted(_KEYS_DEREFERENCED_ON_EVERY_RUN))
+def test_each_core_key_is_enforced_not_merely_listed(missing_key):
+    """A declared core key must actually be audited — listing is not enforcing.
+
+    Asserts only that the absence is rejected *loudly*, not which of `audit_manifest`'s
+    four checks fires. The #89 guard audit established that checks 1 and 4 overlap: a
+    missing key reaches check 4 as `config.get(k) is None`, so it is rejected either way
+    and only the message differs ("Missing core parameters" vs "set to None"). Mutation
+    M10 — exempting a key from check 1 — survives for that reason and is an equivalent
+    mutant, not a gap.
+    """
+    config = {
+        "algorithm": "ZeroModel",
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "prediction_format": "prediction_frame",
+        "regression_targets": ["y1"],
+        "level": "pgm",
+    }
+    del config[missing_key]
+    with pytest.raises(MissingHyperparameterError, match=re.escape(missing_key)):
+        ReproducibilityGate.Config.audit_manifest(config)
 
 
 def test_algorithm_genomes_covers_all_catalog_models():
@@ -34,7 +86,8 @@ def test_parametric_genomes_require_family_transform_seed():
 def test_audit_manifest_accepts_valid_zero_model_config():
     config = {
         "algorithm": "ZeroModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -45,7 +98,8 @@ def test_audit_manifest_accepts_valid_zero_model_config():
 def test_audit_manifest_accepts_valid_mixture_config():
     config = {
         "algorithm": "MixtureBaseline",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -61,7 +115,8 @@ def test_audit_manifest_rejects_missing_seed_for_distributional():
     """ADR-021: `seed` is a required, audited genome key for distributional models."""
     config = {
         "algorithm": "ConflictologyModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -76,7 +131,8 @@ def test_audit_manifest_rejects_missing_seed_for_distributional():
 def test_audit_manifest_accepts_valid_parametric_config():
     config = {
         "algorithm": "ParametricConflictology",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -94,7 +150,8 @@ def test_audit_manifest_rejects_missing_parametric_key(missing):
     """ADR-022: family/transform/seed are audited — omitting any one fails loud."""
     config = {
         "algorithm": "ParametricHurdleConflictology",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -112,18 +169,27 @@ def test_audit_manifest_rejects_missing_parametric_key(missing):
 def test_audit_manifest_rejects_missing_core_key():
     config = {
         "algorithm": "ZeroModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "time_steps": 36,
-        # "steps" is missing
+        "prediction_format": "prediction_frame",
+        # "steps" is missing — and only "steps", so the assertion below can name the
+        # exact missing list. This config previously also omitted "prediction_format"
+        # while its comment claimed otherwise; the loose match="steps" hid that.
     }
-    with pytest.raises(MissingHyperparameterError, match="steps"):
+    # Asserted as the exact missing list, not `match="steps"`: that substring also
+    # matches "time_steps", and after the #85 CORE_GENOME promotion it would match a
+    # message naming keys this test says nothing about. A guard that can pass for a
+    # reason other than the one it is named for is not a guard.
+    with pytest.raises(MissingHyperparameterError, match=r"Missing core parameters: \['steps'\]"):
         ReproducibilityGate.Config.audit_manifest(config)
 
 
 def test_audit_manifest_rejects_missing_algorithm_key():
     config = {
         "algorithm": "AverageModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -136,7 +202,8 @@ def test_audit_manifest_rejects_missing_algorithm_key():
 def test_audit_manifest_rejects_unknown_algorithm():
     config = {
         "algorithm": "NonExistentModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -169,7 +236,7 @@ def test_manager_gate_rejects_incomplete_config(
         "run_type": "eval",
         "level": "pg_id",
         "algorithm": "ZeroModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
         "prediction_format": "prediction_frame",
         # "steps" and "time_steps" are missing
     }
@@ -177,7 +244,12 @@ def test_manager_gate_rejects_incomplete_config(
     mgr = make_manager(config, manager_partition_dict)
     monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
 
-    with pytest.raises(MissingHyperparameterError, match="steps"):
+    # Exact missing list, for the same reason as above: "steps" alone would also be
+    # satisfied by a message naming only "time_steps".
+    with pytest.raises(
+        MissingHyperparameterError,
+        match=r"Missing core parameters: \['steps', 'time_steps'\]",
+    ):
         mgr._setup_model_and_data()
 
 
@@ -202,7 +274,8 @@ def test_none_value_injection():
     """A required key present but set to None must be rejected."""
     config = {
         "algorithm": "AverageModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": None,
         "prediction_format": "prediction_frame",
@@ -216,7 +289,8 @@ def test_empty_string_algorithm():
     """An empty-string algorithm must be rejected as unknown."""
     config = {
         "algorithm": "",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -228,7 +302,8 @@ def test_empty_string_algorithm():
 def test_missing_algorithm_key():
     """Config with no 'algorithm' key at all must be rejected explicitly."""
     config = {
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
@@ -241,7 +316,8 @@ def test_extra_keys_ignored():
     """Surplus keys in the config must not cause errors."""
     config = {
         "algorithm": "ZeroModel",
-        "targets": ["y1"],
+        "regression_targets": ["y1"],
+        "level": "pgm",
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "prediction_format": "prediction_frame",
