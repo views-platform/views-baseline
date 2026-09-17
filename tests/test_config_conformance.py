@@ -79,15 +79,19 @@ import pytest
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
 
-# Keys views-evaluation retired in 0.4.0; pipeline-core's `combined_targets()` RAISES on a
-# config carrying any of them. A fixture containing one is not a realistic merged config —
-# which is exactly how the old conftest fixture drifted out of contact with production.
-_RETIRED_EVALUATION_KEYS = (
-    "targets",
-    "metrics",
-    "regression_uncertainty_metrics",
-    "classification_uncertainty_metrics",
-)
+
+def _combined_targets():
+    """pipeline-core's own retired-key check, imported rather than copied.
+
+    The first version of this file carried a hand-copied tuple of the four retired keys.
+    The guard audit showed that dropping a key from *our* copy and adding it to a fixture
+    left every test green — the copy was checked against nothing. Calling
+    `combined_targets()` directly means the check is pipeline-core's, and our list cannot
+    drift from theirs because there is no list. Skipped where pipeline-core is absent,
+    as the sniffer test already is.
+    """
+    cfg = pytest.importorskip("views_pipeline_core.managers.configuration.configuration")
+    return cfg.combined_targets
 
 _PARTITION = {"test": (493, 540)}
 
@@ -253,22 +257,23 @@ def test_every_catalogued_algorithm_has_a_conformance_fixture():
         f"only in fixtures={sorted(set(MERGED_CONFIGS) - catalogued)}. "
         f"Add the new algorithm's real merged config here (ADR-012 step)."
     )
+    # The gate audits the inner `algorithm`; the catalog tests use the outer key. Without
+    # this they can silently audit different algorithms (guard audit, mutation C5).
+    mismatched = {k: v["algorithm"] for k, v in MERGED_CONFIGS.items() if v["algorithm"] != k}
+    assert not mismatched, f"fixture key and its 'algorithm' value disagree: {mismatched}"
 
 
 @pytest.mark.parametrize("algorithm", sorted(MERGED_CONFIGS))
 def test_fixture_carries_no_retired_evaluation_key(algorithm):
-    """The fixtures must be configs pipeline-core would accept (#380).
+    """The fixtures must be configs pipeline-core's target derivation accepts (#380).
 
-    `combined_targets()` raises on any retired key, so a fixture carrying one could never
-    reach the catalog in production — and a guard built on it proves nothing. This is the
-    property the old `conftest.MANAGER_BASE_CONFIG` violated.
+    `combined_targets()` raises on any retired key (`targets`, `metrics`, ...), so a fixture
+    carrying one could never reach the catalog in production — and a guard built on it
+    proves nothing. This is the property the old `conftest.MANAGER_BASE_CONFIG` violated.
+    The sniffer test does NOT cover this: `CoreConfigSniffer` never calls
+    `combined_targets()`, so a fixture carrying `targets` passes the sniffer.
     """
-    present = [k for k in _RETIRED_EVALUATION_KEYS if k in MERGED_CONFIGS[algorithm]]
-    assert not present, (
-        f"{algorithm}: conformance fixture carries retired evaluation key(s) {present}. "
-        f"pipeline-core's combined_targets() raises on these, so this is not a config any "
-        f"real run could produce."
-    )
+    _combined_targets()(MERGED_CONFIGS[algorithm])
 
 
 def test_shared_test_fixtures_carry_no_retired_evaluation_key():
@@ -281,12 +286,7 @@ def test_shared_test_fixtures_carry_no_retired_evaluation_key():
     """
     from conftest import MANAGER_BASE_CONFIG
 
-    present = [k for k in _RETIRED_EVALUATION_KEYS if k in MANAGER_BASE_CONFIG]
-    assert not present, (
-        f"conftest.MANAGER_BASE_CONFIG carries retired evaluation key(s) {present}. "
-        f"pipeline-core's combined_targets() raises on these — this is the exact fixture "
-        f"drift that caused #84."
-    )
+    _combined_targets()(MANAGER_BASE_CONFIG)
 
 
 @pytest.mark.parametrize("algorithm", sorted(MERGED_CONFIGS))
@@ -313,6 +313,24 @@ def test_real_config_constructs_its_model(algorithm):
         f"regression_targets {config['regression_targets']}."
     )
     assert model.loa == config["level"]
+
+    # Every algorithm-genome key must reach the model unchanged. The guard audit showed a
+    # catalog that hard-coded window_months=18 or n_samples=64 passed the three assertions
+    # above — "constructs from a real merged config" was true of three arguments out of
+    # eight. This loop catches those two, because the seven real configs disagree on them.
+    #
+    # It cannot catch a hard-coded seed=42, lambda_mix=0.05 or transform="none", verified
+    # by mutation: every shipped config carries exactly those values, so a faithful copy
+    # cannot tell "reads the config" from "hard-codes what the config says". Nor can it
+    # separate `n_samples` from `n_posterior_samples` — always present, always equal. That
+    # is the coverage cost of faithful fixtures, and the reason the forwarding guard in
+    # `test_catalog.py::test_catalog_forwards_all_config_params` uses *invented* values
+    # (seed=7, seed=11): it catches all four, and is the test that owns that property.
+    for key in ReproducibilityGate.Config.ALGORITHM_GENOMES[algorithm]:
+        assert getattr(model, key) == config[key], (
+            f"{algorithm}: model.{key}={getattr(model, key)!r} but config[{key!r}]="
+            f"{config[key]!r} — the catalog is not forwarding it (C-10 class)."
+        )
 
 
 @pytest.mark.parametrize("algorithm", sorted(MERGED_CONFIGS))
