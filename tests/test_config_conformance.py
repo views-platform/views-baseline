@@ -1,5 +1,5 @@
 """Conformance guard (issue #85 / #84): every catalog builder must construct from a
-**realistic merged views-models config**, not from a hand-rolled test fixture.
+**real merged views-models config**, not from a hand-rolled test fixture.
 
 This is the test that did not exist on 2026-08-02, and whose absence let every baseline
 model stay dead for five weeks.
@@ -14,27 +14,58 @@ the dependency, defined the contract.
 **Why the check belongs here and not upstream.** pipeline-core has registered the blind
 spot itself (its C-289: a repo "cannot see a **consumer**, because being imported by
 someone leaves no trace in your own source") and its conformance suite explicitly exempts
-views-baseline, pushing the check to our side. `reproducibility_gate` already states the
-intended direction — downstream repos import *us* to validate their configs — so the
-matching obligation is that we validate against *their* config shape.
+views-baseline, pushing the check to our side.
 
-**Fixture provenance.** The configs below are copied from the shipped views-models
-baselines, merged the way ``ConfigurationManager.get_combined_config`` merges them
-(``config_hyperparameters`` then ``config_meta``, meta winning on collision), as of
-**2026-09-09**:
+**Fixture provenance — read this before editing a fixture.** ``MERGED_CONFIGS`` holds the
+seven real merged configs from views-models at commit ``7743011d`` (2026-09-17), produced
+by the command below and pasted in verbatim. They are **copied, never imported**: nothing
+in this repo may read across the views-models boundary at test time.
 
-* ``zero_pgmbaseline`` / ``locf_pgmbaseline`` / ``average_pgmbaseline`` — the point models
-* ``light_strider`` (ConflictologyModel), ``black_ranger`` (MixtureBaseline)
-* ``doctorish_dwarf`` (ParametricConflictology), ``bashful_dwarf`` (ParametricHurdle)
+The 2026-09-09 version of this file claimed the same provenance and was not a copy. It was
+typed from a summary, and every one of the seven drifted: missing ``evaluation_mode``,
+``evaluation_profile``, ``n_posterior_samples`` and ``regression_point_baselines``;
+metric lists truncated to one entry (three of them naming a metric the real config does
+not carry); ``deployment_status`` hard-coded to ``shadow`` for models that ship
+``baseline`` and ``deprecated``. The cost was concrete: on 2026-09-17 pipeline-core's
+sniffer rejected all three point baselines (``evaluation_mode='point' requires
+aggregate_method``, views-models#477) while
+``test_fixture_is_accepted_by_pipeline_cores_own_sniffer`` **passed** for the same three —
+because the hand-roll omitted ``evaluation_mode``, so the check never fired. A guard that
+passes on a fixture the real system rejects is worse than no guard.
 
-They are **copied, not imported**: nothing in this repo may read across the views-models
-boundary. The cost of the copy is that it can drift from the live configs; refresh it when
-views-models changes a baseline config's shape. It catches a *key rename* — the failure
-that actually happened — not a *value* change.
+Refresh (from the repo root, with views-models checked out as a sibling):
 
-**What this does not cover.** It constructs models; it does not fit or predict them, and
-it does not verify that pipeline-core would accept these dicts (that would need the real
-``ConfigurationManager``). Those belong to the runtime smoke test in views-models.
+.. code-block:: console
+
+    conda run -n views_pipeline python -c "
+    import importlib.util, pathlib, pprint
+    root = pathlib.Path('../views-models/models')
+    def load(p, fn):
+        s = importlib.util.spec_from_file_location('m', p); m = importlib.util.module_from_spec(s)
+        s.loader.exec_module(m); return getattr(m, fn)()
+    for model in ['zero_pgmbaseline','locf_pgmbaseline','average_pgmbaseline',
+                  'light_strider','black_ranger','doctorish_dwarf','sleepy_dwarf']:
+        d = root / model / 'configs'
+        cfg = {**load(d/'config_hyperparameters.py','get_hp_config'),
+               **load(d/'config_deployment.py','get_deployment_config'),
+               **load(d/'config_meta.py','get_meta_config')}
+        print(f'# {model}'); pprint.pprint(cfg, width=95, sort_dicts=True)
+    "
+
+Two deliberate departures from the byte-faithful copy, and only two:
+
+* ``steps`` is written ``[*range(1, 37)]`` rather than the 36-element literal.
+* The three point-model fixtures carry ``aggregate_method: "arithmetic_mean"``, which the
+  shipped configs **lack** as of ``7743011d`` — that omission is views-models#477, and
+  without the key pipeline-core rejects the config. The fixture's purpose is "a config
+  pipeline-core would accept", so it carries the post-#477 shape and says so here. Remove
+  this note when #477 lands and the refresh command produces the key itself.
+
+**What this does not cover.** It constructs models; it does not fit or predict them. A
+copy can still go *stale* — it cannot go *wrong* the way a hand-roll can, but it will
+lag the next views-models change until the command above is re-run. The live cross-repo
+check belongs in views-models' ``tests/test_runtime_smoke.py``, which builds this catalog
+from the real configs and should also run the sniffer.
 """
 
 import pytest
@@ -54,96 +85,151 @@ _RETIRED_EVALUATION_KEYS = (
 
 _PARTITION = {"test": (493, 540)}
 
-# Core keys every shipped baseline config carries, verified across all 29 on 2026-09-09.
-#
-# This block is sized to pipeline-core's `CoreConfigSniffer`, not to CORE_GENOME. An
-# earlier version carried only the five genome keys, which made the module docstring's
-# claim ("configs pipeline-core would accept") false: the sniffer runs as the first
-# statement of `ModelManager.execute_single_run` and rejects a config missing `name`,
-# `creator` or `rolling_origin_stride`, plus a regression metric key. A fixture trimmed
-# to our own genome is a hand-roll, and the whole point of this file is not to build the
-# guard on a hand-roll (#94 review, finding 7).
-_CORE = {
-    # CORE_GENOME
-    "steps": [*range(1, 37)],
-    "time_steps": 36,
-    "prediction_format": "prediction_frame",
-    "level": "pgm",
-    # additionally required by CoreConfigSniffer.MANDATORY_KEYS_UNIVERSAL/_MODEL
-    "name": "conformance_fixture",
-    "creator": "views-baseline conformance suite",
-    "rolling_origin_stride": 1,
-    # from config_deployment.py. Kept on the LEGACY key rather than ADR-057's `maturity`
-    # because all 29 shipped baseline configs are still on it — the fixture is supposed to
-    # mirror what really ships, not what pipeline-core would prefer. It warns, and the
-    # sniffer reads it as maturity='candidate'. Revisit when views-models migrates.
-    "deployment_status": "shadow",
-    # required by the sniffer whenever prediction_format == "prediction_frame"
-    "skip_predictions_delivery": True,
-}
-
+# Verbatim from the refresh command in the module docstring (views-models 7743011d).
+# Do not "tidy" these — every key that looks irrelevant to views-baseline is what makes
+# the sniffer test mean something.
 MERGED_CONFIGS = {
-    # zero_pgmbaseline / locf_pgmbaseline — no algorithm-specific keys
+    # zero_pgmbaseline
     "ZeroModel": {
-        **_CORE, "algorithm": "ZeroModel",
-        "regression_targets": ["lr_ged_sb"], "regression_point_metrics": ["MSE"],
+        "algorithm": "ZeroModel",
+        "creator": "Sonja",
+        "deployment_status": "shadow",
+        "evaluation_mode": "point",
+        "aggregate_method": "arithmetic_mean",  # post-#477 shape; see module docstring
+        "level": "pgm",
+        "name": "zero_pgmbaseline",
+        "prediction_format": "prediction_frame",
+        "regression_point_baselines": ["average_cmbaseline", "zero_cmbaseline", "locf_cmbaseline"],
+        "regression_point_metrics": ["RMSLE", "MSE", "MSLE", "y_hat_bar"],
+        "regression_targets": ["lr_ged_sb"],
+        "rolling_origin_stride": 1,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
     },
+    # locf_pgmbaseline
     "LocfModel": {
-        **_CORE, "algorithm": "LocfModel",
-        "regression_targets": ["lr_ged_sb"], "regression_point_metrics": ["MSE"],
+        "algorithm": "LocfModel",
+        "creator": "Sonja",
+        "deployment_status": "shadow",
+        "evaluation_mode": "point",
+        "aggregate_method": "arithmetic_mean",  # post-#477 shape; see module docstring
+        "level": "pgm",
+        "name": "locf_pgmbaseline",
+        "prediction_format": "prediction_frame",
+        "regression_point_baselines": ["average_cmbaseline", "zero_cmbaseline", "locf_cmbaseline"],
+        "regression_point_metrics": ["RMSLE", "MSE", "MSLE", "y_hat_bar"],
+        "regression_targets": ["lr_ged_sb"],
+        "rolling_origin_stride": 1,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
     },
     # average_pgmbaseline
     "AverageModel": {
-        **_CORE,
         "algorithm": "AverageModel",
+        "creator": "Sonja",
+        "deployment_status": "shadow",
+        "evaluation_mode": "point",
+        "aggregate_method": "arithmetic_mean",  # post-#477 shape; see module docstring
+        "level": "pgm",
+        "name": "average_pgmbaseline",
+        "prediction_format": "prediction_frame",
+        "regression_point_baselines": ["average_cmbaseline", "zero_cmbaseline", "locf_cmbaseline"],
+        "regression_point_metrics": ["RMSLE", "MSE", "MSLE", "y_hat_bar"],
         "regression_targets": ["lr_ged_sb"],
-        "regression_point_metrics": ["MSE"],
+        "rolling_origin_stride": 1,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
         "window_months": 18,
     },
     # light_strider
     "ConflictologyModel": {
-        **_CORE,
         "algorithm": "ConflictologyModel",
-        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
-        "regression_sample_metrics": ["twCRPS"],
-        "window_months": 36,
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
         "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
         "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
     },
     # black_ranger
     "MixtureBaseline": {
-        **_CORE,
         "algorithm": "MixtureBaseline",
-        "regression_targets": ["lr_os_best"],
-        "regression_sample_metrics": ["twCRPS"],
-        "window_months": 18,
+        "creator": "Simon",
+        "deployment_status": "shadow",
         "lambda_mix": 0.05,
+        "level": "pgm",
+        "n_posterior_samples": 256,
         "n_samples": 256,
+        "name": "black_ranger",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["twCRPS", "QIS", "MIS", "MCR_sample"],
+        "regression_targets": ["lr_os_best"],
+        "rolling_origin_stride": 1,
         "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 18,
     },
-    # doctorish_dwarf — native-zero family, no transform
+    # doctorish_dwarf
     "ParametricConflictology": {
-        **_CORE,
         "algorithm": "ParametricConflictology",
-        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
-        "regression_sample_metrics": ["twCRPS"],
-        "window_months": 36,
-        "n_samples": 64,
-        "seed": 42,
+        "creator": "Simon",
+        "deployment_status": "baseline",
+        "evaluation_profile": "hydranet_ucdp",
         "family": "nb",
-        "transform": "none",
-    },
-    # bashful_dwarf — continuous positive-part family with log1p
-    "ParametricHurdleConflictology": {
-        **_CORE,
-        "algorithm": "ParametricHurdleConflictology",
-        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
-        "regression_sample_metrics": ["twCRPS"],
-        "window_months": 36,
+        "level": "pgm",
+        "n_posterior_samples": 64,
         "n_samples": 64,
+        "name": "doctorish_dwarf",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
         "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "transform": "none",
+        "window_months": 36,
+    },
+    # sleepy_dwarf — NOT bashful_dwarf, which the 2026-09-09 version cited: bashful is
+    # `deployment_status: deprecated`, and pipeline-core refuses to run a deprecated model.
+    # The old fixture hard-coded `shadow` over the top and so never noticed it had chosen a
+    # source that cannot run. None of the three runnable hurdle dwarves uses `log1p`.
+    "ParametricHurdleConflictology": {
+        "algorithm": "ParametricHurdleConflictology",
+        "creator": "Simon",
+        "deployment_status": "baseline",
+        "evaluation_profile": "hydranet_ucdp",
         "family": "gamma",
-        "transform": "log1p",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "sleepy_dwarf",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "transform": "none",
+        "window_months": 36,
     },
 }
 
@@ -242,13 +328,20 @@ def test_catalog_does_not_alias_the_config_target_list(algorithm):
 def test_fixture_is_accepted_by_pipeline_cores_own_sniffer(algorithm):
     """The fixtures must be configs pipeline-core would actually run (#94 review, #7).
 
-    `test_fixture_carries_no_retired_evaluation_key` compares one module literal against
-    another and so cannot fail on any change to this package — it is fixture hygiene, not
-    evidence. This test is the one that can fail: it hands each fixture to
-    `CoreConfigSniffer`, which pipeline-core runs as the first statement of
-    `ModelManager.execute_single_run`. If a fixture drifts into a shape no real run could
-    produce, the conformance guard above is being built on a hand-roll — which is the
-    precise mistake that let #84 survive.
+    Hands each fixture to `CoreConfigSniffer`, which pipeline-core runs as the first
+    statement of `ModelManager.execute_single_run`.
+
+    **What this can and cannot catch.** It catches a fixture that pipeline-core would
+    reject. It cannot catch a fixture that pipeline-core would accept but that differs from
+    what ships — and on 2026-09-17 that was the failure: the point fixtures omitted
+    `evaluation_mode`, so the sniffer's `evaluation_mode='point'` check never fired, this
+    test passed, and the real configs failed in production on exactly that check. A
+    permissive validator plus an incomplete fixture is a green test that proves nothing.
+    The remedy is upstream of this test — the fixtures must be *complete* copies, produced
+    by the refresh command in the module docstring, not typed from a summary.
+
+    Verified red-first on the fix: with the real `evaluation_mode` in and `aggregate_method`
+    out, this fails for exactly the three point models with exactly the production message.
 
     Skipped where pipeline-core is absent; it is the only test here that needs it.
     """
