@@ -58,8 +58,14 @@ Two deliberate departures from the byte-faithful copy, and only two:
 * The three point-model fixtures carry ``aggregate_method: "arithmetic_mean"``, which the
   shipped configs **lack** as of ``7743011d`` — that omission is views-models#477, and
   without the key pipeline-core rejects the config. The fixture's purpose is "a config
-  pipeline-core would accept", so it carries the post-#477 shape and says so here. Remove
-  this note when #477 lands and the refresh command produces the key itself.
+  pipeline-core would accept", so it carries the post-#477 shape and says so here. When
+  #477 lands and the refresh command produces the key itself, remove this note **and the
+  three inline ``# post-#477 shape`` comments** on the point fixtures — four sites, not one.
+
+Each fixture's source model is named three times: in the refresh command above, in the
+``# model_name`` comment over its dict, and in its ``"name"`` key. Only the key is data; the
+other two are derived and were both hand-edited when ``bashful_dwarf`` became
+``sleepy_dwarf``. If they disagree, the ``"name"`` key is the one that is right.
 
 **What this does not cover.** It constructs models; it does not fit or predict them. A
 copy can still go *stale* — it cannot go *wrong* the way a hand-roll can, but it will

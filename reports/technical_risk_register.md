@@ -5,8 +5,8 @@
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
 | Last Updated      | 2026-09-09                           |
-| Total Concerns    | 52                                   |
-| Open Concerns     | 21                                   |
+| Total Concerns    | 53                                   |
+| Open Concerns     | 22                                   |
 | Resolved Concerns | 31 (incl. 1 withdrawn — C-27)         |
 | Last Review       | 2026-09-09 (`review-rr` strategic)    |
 
@@ -39,7 +39,7 @@ isolation.
 | K4 — PredictionFrame-as-sampled ecosystem | Platform treats PF as inherently distributional; point models don't fit | C-11, C-13, C-14, C-20, C-44 | **C-14 resolved downstream** — views-models' readiness contract now expects point models to omit `n_posterior_samples` (291 tests pass). C-11 lowered to T3 on its own likelihood note. C-13/C-20 remain, both external |
 | K5 — Input-boundary validation | Boundary doesn't validate index order / partition_dict / targets | C-05, C-06, C-07, C-42, C-48 | **Closed except one key.** C-05/C-06/C-07/C-42 all resolved: index validated at the boundary (`resolve_level`), partition dict validated (`train_test_boundary`), `regression_targets`+`level` declared and empty values rejected. Residual: `run_type` read past the gate (C-48) |
 | K6 — Cross-references are prose, not assertions | Nothing checks that a path cited by a doc, ADR or register entry still exists — so every rename silently invalidates the artifacts describing it | C-21, C-28, C-40 | C-21/C-28 resolved; **C-40 open — third recurrence.** `docs/validate_docs.sh` checks headers and links but never a cited source path. Renamed 2026-09-09: the old name ("docs lag code changes") named the artifact, not the decision, and hid that the register itself had the same drift |
-| K8 — Guards authored by the guarded | A guard is written by the author of the thing it guards, against that author's model of failure — so it encodes the same blind spot and cannot fire on it | C-44, C-50, C-52 | **Open, and newly named 2026-09-09.** Demonstrated three times in one day: the C-10 forwarding guard silently disarmed by a config-key rename; `CORE_GENOME` deletions surviving all 277 tests; conformance fixtures pinned to the same literal as the code they guard (C-50). `/falsify guard` exists for this and is not run routinely |
+| K8 — Guards authored by the guarded | A guard is written by the author of the thing it guards, against that author's model of failure — so it encodes the same blind spot and cannot fire on it | C-44, C-50, C-52, C-53 | **Open, and newly named 2026-09-09.** Demonstrated three times in one day: the C-10 forwarding guard silently disarmed by a config-key rename; `CORE_GENOME` deletions surviving all 277 tests; conformance fixtures pinned to the same literal as the code they guard (C-50). `/falsify guard` exists for this and is not run routinely |
 | K7 — Distribution / packaging | Dependency declaration and installability | C-38, C-17, C-41, C-47 | C-17 superseded; **C-38 RESOLVED** — 1.0.2 published and a clean-room install verified, the first ever; C-41 re-scoped to T4 (scipy arrives transitively; the defect is the undeclared *direct* import); C-47 open — 3.12/3.13 unusable |
 
 ---
@@ -451,6 +451,22 @@ The lint job deliberately runs project-independently so it stays green when the 
 | Location | `tests/test_config_conformance.py` (`MERGED_CONFIGS` keyed by algorithm; the equality assertion in `test_every_catalogued_algorithm_has_a_conformance_fixture`) |
 
 The completeness guard exists so the fixture set cannot silently shrink as the catalog grows. Keyed by algorithm name, it also caps the fixture set at exactly one config per algorithm — so the guard's shape punishes broadening it. views-models ships 29 baseline configs spanning 8 distinct `family x transform` combinations; this file covers 2. A constructor-level rejection introduced for an uncovered combination would ship green. **Discharge:** key `MERGED_CONFIGS` by a fixture label carrying its source model name, and assert that the set of algorithms *covered* is a superset of the catalog rather than equal to the fixture keys.
+
+---
+
+### C-53: the conformance fixtures are a static copy — an upstream config-shape change makes the sniffer test hollow until someone re-runs the refresh
+
+| Field | Value |
+|-------|-------|
+| ID | C-53 |
+| Tier | 4 |
+| Source | pr-review (2026-09-17, #99) |
+| Trigger | When views-models adds, renames or removes a key on any baseline config that `CoreConfigSniffer` inspects — the copy in `tests/test_config_conformance.py` keeps the old shape, `test_fixture_is_accepted_by_pipeline_cores_own_sniffer` keeps passing on it, and the real config fails in production on a check the fixture never reached. Re-run the refresh command in that file's module docstring and re-diff. |
+| Location | `tests/test_config_conformance.py` — `MERGED_CONFIGS` (a verbatim copy of views-models `7743011d`, 2026-09-17), the refresh command and the two documented departures in the module docstring |
+
+This is the residual that #99 states rather than hides. The 2026-09-09 fixtures were not copies at all — typed from a summary, every one of the seven drifted — and the cost surfaced on 2026-09-17 when pipeline-core rejected all three point baselines (`evaluation_mode='point'` without `aggregate_method`, views-models#477) while the fixture for the same three algorithms passed the same sniffer, because it omitted `evaluation_mode`. #99 replaced them with mechanical copies produced by a documented command, which removes the *typed-from-memory* failure. It cannot remove *staleness*: the copy is correct as of one commit and will lag the next views-models change until the command is re-run. The sniffer test is only as current as the last refresh, and nothing in this repo can tell when that was overtaken.
+
+The obvious remedy — a test that reads views-models at test time — was rejected deliberately: it would run only where views-models is checked out (never in CI), and a guard that runs only on the author's machine is the K8 shape. The correct live check belongs in views-models' `tests/test_runtime_smoke.py`, which already builds this catalog from the real configs and needs only to call the sniffer; that is a views-models issue, not this repo's. Tier 4 because the failure is loud in production (the sniffer names the key), the fix is a paste, and the exposure is one file. **Discharge:** views-models' smoke test runs the sniffer, at which point this copy is a convenience rather than the only cross-repo check. See also C-50 (the `regression_targets`-specific instance of the same limitation), C-52 (the same file's coverage shape). Part of causal cluster **K8 — Guards authored by the guarded**.
 
 ---
 
