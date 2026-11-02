@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "views-baseline"
-version = "1.0.2"
+version = "1.0.3"
 description = "VIEWS conflict-forecasting baseline models — point (Zero/LOCF/Average) and distributional (conflictology, mixture, parametric) baselines that emit views-frames PredictionFrames."
 authors = [
     { name = "Sonja Häffner", email = "sonhaf@prio.org" },
@@ -35,7 +35,13 @@ dependencies = [
     "numpy>=1.26,<3",
     # views-frames is the canonical home of PredictionFrame / SpatioTemporalIndex /
     # SpatialLevel, constructed at the single seam in model/frames/output.py (ADR-020).
-    "views-frames>=1.10.2,<2",
+    # Ceiling widened <2 -> <4 (#101): 3.0.0 fixes reconciliation dropping a country's
+    # fatality mass (views-frames#283), and this cap was the tightest in the ensemble env.
+    # Crossing 2.0.0 (ADR-028) needs no code change here: every frame is built on a real
+    # SpatioTemporalIndex, nothing writes into frame.values in place, map_estimate is
+    # unused. The suite is identical (300 passed / 1 xfailed, goldens byte-identical) on
+    # 1.10.2 and 3.0.0. 3.0.0 itself only changes reconciliation, which this repo never calls.
+    "views-frames>=1.10.2,<4",
     # Requires the views-frames re-export of PredictionFrame, which lands in
     # views-pipeline-core 3.0.0 (#188 / PR #206). The suite asserts isinstance against
     # that re-exported leaf, so 2.x (old local PredictionFrame) is not compatible.
