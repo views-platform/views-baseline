@@ -1,6 +1,6 @@
 # ADR-023: Smoothed Climatology Baselines — Estimator Design and Report-Only Evaluation
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-03
 **Deciders:** Simon, VIEWS platform team
 **Consulted:** views-hydranet session (evaluation lessons, α-sweep conditions); paper library (11 papers, see References)
