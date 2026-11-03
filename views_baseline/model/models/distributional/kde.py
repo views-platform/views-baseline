@@ -77,27 +77,31 @@ def _phi6(u: np.ndarray) -> np.ndarray:
     return (u**6 - 15 * u**4 + 45 * u**2 - 15) * np.exp(-0.5 * u**2) / _SQRT_2PI
 
 
-def sheather_jones_bandwidth(x: np.ndarray, max_iter: int = 100) -> float | None:
-    """Sheather & Jones (1991) solve-the-equation bandwidth for a Gaussian kernel.
+def sheather_jones_bandwidth(x: np.ndarray, max_iter: int = 200) -> float | None:
+    """Sheather & Jones (1991) solve-the-equation bandwidth, as R's ``stats::bw.SJ``.
 
-    Solves ``h = [R(K) / (n · Ŝ(α₂(h)))]^(1/5)`` with ``α₂(h) = 1.357 [Ŝ(a)/T̂(b)]^(1/7) h^(5/7)``,
-    ``a = 0.920 λ n^(−1/7)``, ``b = 0.912 λ n^(−1/9)``, ``λ`` the IQR. ``Ŝ`` and ``T̂`` are the
-    exact pairwise sums over all (i, j), divided by ``n(n−1)``, as in the paper and R's
-    ``bw.SJ`` (which bins; the windows here are small enough not to).
+    Follows ``bw.SJ(method = "ste")`` term for term: ``scale = min(sd, IQR/1.349)``,
+    ``a = 1.24·scale·n^(−1/7)``, ``b = 1.23·scale·n^(−1/9)``, ``α₂(h) = 1.357 [Ŝ(a)/T̂(b)]^(1/7)
+    h^(5/7)``, and the root of ``h = [1 / (2√π · n · Ŝ(α₂(h)))]^(1/5)`` searched from
+    ``[0.1·hmax, hmax]``, ``hmax = 1.144·scale·n^(−1/5)``, widening alternately up and down
+    as R does. Two deliberate differences, both making it *more* exact: ``Ŝ`` and ``T̂`` are
+    exact pairwise sums (R bins into ``nb`` = 1000 cells), and the root is solved to
+    relative 1e-10 (R stops at ``0.1·lower``). ``tests/test_smoothed_climatology.py`` pins
+    it to R 4.6.2 run with fine binning and tolerance.
 
-    Returns ``None`` when the selector is undefined: fewer than 2 values, IQR = 0, a
-    non-positive functional estimate, or no root in the search interval. The caller
-    falls back and counts it (ADR-023 §3).
+    Returns ``None`` where R stops with an error: fewer than 2 values, ``scale`` = 0,
+    a non-positive ``T̂`` or ``Ŝ``, or no root after 99 widenings. The caller falls back and
+    counts it (ADR-023 §3).
     """
     x = np.asarray(x, dtype=np.float64)
     n = x.size
     if n < 2:
         return None
-    q75, q25 = np.percentile(x, [75, 25])
-    lam = float(q75 - q25)
-    if lam <= 0:
+    q75, q25 = np.percentile(x, [75, 25])  # R's IQR(): quantile type 7 = numpy default
+    scale = min(float(np.std(x, ddof=1)), float(q75 - q25) / 1.349)
+    if not scale > 0:
         return None
-    d = (x[:, None] - x[None, :]).ravel()
+    d = (x[:, None] - x[None, :]).ravel()  # all (i, j), diagonal included, as R
     nn = n * (n - 1)
 
     def s_hat(alpha):
@@ -106,28 +110,31 @@ def sheather_jones_bandwidth(x: np.ndarray, max_iter: int = 100) -> float | None
     def t_hat(b):
         return -float(np.sum(_phi6(d / b))) / (nn * b**7)
 
-    s_a = s_hat(0.920 * lam * n ** (-1 / 7))
-    t_b = t_hat(0.912 * lam * n ** (-1 / 9))
-    if not (s_a > 0 and t_b > 0):
+    t_b = t_hat(1.23 * scale * n ** (-1 / 9))
+    s_a = s_hat(1.24 * scale * n ** (-1 / 7))
+    if not (t_b > 0 and s_a > 0):
         return None
-    c = 1.357 * (s_a / t_b) ** (1 / 7)
-    r_k = 1.0 / (2.0 * math.sqrt(math.pi))
+    alph2 = 1.357 * (s_a / t_b) ** (1 / 7)
+    c1 = 1.0 / (2.0 * math.sqrt(math.pi) * n)
 
     def f(h):
-        s = s_hat(c * h ** (5 / 7))
-        if s <= 0:
+        s = s_hat(alph2 * h ** (5 / 7))
+        if not s > 0:
             return None
-        return h - (r_k / (n * s)) ** 0.2
+        return (c1 / s) ** 0.2 - h
 
-    # Search interval as R's bw.SJ: [0.1·hmax, hmax], widening hmax if needed.
-    hmax = 1.144 * float(np.std(x, ddof=1)) * n ** (-0.2)
+    hmax = 1.144 * scale * n ** (-0.2)
     lo, hi = 0.1 * hmax, hmax
     f_lo, f_hi = f(lo), f(hi)
-    for _ in range(10):
+    for itry in range(1, 100):
         if f_lo is None or f_hi is None or f_lo * f_hi <= 0:
             break
-        hi *= 1.2
-        f_hi = f(hi)
+        if itry % 2:
+            hi *= 1.2
+            f_hi = f(hi)
+        else:
+            lo /= 1.2
+            f_lo = f(lo)
     if f_lo is None or f_hi is None or f_lo * f_hi > 0:
         return None
     for _ in range(max_iter):

@@ -380,6 +380,31 @@ def test_sj_is_narrower_than_silverman_on_bimodal_data():
     assert sheather_jones_bandwidth(x) < 0.5 * silverman_bandwidth(x)
 
 
+# R 4.6.2: bw.SJ(x, nb = 200000L, tol = 1e-14) — fine binning and tolerance so the
+# reference is exact to ~1e-5. Script: reports/smoothed_climatology/sj_reference.R.
+_SJ_R_REFERENCE = [
+    ([1, 2, 40], 4.0316652401),
+    ([1, 1, 2, 3, 40], 0.9103401348),
+    ([1, 1, 1, 2], 0.0435804456),
+    ([1, 2], 0.1164011498),
+    ([3, 5, 8, 13, 21, 34], 5.8159920190),
+    ([1, 1, 1, 2, 2, 3, 4, 7, 12, 30, 150], 1.7301790907),
+    ([2, 4, 4, 5, 9, 11, 11, 13, 20, 26, 33, 60, 61, 95], 6.1832549446),
+    ([1, 3, 6, 10, 15, 21, 28, 36, 45, 55], 10.9888741254),
+    ([-1.2, 0.3, 0.8, -0.4, 2.1, -0.9, 0.05, 1.4, -1.7, 0.6], 0.9810603306),
+]
+
+
+@pytest.mark.parametrize("x, r_value", _SJ_R_REFERENCE)
+def test_sj_matches_r_bw_sj(x, r_value):
+    """The selector is R's bw.SJ ("ste"), on the small windows production feeds it.
+
+    Guard audit of 461d8ee: the normal-optimum test's 10% tolerance let every SJ constant
+    change survive. This pins each to R at 1e-4 relative (R's residual binning ≈ 1e-5).
+    """
+    assert sheather_jones_bandwidth(np.array(x, dtype=float)) == pytest.approx(r_value, rel=1e-4)
+
+
 def test_sj_undefined_on_zero_iqr():
     assert sheather_jones_bandwidth(np.array([1.0, 1, 1, 1, 2])) is None
 
@@ -391,12 +416,17 @@ def test_c_each_bandwidth_runs_on_a_three_positive_window(bw):
     df = _df_from_windows(window)
     m = _c(bandwidth=bw).fit(df)
     assert m.cells[1]["y1"]["kind"] == SMOOTH
-    assert m.cells[1]["y1"]["h"] > 0
+    expected = {1.0: 1.0, "sj": 4.0316652401, "silverman": silverman_bandwidth(
+        np.array([1.0, 2.0, 40.0]))}[bw]
+    assert m.cells[1]["y1"]["h"] == pytest.approx(expected, rel=1e-4)
 
 
 def test_c_selector_failure_falls_back_to_a_and_is_counted(caplog):
-    """Entity 1's positives [1, 1, 2, 3, 40] have no SJ root: the cell is drawn as A."""
-    df = _df_from_windows({1: _WINDOWS[1]})
+    """Positives [1, 1, 1, 1, 2] have IQR 0, so SJ is undefined (R's bw.SJ stops too).
+
+    The cell is drawn exactly as A draws it, counted, and named in the WARN.
+    """
+    df = _df_from_windows({1: [0] * 7 + [1, 1, 1, 1, 2]})
     m = _c(bandwidth="sj", seed=9).fit(df)
     assert m.fallback_counts == Counter({SELECTOR_FAILED: 1})
     with caplog.at_level(logging.WARNING):
