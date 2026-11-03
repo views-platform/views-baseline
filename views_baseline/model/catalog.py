@@ -2,6 +2,7 @@ from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGa
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
     InterpolatedQuantileConflictology,
+    KDEConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -43,6 +44,7 @@ class BaselineModelCatalog:
             "ParametricConflictology": self._get_parametric_conflictology,
             "ParametricHurdleConflictology": self._get_parametric_hurdle,
             "InterpolatedQuantileConflictology": self._get_interpolated_quantile,
+            "KDEConflictology": self._get_kde,
         }
 
     @property
@@ -162,5 +164,18 @@ class BaselineModelCatalog:
             partition_dict=self.partition_dict,
             loa=self.loa,
             n_samples=self.config["n_samples"],
+            seed=self.config["seed"],
+        )
+
+    def _get_kde(self):
+        # Smoothed climatology C (ADR-023); bandwidth and seed are required, audited genome
+        # keys (ADR-021). The constructor fails loud on an invalid bandwidth.
+        return KDEConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            bandwidth=self.config["bandwidth"],
             seed=self.config["seed"],
         )

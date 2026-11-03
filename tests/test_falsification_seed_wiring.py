@@ -39,13 +39,17 @@ def _catalog(seed):
         "window_months": 6,
         "n_samples": 16,
         "lambda_mix": 0.5,
+        "bandwidth": 1.0,
         "seed": seed,
     }
     return BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
 
 
 @pytest.mark.parametrize(
-    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+    "algo", [
+        "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
+        "KDEConflictology",
+    ]
 )
 def test_catalog_forwards_seed(algo):
     """The catalog must forward config['seed'] to the model (ADR-011 §2)."""
@@ -57,7 +61,10 @@ def test_catalog_forwards_seed(algo):
 
 
 @pytest.mark.parametrize(
-    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+    "algo", [
+        "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
+        "KDEConflictology",
+    ]
 )
 def test_different_seed_produces_different_output(algo):
     """Different config seeds must produce different draws (ADR-011 §4, converse)."""
@@ -75,11 +82,17 @@ def test_different_seed_produces_different_output(algo):
 
 
 @pytest.mark.parametrize(
-    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+    "algo", [
+        "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
+        "KDEConflictology",
+    ]
 )
 def test_catalog_requires_seed(algo):
     """ADR-021: the catalog must NOT silently default seed — a config without it fails loud."""
-    cfg = {"regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5}
+    cfg = {
+        "regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5,
+        "bandwidth": 1.0,
+    }
     cat = BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
     with pytest.raises(ValueError, match="seed"):
         cat.get_model(algo)

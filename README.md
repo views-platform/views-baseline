@@ -114,6 +114,14 @@ ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_sam
 InterpolatedQuantileConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
+#### KDEConflictology — smoothed climatology C
+
+`ConflictologyModel` with the positive part drawn from a **kernel density estimate** of the window's positive values (ADR-023). The zero rate is the window's. Each positive draw picks an observed positive value, adds Gaussian noise of width `bandwidth`, mirrors anything below 0.5 back up, and rounds to a whole count, so it never produces a zero and can go above the largest observed value. `bandwidth` is required: a number (in deaths, the same for every cell), `"sj"` (Sheather–Jones, chosen per cell) or `"silverman"` (per cell; known to oversmooth). Cells it cannot smooth are drawn as `ConflictologyModel` draws them and counted in one warning. Known bias: it moves some mass from 1 to larger counts, more for larger `bandwidth`.
+
+```python
+KDEConflictology(targets, window_months, partition_dict, loa, n_samples, bandwidth, seed=42)
+```
+
 ---
 
 ## Model Catalog
@@ -133,7 +141,7 @@ Available models:
 catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
-#  'InterpolatedQuantileConflictology']
+#  'InterpolatedQuantileConflictology', 'KDEConflictology']
 ```
 
 ---

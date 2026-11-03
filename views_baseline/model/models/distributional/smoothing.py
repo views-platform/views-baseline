@@ -32,6 +32,8 @@ SMOOTH = "smooth"
 ALL_ZERO = "all_zero"
 TOO_FEW_POSITIVES = "too_few_positives"
 NO_SPREAD = "no_spread"
+#: Set by C/E when a per-cell bandwidth selector fails (ADR-023 §3), not by classify_window.
+SELECTOR_FAILED = "selector_failed"
 
 
 def classify_window(pool: np.ndarray) -> tuple[str, np.ndarray]:

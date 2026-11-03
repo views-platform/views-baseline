@@ -13,6 +13,7 @@ from conftest import make_dummy_df, make_dummy_ff
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
     InterpolatedQuantileConflictology,
+    KDEConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -41,6 +42,8 @@ _MODELS = [
                                            family="gamma", transform="none", seed=42)),
     ("InterpolatedQuantileConflictology",
      lambda: InterpolatedQuantileConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
+    ("KDEConflictology",
+     lambda: KDEConflictology(**_BASE, window_months=3, n_samples=8, bandwidth=1.0, seed=42)),
 ]
 _IDS = [n for n, _ in _MODELS]
 

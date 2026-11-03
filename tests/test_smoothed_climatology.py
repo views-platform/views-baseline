@@ -15,11 +15,19 @@ from views_frames import PredictionFrame
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
     InterpolatedQuantileConflictology,
+    KDEConflictology,
+)
+from views_baseline.model.models.distributional.kde import (
+    draw_kde_positives,
+    sheather_jones_bandwidth,
+    silverman_bandwidth,
+    validate_bandwidth,
 )
 from views_baseline.model.models.distributional.smoothing import (
     ALL_ZERO,
     MIN_POSITIVES_FOR_SMOOTHING,
     NO_SPREAD,
+    SELECTOR_FAILED,
     SMOOTH,
     TOO_FEW_POSITIVES,
     classify_window,
@@ -57,6 +65,8 @@ _WINDOWS = {
 # Pinned draws for entity 1 alone, S=8, seed=42 (test_golden_b_with_zeros). Regenerate
 # deliberately, never blindly — see the note in test_golden.py.
 GOLDEN_B_WITH_ZEROS = [[1.0, 0.0, 2.0, 1.0, 0.0, 29.0, 3.0, 14.0]]
+# Same for C at bandwidth=2.0 (test_golden_c_with_zeros).
+GOLDEN_C_WITH_ZEROS = [[4.0, 0.0, 1.0, 42.0, 0.0, 3.0, 1.0, 2.0]]
 
 
 def _b(n_samples=64, seed=42):
@@ -255,3 +265,175 @@ def test_golden_b_with_zeros():
     df = _df_from_windows({1: _WINDOWS[1]})
     out = _b(n_samples=8, seed=42).fit(df).predict(df=df, sequence_number=0, output_length=1)
     np.testing.assert_array_equal(out["y1"].values, GOLDEN_B_WITH_ZEROS)
+
+
+
+# --------------------------------------------------------------------------------------
+# C — KDEConflictology
+# --------------------------------------------------------------------------------------
+
+
+def _c(bandwidth=1.0, n_samples=64, seed=42):
+    return KDEConflictology(
+        targets=["y1"], window_months=_WINDOW, partition_dict=_PARTITION, loa="pgm",
+        n_samples=n_samples, bandwidth=bandwidth, seed=seed,
+    )
+
+
+@pytest.mark.parametrize("bw", [1, 2.5, "sj", "silverman"])
+def test_c_accepts_valid_bandwidths(bw):
+    validate_bandwidth(bw)
+
+
+@pytest.mark.parametrize("bw", ["scott", "SJ", 0, -1.0, float("inf"), float("nan"), True, None])
+def test_c_rejects_invalid_bandwidths(bw):
+    with pytest.raises(ValueError, match="bandwidth"):
+        _c(bandwidth=bw)
+
+
+def test_c_pool_is_as():
+    df = _df_from_windows(_WINDOWS)
+    a, c = _a().fit(df), _c().fit(df)
+    np.testing.assert_array_equal(a.entity_ids, c.entity_ids)
+    for cid in a.entity_ids:
+        pool = a.hist_per_entity[cid]["y1"]
+        cell = c.cells[cid]["y1"]
+        if cell["kind"] == SMOOTH:
+            np.testing.assert_array_equal(cell["positives"], np.sort(pool[pool > 0]))
+        else:
+            np.testing.assert_array_equal(cell["pool"], pool)
+
+
+def test_c_zero_rate_is_the_windows_exactly():
+    df = _df_from_windows(_WINDOWS)
+    assert _c().fit(df).cells[1]["y1"]["zero_rate"] == 7 / 12
+
+
+@pytest.mark.parametrize("bw", [0.3, 5.0, "sj", "silverman"])
+def test_c_zero_mass_equals_as(bw):
+    df = _df_from_windows(_WINDOWS)
+    s = 20_000
+    draws = _draws_by_entity(_c(bandwidth=bw, n_samples=s, seed=3), df)
+    for cid, w in _WINDOWS.items():
+        expected = np.mean(np.asarray(w) == 0)
+        assert abs(np.mean(draws[cid] == 0) - expected) < 5 * np.sqrt(0.25 / s)
+
+
+@pytest.mark.parametrize("bw", [0.3, 5.0, 50.0])
+def test_c_draws_are_integers_and_positive_draws_at_least_one(bw):
+    df = _df_from_windows(_WINDOWS)
+    v = _c(bandwidth=bw, n_samples=2000).fit(df).predict(
+        df=df, sequence_number=0, output_length=2)["y1"].values
+    assert (v >= 0).all()
+    np.testing.assert_array_equal(v, np.round(v))
+    assert (v[v > 0] >= 1).all()
+
+
+def test_c_reflects_at_one_half():
+    """Law check on one positive value p=1, h=1 (x ~ N(1, 1), reflected below 0.5).
+
+    P(Y=1) = P(-0.5 < x < 1.5) = Φ(0.5) − Φ(−1.5) = 0.6247.
+    P(Y=2) = P(1.5 ≤ x < 2.5) + P(−1.5 < x ≤ −0.5) = 0.2417 + 0.0606 = 0.3023.
+    Reflecting at 0 instead, or truncating, gives different values.
+    """
+    k = 200_000
+    y = draw_kde_positives(np.array([1.0]), 1.0, k, np.random.default_rng(0))
+    assert abs(np.mean(y == 1) - 0.6247) < 0.005
+    assert abs(np.mean(y == 2) - 0.3023) < 0.005
+    assert y.min() == 1
+
+
+def test_c_boundary_bias_moves_mass_off_one():
+    """ADR-023 Validation: P(Y=1 | Y≥1) vs the window's share of 1s, on a steep decay.
+
+    Small h reproduces the share; h = 1 shows the O(h) bias (Marron & Ruppert 1994).
+    """
+    positives = np.array([1.0] * 8 + [2.0] * 3 + [3.0, 10.0])
+    share = 8 / 13
+    rng = np.random.default_rng(1)
+    small = draw_kde_positives(positives, 0.1, 100_000, rng)
+    wide = draw_kde_positives(positives, 1.0, 100_000, rng)
+    assert abs(np.mean(small == 1) - share) < 0.01
+    assert np.mean(wide == 1) < share - 0.1
+
+
+def test_silverman_is_bw_nrd0():
+    x = np.array([3.0, 5, 8, 13, 21, 34])
+    q75, q25 = np.percentile(x, [75, 25])
+    expected = 0.9 * min(np.std(x, ddof=1), (q75 - q25) / 1.34) * 6 ** (-0.2)
+    assert silverman_bandwidth(x) == pytest.approx(expected)
+    # Zero IQR: sd alone, as bw.nrd0.
+    y = np.array([1.0, 1, 1, 1, 9])
+    assert silverman_bandwidth(y) == pytest.approx(0.9 * np.std(y, ddof=1) * 5 ** (-0.2))
+
+
+def test_sj_matches_the_normal_optimum():
+    """On N(0,1), the AMISE-optimal Gaussian bandwidth is (4/3)^(1/5) n^(−1/5)."""
+    n = 500
+    h = sheather_jones_bandwidth(np.random.default_rng(0).standard_normal(n))
+    assert h == pytest.approx((4 / 3) ** 0.2 * n ** -0.2, rel=0.1)
+
+
+def test_sj_is_narrower_than_silverman_on_bimodal_data():
+    rng = np.random.default_rng(0)
+    x = np.r_[rng.normal(0, 1, 200), rng.normal(8, 1, 200)]
+    assert sheather_jones_bandwidth(x) < 0.5 * silverman_bandwidth(x)
+
+
+def test_sj_undefined_on_zero_iqr():
+    assert sheather_jones_bandwidth(np.array([1.0, 1, 1, 1, 2])) is None
+
+
+@pytest.mark.parametrize("bw", [1.0, "sj", "silverman"])
+def test_c_each_bandwidth_runs_on_a_three_positive_window(bw):
+    """ADR-023 Validation: no option fails silently on a 3-positive window."""
+    window = {1: [0] * 9 + [1, 2, 40]}
+    df = _df_from_windows(window)
+    m = _c(bandwidth=bw).fit(df)
+    assert m.cells[1]["y1"]["kind"] == SMOOTH
+    assert m.cells[1]["y1"]["h"] > 0
+
+
+def test_c_selector_failure_falls_back_to_a_and_is_counted(caplog):
+    """Entity 1's positives [1, 1, 2, 3, 40] have no SJ root: the cell is drawn as A."""
+    df = _df_from_windows({1: _WINDOWS[1]})
+    m = _c(bandwidth="sj", seed=9).fit(df)
+    assert m.fallback_counts == Counter({SELECTOR_FAILED: 1})
+    with caplog.at_level(logging.WARNING):
+        c_out = m.predict(df=df, sequence_number=0, output_length=2)["y1"].values
+    assert any("selector_failed=1" in r.getMessage() for r in caplog.records)
+    a_out = _a(seed=9).fit(df).predict(df=df, sequence_number=0, output_length=2)["y1"].values
+    np.testing.assert_array_equal(c_out, a_out)
+
+
+def test_c_counts_fallbacks_and_warns_once(caplog):
+    df = _df_from_windows(_WINDOWS)
+    m = _c(bandwidth=1.0).fit(df)
+    assert m.fallback_counts == Counter(
+        {SMOOTH: 1, ALL_ZERO: 1, TOO_FEW_POSITIVES: 1, NO_SPREAD: 1}
+    )
+    with caplog.at_level(logging.WARNING):
+        m.predict(df=df, sequence_number=0, output_length=3)
+    assert len([r for r in caplog.records if "not smoothed" in r.getMessage()]) == 1
+
+
+def test_c_numeric_bandwidth_is_global():
+    df = _df_from_windows({1: _WINDOWS[1], 5: [0] * 9 + [1, 2, 40]})
+    m = _c(bandwidth=2.5).fit(df)
+    assert m.cells[1]["y1"]["h"] == m.cells[5]["y1"]["h"] == 2.5
+
+
+def test_c_reproducible_and_seed_sensitive():
+    df = _df_from_windows(_WINDOWS)
+    o1 = _c(seed=7).fit(df).predict(df=df, sequence_number=0, output_length=2)["y1"].values
+    o2 = _c(seed=7).fit(df).predict(df=df, sequence_number=0, output_length=2)["y1"].values
+    o3 = _c(seed=8).fit(df).predict(df=df, sequence_number=0, output_length=2)["y1"].values
+    np.testing.assert_array_equal(o1, o2)
+    assert not np.array_equal(o1, o3)
+
+
+def test_golden_c_with_zeros():
+    df = _df_from_windows({1: _WINDOWS[1]})
+    out = _c(bandwidth=2.0, n_samples=8, seed=42).fit(df).predict(
+        df=df, sequence_number=0, output_length=1)
+    np.testing.assert_array_equal(out["y1"].values, GOLDEN_C_WITH_ZEROS)

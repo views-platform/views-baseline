@@ -56,6 +56,8 @@ class ReproducibilityGate:
             # Smoothed climatology (ADR-023): B has no tuning key; its plotting position
             # is its definition, not a parameter.
             "InterpolatedQuantileConflictology": ["window_months", "n_samples", "seed"],
+            # C: `bandwidth` is a number (count units) or "sj" / "silverman"; no default.
+            "KDEConflictology": ["window_months", "n_samples", "seed", "bandwidth"],
         }
 
         @staticmethod
