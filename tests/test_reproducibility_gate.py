@@ -92,6 +92,7 @@ def test_algorithm_genomes_covers_all_catalog_models():
         "ConflictologyModel", "MixtureBaseline",
         "ParametricConflictology", "ParametricHurdleConflictology",
         "InterpolatedQuantileConflictology", "KDEConflictology",
+        "EmpiricalKDEMixtureConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
 

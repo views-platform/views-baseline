@@ -58,6 +58,10 @@ class ReproducibilityGate:
             "InterpolatedQuantileConflictology": ["window_months", "n_samples", "seed"],
             # C: `bandwidth` is a number (count units) or "sj" / "silverman"; no default.
             "KDEConflictology": ["window_months", "n_samples", "seed", "bandwidth"],
+            # E: `alpha` in [0, 1] is the weight on C; `bandwidth` is C's.
+            "EmpiricalKDEMixtureConflictology": [
+                "window_months", "n_samples", "seed", "alpha", "bandwidth",
+            ],
         }
 
         @staticmethod

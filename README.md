@@ -122,6 +122,14 @@ InterpolatedQuantileConflictology(targets, window_months, partition_dict, loa, n
 KDEConflictology(targets, window_months, partition_dict, loa, n_samples, bandwidth, seed=42)
 ```
 
+#### EmpiricalKDEMixtureConflictology — smoothed climatology E
+
+A mixture of `ConflictologyModel` and `KDEConflictology` (ADR-023): each draw is a `ConflictologyModel` draw with probability `1 − alpha` and a `KDEConflictology` draw with probability `alpha`. `alpha` therefore dials the spread from the empirical model (0) to the smoothed one (1). The random numbers it uses don't depend on `alpha`, so at a fixed seed, raising `alpha` only swaps individual draws from one model to the other: comparisons across `alpha` are paired and low-noise.
+
+```python
+EmpiricalKDEMixtureConflictology(targets, window_months, partition_dict, loa, n_samples, alpha, bandwidth, seed=42)
+```
+
 ---
 
 ## Model Catalog
@@ -141,7 +149,8 @@ Available models:
 catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
-#  'InterpolatedQuantileConflictology', 'KDEConflictology']
+#  'InterpolatedQuantileConflictology', 'KDEConflictology',
+#  'EmpiricalKDEMixtureConflictology']
 ```
 
 ---

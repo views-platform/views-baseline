@@ -54,8 +54,9 @@ Refresh (from the repo root, with views-models checked out as a sibling):
 
 One fixture is not a copy at all: ``InterpolatedQuantileConflictology`` (ADR-023) has no
 shipped config yet, so its fixture is light_strider's with ``algorithm`` swapped, marked
-DERIVED over the dict. ``KDEConflictology`` is derived the same way, plus ``bandwidth: "sj"``.
-Replace both with real copies once views-models ships the models (#109).
+DERIVED over the dict. ``KDEConflictology`` is derived the same way, plus ``bandwidth: "sj"``, and
+``EmpiricalKDEMixtureConflictology`` plus ``alpha: 0.5`` and ``bandwidth: "sj"``. Replace all
+three with real copies once views-models ships the models (#109).
 
 Two deliberate departures from the byte-faithful copy for the others, and only two:
 
@@ -187,6 +188,28 @@ MERGED_CONFIGS = {
     # genome key C needs. "sj" is the per-cell selector ADR-023 expects to be used.
     "KDEConflictology": {
         "algorithm": "KDEConflictology",
+        "bandwidth": "sj",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
+    # DERIVED, like the two above: plus `alpha` and `bandwidth`.
+    "EmpiricalKDEMixtureConflictology": {
+        "algorithm": "EmpiricalKDEMixtureConflictology",
+        "alpha": 0.5,
         "bandwidth": "sj",
         "creator": "Simon",
         "deployment_status": "shadow",

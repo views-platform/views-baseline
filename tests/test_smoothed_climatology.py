@@ -14,6 +14,7 @@ from views_frames import PredictionFrame
 
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    EmpiricalKDEMixtureConflictology,
     InterpolatedQuantileConflictology,
     KDEConflictology,
 )
@@ -67,6 +68,8 @@ _WINDOWS = {
 GOLDEN_B_WITH_ZEROS = [[1.0, 0.0, 2.0, 1.0, 0.0, 29.0, 3.0, 14.0]]
 # Same for C at bandwidth=2.0 (test_golden_c_with_zeros).
 GOLDEN_C_WITH_ZEROS = [[4.0, 0.0, 1.0, 42.0, 0.0, 3.0, 1.0, 2.0]]
+# Same for E at alpha=0.5, bandwidth=2.0 (test_golden_e_with_zeros).
+GOLDEN_E_WITH_ZEROS = [[1.0, 3.0, 40.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
 
 
 def _b(n_samples=64, seed=42):
@@ -467,3 +470,145 @@ def test_golden_c_with_zeros():
     out = _c(bandwidth=2.0, n_samples=8, seed=42).fit(df).predict(
         df=df, sequence_number=0, output_length=1)
     np.testing.assert_array_equal(out["y1"].values, GOLDEN_C_WITH_ZEROS)
+
+
+
+# --------------------------------------------------------------------------------------
+# E — EmpiricalKDEMixtureConflictology
+# --------------------------------------------------------------------------------------
+
+
+def _e(alpha=0.5, bandwidth=2.0, n_samples=64, seed=42):
+    return EmpiricalKDEMixtureConflictology(
+        targets=["y1"], window_months=_WINDOW, partition_dict=_PARTITION, loa="pgm",
+        n_samples=n_samples, alpha=alpha, bandwidth=bandwidth, seed=seed,
+    )
+
+
+@pytest.mark.parametrize("alpha", [0, 0.0, 0.25, 1, 1.0, np.float64(0.5)])
+def test_e_accepts_valid_alpha(alpha):
+    _e(alpha=alpha)
+
+
+@pytest.mark.parametrize("alpha", [-0.01, 1.01, float("nan"), float("inf"), True, "0.5", None])
+def test_e_rejects_invalid_alpha(alpha):
+    with pytest.raises(ValueError, match="alpha"):
+        _e(alpha=alpha)
+
+
+def test_e_rejects_invalid_bandwidth():
+    with pytest.raises(ValueError, match="bandwidth"):
+        _e(bandwidth="scott")
+
+
+def test_e_pool_and_zero_rate_are_as():
+    df = _df_from_windows(_WINDOWS)
+    a, e = _a().fit(df), _e().fit(df)
+    np.testing.assert_array_equal(a.entity_ids, e.entity_ids)
+    for cid in a.entity_ids:
+        np.testing.assert_array_equal(e.cells[cid]["y1"]["pool"], a.hist_per_entity[cid]["y1"])
+    assert e.cells[1]["y1"]["zero_rate"] == 7 / 12
+
+
+@pytest.mark.parametrize("alpha", [0.0, 0.5, 1.0])
+def test_e_zero_mass_equals_as(alpha):
+    df = _df_from_windows(_WINDOWS)
+    s = 20_000
+    draws = _draws_by_entity(_e(alpha=alpha, n_samples=s, seed=4), df)
+    for cid, w in _WINDOWS.items():
+        expected = np.mean(np.asarray(w) == 0)
+        assert abs(np.mean(draws[cid] == 0) - expected) < 5 * np.sqrt(0.25 / s)
+
+
+def _e_values(alpha, seed=11, n_samples=4000, windows=None):
+    df = _df_from_windows(windows or _WINDOWS)
+    return _e(alpha=alpha, n_samples=n_samples, seed=seed).fit(df).predict(
+        df=df, sequence_number=0, output_length=2)["y1"].values
+
+
+def test_e_coupling_raising_alpha_only_switches_a_draws_to_c_draws():
+    """ADR-023 §3: at a fixed seed the streams don't depend on α (common random numbers).
+
+    α = 0 is the A stream and α = 1 the C stream. Every other α must take, draw by draw,
+    one of the two, and the set of draws switched to C must grow with α.
+    """
+    a_stream, c_stream = _e_values(0.0), _e_values(1.0)
+    differ = a_stream != c_stream
+    assert differ.mean() > 0.05  # the test has something to see
+    previous = np.zeros_like(differ)
+    for alpha in (0.1, 0.3, 0.5, 0.7, 0.9):
+        out = _e_values(alpha)
+        assert np.all((out == a_stream) | (out == c_stream))
+        switched = out != a_stream
+        assert np.all(previous <= switched), f"a draw switched back at alpha={alpha}"
+        frac = switched[differ].mean()
+        assert abs(frac - alpha) < 0.02, (alpha, frac)
+        previous = switched
+
+
+def test_e_at_alpha_zero_is_a_in_distribution():
+    """At α = 0 every draw is an A draw: only values in the window, at the window's rates."""
+    s = 20_000
+    df = _df_from_windows(_WINDOWS)
+    draws = _draws_by_entity(_e(alpha=0.0, n_samples=s, seed=5), df)
+    for cid, w in _WINDOWS.items():
+        w = np.asarray(w, dtype=float)
+        assert set(np.unique(draws[cid])) <= set(np.unique(w))
+        for v in np.unique(w):
+            assert abs(np.mean(draws[cid] == v) - np.mean(w == v)) < 5 * np.sqrt(0.25 / s)
+
+
+def test_e_at_alpha_one_is_c_in_distribution():
+    """At α = 1 every draw is a C draw: E and C agree on the probabilities of 0, 1…5, > 40."""
+    s = 40_000
+    df = _df_from_windows({1: _WINDOWS[1]})
+    e = _e(alpha=1.0, bandwidth=2.0, n_samples=s, seed=6).fit(df).predict(
+        df=df, sequence_number=0, output_length=1)["y1"].values.ravel()
+    c = _c(bandwidth=2.0, n_samples=s, seed=7).fit(df).predict(
+        df=df, sequence_number=0, output_length=1)["y1"].values.ravel()
+    tol = 5 * np.sqrt(2 * 0.25 / s)
+    for event in (0, 1, 2, 3, 4, 5):
+        assert abs(np.mean(e == event) - np.mean(c == event)) < tol, event
+    assert abs(np.mean(e > 40) - np.mean(c > 40)) < tol
+    assert np.mean(e > 40) > 0.01  # C reaches past the window maximum; A cannot
+
+
+def test_e_mixing_widens_spread():
+    """Gneiting & Ranjan 2013, Thm 3.1: the mixture is at least as spread as A here."""
+    vals = {alpha: _e_values(alpha, n_samples=8000, windows={1: _WINDOWS[1]}) for alpha in
+            (0.0, 0.5)}
+    pos0, pos5 = vals[0.0][vals[0.0] > 0], vals[0.5][vals[0.5] > 0]
+    assert len(np.unique(pos5)) > len(np.unique(pos0))
+
+
+def test_e_counts_fallbacks_and_warns_once(caplog):
+    df = _df_from_windows(_WINDOWS)
+    m = _e(bandwidth=1.0).fit(df)
+    assert m.fallback_counts == Counter(
+        {SMOOTH: 1, ALL_ZERO: 1, TOO_FEW_POSITIVES: 1, NO_SPREAD: 1}
+    )
+    with caplog.at_level(logging.WARNING):
+        m.predict(df=df, sequence_number=0, output_length=3)
+    warns = [r for r in caplog.records if "not smoothed" in r.getMessage()]
+    assert len(warns) == 1 and "EmpiricalKDEMixtureConflictology" in warns[0].getMessage()
+
+
+def test_e_fallback_cells_draw_only_window_values():
+    """Cells C cannot smooth are A in both slots: at any α, only values from the window."""
+    windows = {k: v for k, v in _WINDOWS.items() if k != 1}
+    draws = _draws_by_entity(_e(alpha=0.8), _df_from_windows(windows))
+    for cid, w in windows.items():
+        assert set(np.unique(draws[cid])) <= set(w)
+
+
+def test_e_reproducible_and_seed_sensitive():
+    o1, o2, o3 = _e_values(0.5, seed=7), _e_values(0.5, seed=7), _e_values(0.5, seed=8)
+    np.testing.assert_array_equal(o1, o2)
+    assert not np.array_equal(o1, o3)
+
+
+def test_golden_e_with_zeros():
+    df = _df_from_windows({1: _WINDOWS[1]})
+    out = _e(alpha=0.5, bandwidth=2.0, n_samples=8, seed=42).fit(df).predict(
+        df=df, sequence_number=0, output_length=1)
+    np.testing.assert_array_equal(out["y1"].values, GOLDEN_E_WITH_ZEROS)

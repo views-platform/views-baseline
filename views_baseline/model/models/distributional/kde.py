@@ -177,6 +177,34 @@ def draw_kde_positives(
     return round_positive(x)
 
 
+def fit_kde_cell(pool: np.ndarray, bandwidth) -> dict:
+    """C's fitted state for one cell. ``pool`` is kept in every cell (E draws A from it)."""
+    kind, positives = classify_window(pool)
+    h = cell_bandwidth(bandwidth, positives) if kind == SMOOTH else None
+    if kind == SMOOTH and h is None:
+        kind = SELECTOR_FAILED
+    cell = {"kind": kind, "pool": pool}
+    if kind == SMOOTH:
+        cell.update(zero_rate=float(np.mean(pool == 0.0)), positives=positives, h=h)
+    return cell
+
+
+def draw_kde_cell(cell: dict, n_samples: int, rng: np.random.Generator) -> np.ndarray:
+    """C's ``n_samples`` draws for one fitted cell (A's draw for a cell C does not smooth).
+
+    RNG order for a smoothed cell: the zero gate (``n_samples`` uniforms), then
+    `draw_kde_positives` for the positive draws.
+    """
+    if cell["kind"] != SMOOTH:
+        return draw_fallback(cell["pool"], n_samples, rng)
+    draws = np.zeros(n_samples, dtype=np.float64)
+    is_positive = rng.random(n_samples) >= cell["zero_rate"]
+    draws[is_positive] = draw_kde_positives(
+        cell["positives"], cell["h"], int(is_positive.sum()), rng
+    )
+    return draws
+
+
 class KDEConflictology:
     """Climatology with a zero-preserving kernel density estimate for the positive part
     (ADR-023, C).
@@ -219,7 +247,8 @@ class KDEConflictology:
         self.bandwidth = bandwidth
         self.seed = seed
         self.entity_ids = None
-        # per cid/target: {"kind", "zero_rate", "positives", "h"} or {"kind", "pool"}
+        # per cid/target: fit_kde_cell's dict — {"kind", "pool"} plus, if smoothed,
+        # {"zero_rate", "positives", "h"}
         self.cells = None
         self.fallback_counts: Counter = Counter()
 
@@ -234,36 +263,16 @@ class KDEConflictology:
         for cid in self.entity_ids:
             self.cells[cid] = {}
             for t in self.targets:
-                pool = pools[cid][t]
-                kind, positives = classify_window(pool)
-                h = cell_bandwidth(self.bandwidth, positives) if kind == SMOOTH else None
-                if kind == SMOOTH and h is None:
-                    kind = SELECTOR_FAILED
-                self.fallback_counts[kind] += 1
-                if kind == SMOOTH:
-                    self.cells[cid][t] = {
-                        "kind": kind,
-                        "zero_rate": float(np.mean(pool == 0.0)),
-                        "positives": positives,
-                        "h": h,
-                    }
-                else:
-                    self.cells[cid][t] = {"kind": kind, "pool": pool}
+                cell = fit_kde_cell(pools[cid][t], self.bandwidth)
+                self.fallback_counts[cell["kind"]] += 1
+                self.cells[cid][t] = cell
         return self
 
     def predict(
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int
     ) -> dict:
         def draw(cid, t, rng):
-            cell = self.cells[cid][t]
-            if cell["kind"] != SMOOTH:
-                return draw_fallback(cell["pool"], self.n_samples, rng)
-            draws = np.zeros(self.n_samples, dtype=np.float64)
-            is_positive = rng.random(self.n_samples) >= cell["zero_rate"]
-            draws[is_positive] = draw_kde_positives(
-                cell["positives"], cell["h"], int(is_positive.sum()), rng
-            )
-            return draws
+            return draw_kde_cell(self.cells[cid][t], self.n_samples, rng)
 
         warn_fallbacks("KDEConflictology", self.fallback_counts)
         level = to_level(df, loa=self.loa)

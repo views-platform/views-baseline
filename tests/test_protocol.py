@@ -2,6 +2,7 @@ import pytest
 
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    EmpiricalKDEMixtureConflictology,
     InterpolatedQuantileConflictology,
     KDEConflictology,
     MixtureBaseline,
@@ -33,6 +34,10 @@ _DISTRIBUTIONAL_MODELS = [
     ),
     (InterpolatedQuantileConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
     (KDEConflictology, {**_BASE, "window_months": 3, "n_samples": 10, "bandwidth": "sj"}),
+    (
+        EmpiricalKDEMixtureConflictology,
+        {**_BASE, "window_months": 3, "n_samples": 10, "alpha": 0.5, "bandwidth": 1.0},
+    ),
 ]
 
 _ALL_MODELS = _POINT_MODELS + _DISTRIBUTIONAL_MODELS
