@@ -380,3 +380,16 @@ def test_audit_manifest_accepts_scalar_required_values():
         "level": "pgm",
     }
     ReproducibilityGate.Config.audit_manifest(config)
+
+
+def test_smoothed_climatology_genomes_are_exact():
+    """ADR-023: the audited keys of B, C and E, exactly — the gate, not a downstream KeyError
+    or a constructor check, must be what rejects a manifest missing one (guard audit of
+    9a5e66a)."""
+    genomes = ReproducibilityGate.Config.ALGORITHM_GENOMES
+    assert set(genomes["InterpolatedQuantileConflictology"]) == {
+        "window_months", "n_samples", "seed"}
+    assert set(genomes["KDEConflictology"]) == {
+        "window_months", "n_samples", "seed", "bandwidth"}
+    assert set(genomes["EmpiricalKDEMixtureConflictology"]) == {
+        "window_months", "n_samples", "seed", "alpha", "bandwidth"}

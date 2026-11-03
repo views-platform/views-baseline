@@ -612,3 +612,11 @@ def test_golden_e_with_zeros():
     out = _e(alpha=0.5, bandwidth=2.0, n_samples=8, seed=42).fit(df).predict(
         df=df, sequence_number=0, output_length=1)
     np.testing.assert_array_equal(out["y1"].values, GOLDEN_E_WITH_ZEROS)
+
+
+@pytest.mark.parametrize("factory", [_b, _c, _e], ids=["B", "C", "E"])
+def test_refit_resets_fallback_counts(factory):
+    """Guard audit of 9a5e66a: a second fit must not double-count fallbacks."""
+    df = _df_from_windows(_WINDOWS)
+    m = factory().fit(df).fit(df)
+    assert sum(m.fallback_counts.values()) == len(_WINDOWS)
