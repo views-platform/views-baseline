@@ -52,7 +52,13 @@ Refresh (from the repo root, with views-models checked out as a sibling):
         print(f'# {model}'); pprint.pprint(cfg, width=95, sort_dicts=True)
     "
 
-Two deliberate departures from the byte-faithful copy, and only two:
+One fixture is not a copy at all: ``InterpolatedQuantileConflictology`` (ADR-023) has no
+shipped config yet, so its fixture is light_strider's with ``algorithm`` swapped, marked
+DERIVED over the dict. ``KDEConflictology`` is derived the same way, plus ``bandwidth: "sj"``, and
+``EmpiricalKDEMixtureConflictology`` plus ``alpha: 0.5`` and ``bandwidth: "sj"``. Replace all
+three with real copies once views-models ships the models (#109).
+
+Two deliberate departures from the byte-faithful copy for the others, and only two:
 
 * ``steps`` is written ``[*range(1, 37)]`` rather than the 36-element literal.
 * The three point-model fixtures carry ``aggregate_method: "arithmetic_mean"``, which the
@@ -153,6 +159,74 @@ MERGED_CONFIGS = {
         "steps": [*range(1, 37)],
         "time_steps": 36,
         "window_months": 18,
+    },
+    # DERIVED, not copied — the one fixture that is not a shipped config. No views-models
+    # model runs InterpolatedQuantileConflictology yet (ADR-023; the clones arrive with
+    # #109). This is the light_strider fixture below with `algorithm` swapped and nothing
+    # else changed: B's genome is A's, so it exercises the same keys. Replace it with the
+    # real clone's merged config, via the refresh command, once #109 ships one.
+    "InterpolatedQuantileConflictology": {
+        "algorithm": "InterpolatedQuantileConflictology",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
+    # DERIVED, like the one above: light_strider with `algorithm` swapped and the one extra
+    # genome key C needs. "sj" is the per-cell selector ADR-023 expects to be used.
+    "KDEConflictology": {
+        "algorithm": "KDEConflictology",
+        "bandwidth": "sj",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
+    # DERIVED, like the two above: plus `alpha` and `bandwidth`.
+    "EmpiricalKDEMixtureConflictology": {
+        "algorithm": "EmpiricalKDEMixtureConflictology",
+        "alpha": 0.5,
+        "bandwidth": "sj",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
     },
     # light_strider
     "ConflictologyModel": {

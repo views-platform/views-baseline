@@ -106,6 +106,30 @@ A two-part law per unit: a **zero-spike** (empirical zero-rate, Bernoulli) plus 
 ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
 ```
 
+#### InterpolatedQuantileConflictology — smoothed climatology B
+
+`ConflictologyModel` with the positive part smoothed (ADR-023). The zero rate is the window's, exactly as in `ConflictologyModel`. A positive draw comes from the **linearly interpolated quantile function** of the window's positive values, rounded to a whole count. So it can draw the counts between the observed ones, but never beyond the smallest or largest. Cells with fewer than two distinct positive values are drawn as `ConflictologyModel` draws them, and counted in one warning.
+
+```python
+InterpolatedQuantileConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
+```
+
+#### KDEConflictology — smoothed climatology C
+
+`ConflictologyModel` with the positive part drawn from a **kernel density estimate** of the window's positive values (ADR-023). The zero rate is the window's. Each positive draw picks an observed positive value, adds Gaussian noise of width `bandwidth`, mirrors anything below 0.5 back up, and rounds to a whole count, so it never produces a zero and can go above the largest observed value. `bandwidth` is required: a number (in deaths, the same for every cell), `"sj"` (Sheather–Jones, chosen per cell) or `"silverman"` (per cell; known to oversmooth). Cells it cannot smooth are drawn as `ConflictologyModel` draws them and counted in one warning. Known bias: it moves some mass from 1 to larger counts, more for larger `bandwidth`.
+
+```python
+KDEConflictology(targets, window_months, partition_dict, loa, n_samples, bandwidth, seed=42)
+```
+
+#### EmpiricalKDEMixtureConflictology — smoothed climatology E
+
+A mixture of `ConflictologyModel` and `KDEConflictology` (ADR-023): each draw is a `ConflictologyModel` draw with probability `1 − alpha` and a `KDEConflictology` draw with probability `alpha`. `alpha` therefore dials the spread from the empirical model (0) to the smoothed one (1). The random numbers it uses don't depend on `alpha`, so at a fixed seed, raising `alpha` only swaps individual draws from one model to the other: comparisons across `alpha` are paired and low-noise.
+
+```python
+EmpiricalKDEMixtureConflictology(targets, window_months, partition_dict, loa, n_samples, alpha, bandwidth, seed=42)
+```
+
 ---
 
 ## Model Catalog
@@ -124,7 +148,9 @@ Available models:
 ```python
 catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
-#  'ParametricConflictology', 'ParametricHurdleConflictology']
+#  'ParametricConflictology', 'ParametricHurdleConflictology',
+#  'InterpolatedQuantileConflictology', 'KDEConflictology',
+#  'EmpiricalKDEMixtureConflictology']
 ```
 
 ---
