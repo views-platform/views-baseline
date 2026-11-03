@@ -3,6 +3,9 @@ import pytest
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    EmpiricalKDEMixtureConflictology,
+    InterpolatedQuantileConflictology,
+    KDEConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -232,7 +235,13 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
 
 @pytest.mark.parametrize(
     "algo, cls",
-    [("ConflictologyModel", ConflictologyModel), ("MixtureBaseline", MixtureBaseline)],
+    [
+        ("ConflictologyModel", ConflictologyModel),
+        ("MixtureBaseline", MixtureBaseline),
+        ("InterpolatedQuantileConflictology", InterpolatedQuantileConflictology),
+        ("KDEConflictology", KDEConflictology),
+        ("EmpiricalKDEMixtureConflictology", EmpiricalKDEMixtureConflictology),
+    ],
 )
 def test_catalog_forwards_all_config_params(algo, cls):
     import inspect
@@ -244,6 +253,8 @@ def test_catalog_forwards_all_config_params(algo, cls):
         "n_samples": 13,
         "lambda_mix": 0.3,
         "seed": 99,
+        "bandwidth": 2.5,
+        "alpha": 0.35,
     }
     partition_dict = {"test": (445, 492)}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
@@ -327,3 +338,41 @@ def test_catalog_rejects_a_scalar_target_string():
     )
     with pytest.raises(ValueError, match="sequence of target names"):
         catalog.get_model("ZeroModel")
+
+
+def test_catalog_missing_bandwidth_for_kde_raises():
+    config = {"regression_targets": ["y1"], "window_months": 5, "n_samples": 8, "seed": 7}
+    catalog = BaselineModelCatalog(config=config, partition_dict={"test": (445, 492)}, loa="pgm")
+    with pytest.raises(ValueError, match="bandwidth"):
+        catalog.get_model("KDEConflictology")
+
+
+def test_catalog_invalid_bandwidth_fails_loud():
+    config = {
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 8, "seed": 7,
+        "bandwidth": "scott",
+    }
+    catalog = BaselineModelCatalog(config=config, partition_dict={"test": (445, 492)}, loa="pgm")
+    with pytest.raises(ValueError, match="bandwidth"):
+        catalog.get_model("KDEConflictology")
+
+
+@pytest.mark.parametrize("alpha", [-0.1, 1.5, float("nan"), True, "0.5", None])
+def test_catalog_invalid_alpha_fails_loud(alpha):
+    config = {
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 8, "seed": 7,
+        "bandwidth": 1.0, "alpha": alpha,
+    }
+    catalog = BaselineModelCatalog(config=config, partition_dict={"test": (445, 492)}, loa="pgm")
+    with pytest.raises(ValueError, match="alpha"):
+        catalog.get_model("EmpiricalKDEMixtureConflictology")
+
+
+def test_catalog_missing_alpha_raises():
+    config = {
+        "regression_targets": ["y1"], "window_months": 5, "n_samples": 8, "seed": 7,
+        "bandwidth": 1.0,
+    }
+    catalog = BaselineModelCatalog(config=config, partition_dict={"test": (445, 492)}, loa="pgm")
+    with pytest.raises(ValueError, match="alpha"):
+        catalog.get_model("EmpiricalKDEMixtureConflictology")
