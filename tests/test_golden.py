@@ -19,6 +19,7 @@ import pandas as pd
 
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    InterpolatedQuantileConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -71,3 +72,11 @@ def test_golden_parametric_hurdle_gamma():
         [3.8011667728424072, 3.4616448879241943, 5.926358222961426, 3.6534857749938965],
         [6.987948894500732, 4.179197788238525, 8.111642837524414, 3.665259599685669],
     ], rtol=1e-6)
+
+
+def test_golden_interpolated_quantile():
+    """B (ADR-023). The windows have no zeros; 6.0 is an interpolated value A cannot draw."""
+    out = _run(InterpolatedQuantileConflictology(
+        targets=["y1"], window_months=6, partition_dict=_PARTITION, loa="pgm",
+        n_samples=4, seed=42))
+    np.testing.assert_array_equal(out, [[1.0, 7.0, 6.0, 7.0], [6.0, 8.0, 5.0, 2.0]])

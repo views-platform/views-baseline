@@ -2,6 +2,7 @@ import pytest
 
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    InterpolatedQuantileConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -29,6 +30,7 @@ _DISTRIBUTIONAL_MODELS = [
         ParametricHurdleConflictology,
         {**_BASE, "window_months": 3, "n_samples": 10, "family": "gumbel", "transform": "log1p"},
     ),
+    (InterpolatedQuantileConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
 ]
 
 _ALL_MODELS = _POINT_MODELS + _DISTRIBUTIONAL_MODELS

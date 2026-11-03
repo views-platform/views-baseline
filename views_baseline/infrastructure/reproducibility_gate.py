@@ -53,6 +53,9 @@ class ReproducibilityGate:
             "ParametricHurdleConflictology": [
                 "window_months", "n_samples", "seed", "family", "transform",
             ],
+            # Smoothed climatology (ADR-023): B has no tuning key; its plotting position
+            # is its definition, not a parameter.
+            "InterpolatedQuantileConflictology": ["window_months", "n_samples", "seed"],
         }
 
         @staticmethod

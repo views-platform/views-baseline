@@ -1,6 +1,7 @@
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    InterpolatedQuantileConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -41,6 +42,7 @@ class BaselineModelCatalog:
             "MixtureBaseline": self._get_mixture_model,
             "ParametricConflictology": self._get_parametric_conflictology,
             "ParametricHurdleConflictology": self._get_parametric_hurdle,
+            "InterpolatedQuantileConflictology": self._get_interpolated_quantile,
         }
 
     @property
@@ -149,5 +151,16 @@ class BaselineModelCatalog:
             n_samples=self.config["n_samples"],
             family=self.config["family"],
             transform=self.config["transform"],
+            seed=self.config["seed"],
+        )
+
+    def _get_interpolated_quantile(self):
+        # Smoothed climatology B (ADR-023); seed is a required, audited genome key (ADR-021).
+        return InterpolatedQuantileConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
             seed=self.config["seed"],
         )

@@ -3,6 +3,7 @@ import pytest
 from views_baseline.model.catalog import BaselineModelCatalog
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    InterpolatedQuantileConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -232,7 +233,11 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
 
 @pytest.mark.parametrize(
     "algo, cls",
-    [("ConflictologyModel", ConflictologyModel), ("MixtureBaseline", MixtureBaseline)],
+    [
+        ("ConflictologyModel", ConflictologyModel),
+        ("MixtureBaseline", MixtureBaseline),
+        ("InterpolatedQuantileConflictology", InterpolatedQuantileConflictology),
+    ],
 )
 def test_catalog_forwards_all_config_params(algo, cls):
     import inspect

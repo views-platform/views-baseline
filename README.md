@@ -106,6 +106,14 @@ A two-part law per unit: a **zero-spike** (empirical zero-rate, Bernoulli) plus 
 ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
 ```
 
+#### InterpolatedQuantileConflictology — smoothed climatology B
+
+`ConflictologyModel` with the positive part smoothed (ADR-023). The zero rate is the window's, exactly as in `ConflictologyModel`. A positive draw comes from the **linearly interpolated quantile function** of the window's positive values, rounded to a whole count. So it can draw the counts between the observed ones, but never beyond the smallest or largest. Cells with fewer than two distinct positive values are drawn as `ConflictologyModel` draws them, and counted in one warning.
+
+```python
+InterpolatedQuantileConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
+```
+
 ---
 
 ## Model Catalog
@@ -124,7 +132,8 @@ Available models:
 ```python
 catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
-#  'ParametricConflictology', 'ParametricHurdleConflictology']
+#  'ParametricConflictology', 'ParametricHurdleConflictology',
+#  'InterpolatedQuantileConflictology']
 ```
 
 ---

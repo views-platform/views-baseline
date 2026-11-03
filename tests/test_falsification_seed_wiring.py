@@ -44,7 +44,9 @@ def _catalog(seed):
     return BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
 
 
-@pytest.mark.parametrize("algo", ["ConflictologyModel", "MixtureBaseline"])
+@pytest.mark.parametrize(
+    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+)
 def test_catalog_forwards_seed(algo):
     """The catalog must forward config['seed'] to the model (ADR-011 §2)."""
     model = _catalog(seed=7).get_model(algo)
@@ -54,7 +56,9 @@ def test_catalog_forwards_seed(algo):
     )
 
 
-@pytest.mark.parametrize("algo", ["ConflictologyModel", "MixtureBaseline"])
+@pytest.mark.parametrize(
+    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+)
 def test_different_seed_produces_different_output(algo):
     """Different config seeds must produce different draws (ADR-011 §4, converse)."""
     df = _df()
@@ -70,7 +74,9 @@ def test_different_seed_produces_different_output(algo):
     )
 
 
-@pytest.mark.parametrize("algo", ["ConflictologyModel", "MixtureBaseline"])
+@pytest.mark.parametrize(
+    "algo", ["ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology"]
+)
 def test_catalog_requires_seed(algo):
     """ADR-021: the catalog must NOT silently default seed — a config without it fails loud."""
     cfg = {"regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5}

@@ -12,6 +12,7 @@ from conftest import make_dummy_df, make_dummy_ff
 
 from views_baseline.model.models.distributional import (
     ConflictologyModel,
+    InterpolatedQuantileConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -38,6 +39,8 @@ _MODELS = [
     ("ParametricHurdleConflictology",
      lambda: ParametricHurdleConflictology(**_BASE, window_months=3, n_samples=8,
                                            family="gamma", transform="none", seed=42)),
+    ("InterpolatedQuantileConflictology",
+     lambda: InterpolatedQuantileConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
 ]
 _IDS = [n for n, _ in _MODELS]
 
