@@ -447,3 +447,116 @@ def test_manager_forecast_distributional_model(
     assert set(result.keys()) == set(targets)
     for target_key in targets:
         assert isinstance(result[target_key], PredictionFrame)
+
+
+# ---------------------------------------------------------------------
+# Tests: streaming evaluation, one origin at a time (views-baseline#120)
+# ---------------------------------------------------------------------
+
+_STREAM_CONFIG = {
+    "run_type": "eval",
+    "level": "pgm",
+    "algorithm": "ConflictologyModel",
+    "window_months": 6,
+    "n_samples": 16,
+    "seed": 42,
+    "steps": [*range(1, 37)],
+    "time_steps": 36,
+    "prediction_format": "prediction_frame",
+    "sequence_numbers": 3,
+}
+
+
+def _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets):
+    manager = make_manager({**_STREAM_CONFIG, "regression_targets": targets},
+                           manager_partition_dict)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+    return manager
+
+
+def test_streaming_hands_each_origin_to_the_sink_before_predicting_the_next(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """Origin i reaches the sink before origin i+1 is predicted: nothing is accumulated
+    and emitted afterwards (which is what pipeline-core's default does, #120)."""
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    events = []
+    real_setup = manager._setup_model_and_data
+
+    def setup_with_spy():
+        model, df = real_setup()
+        real_predict = model.predict
+
+        def predict(**kw):
+            events.append(("predict", kw["sequence_number"]))
+            return real_predict(**kw)
+
+        model.predict = predict
+        return model, df
+
+    manager._setup_model_and_data = setup_with_spy
+
+    def sink(i, pf_dict):
+        assert set(pf_dict) == set(targets)
+        events.append(("sink", i))
+
+    manager._evaluate_model_artifact_streaming("temporal", None, origin_sink=sink)
+    n = _STREAM_CONFIG["sequence_numbers"]
+    assert events == [e for i in range(n) for e in (("predict", i), ("sink", i))]
+
+
+def test_streaming_never_calls_the_batch_path(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+
+    def no_batch(*a, **k):
+        raise AssertionError("streaming evaluation must not build the batch dict")
+
+    manager._evaluate_model_artifact = no_batch
+    manager._generate_predictions = no_batch
+    calls = []
+    manager._evaluate_model_artifact_streaming(
+        "temporal", None, origin_sink=lambda i, d: calls.append(i)
+    )
+    assert calls == list(range(_STREAM_CONFIG["sequence_numbers"]))
+
+
+def test_streaming_releases_each_origin_after_the_sink(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """A sink that drops its PredictionFrames leaves no live reference to them in the
+    manager: peak memory is one origin, not all of them."""
+    import gc
+    import weakref
+
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    refs = []
+
+    def sink(i, pf_dict):
+        for target in list(pf_dict):
+            refs.append(weakref.ref(pf_dict.pop(target)))
+        gc.collect()
+        # every earlier origin is already gone while this one is being handled
+        assert all(r() is None for r in refs[: i * len(targets)])
+
+    manager._evaluate_model_artifact_streaming("temporal", None, origin_sink=sink)
+    gc.collect()
+    assert all(r() is None for r in refs)
+
+
+def test_streaming_output_equals_batch_output(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    batch = manager._evaluate_model_artifact(eval_type="temporal")
+    streamed = {}
+    manager._evaluate_model_artifact_streaming(
+        "temporal", None,
+        origin_sink=lambda i, d: [streamed.setdefault(t, []).append(pf) for t, pf in d.items()],
+    )
+    assert set(streamed) == set(batch)
+    for t in batch:
+        assert len(streamed[t]) == len(batch[t]) == _STREAM_CONFIG["sequence_numbers"]
+        for a, b in zip(streamed[t], batch[t]):
+            np.testing.assert_array_equal(np.asarray(a.values), np.asarray(b.values))

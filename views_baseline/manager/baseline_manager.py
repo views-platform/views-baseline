@@ -87,30 +87,38 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model.fit(df_source)
         return model, df_source
 
+    def _iter_predictions(self, model, df, eval_type):
+        """Yield ``(sequence_number, Dict[str, PredictionFrame])`` one rolling origin at a time.
+
+        The single per-origin loop, shared by the batch path (`_generate_predictions`) and the
+        streaming path (`_evaluate_model_artifact_streaming`). Holds no reference to an origin
+        once it has been yielded, so a consumer that releases each origin keeps peak memory at
+        one origin (views-baseline#120).
+        """
+        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
+        output_length = self.config["time_steps"]
+        for seq_num in range(sequence_numbers):
+            yield seq_num, model.predict(
+                df=df, sequence_number=seq_num, output_length=output_length
+            )
+
     def _generate_predictions(self, model, df, eval_type):
         """
         Generate predictions for all sequence numbers in an evaluation.
 
         All models return Dict[str, PredictionFrame], so this accumulates
-        into Dict[str, list[PredictionFrame]] across sequence numbers.
+        into Dict[str, list[PredictionFrame]] across sequence numbers. Memory is
+        every origin at once; evaluation uses `_evaluate_model_artifact_streaming`
+        instead, and this batch form remains for the sweep path and the base contract.
         """
-        sequence_numbers = self._resolve_evaluation_sequence_number(eval_type)
-        output_length = self.config["time_steps"]
-
         predictions = {}
-        for seq_num in range(sequence_numbers):
-            pf_dict = model.predict(
-                df=df, sequence_number=seq_num, output_length=output_length
-            )
+        for _, pf_dict in self._iter_predictions(model, df, eval_type):
             for target, pf in pf_dict.items():
                 predictions.setdefault(target, []).append(pf)
         return predictions
 
-    def _evaluate_model_artifact(self, eval_type: str, artifact_name: str = None):
-        """
-        Evaluate trained model artifact.
-        """
-        logger.info("Evaluating baseline model artifact")
+    def _prepare_evaluation(self, artifact_name):
+        """Resolve the artifact timestamp, fit the model and load the data, for evaluation."""
         if artifact_name:
             path_artifact = self._model_path.artifacts / artifact_name
         else:
@@ -119,8 +127,34 @@ class BaselineForecastingModelManager(ForecastingModelManager):
             )
         self._config_manager.add_config({"timestamp": path_artifact.stem[-15:]})
         self.model, df_source = self._setup_model_and_data()
+        return df_source
+
+    def _evaluate_model_artifact(self, eval_type: str, artifact_name: str = None):
+        """
+        Evaluate trained model artifact (batch: every origin held at once).
+        """
+        logger.info("Evaluating baseline model artifact")
+        df_source = self._prepare_evaluation(artifact_name)
         logger.info(f"Generating predictions for {eval_type} evaluation")
         return self._generate_predictions(self.model, df_source, eval_type)
+
+    def _evaluate_model_artifact_streaming(self, eval_type, artifact_name, origin_sink):
+        """
+        Evaluate trained model artifact one rolling origin at a time (views-baseline#120).
+
+        Overrides pipeline-core's default, which calls the batch method first and so keeps
+        all origins in memory (13 × 7.2 GB at pgm `land`, S = 256: 93 GB). Each origin's
+        ``Dict[str, PredictionFrame]`` is handed to ``origin_sink(i, pf_dict)`` as soon as it
+        is predicted; the sink saves and frees it. Peak memory is one origin. The output is
+        identical to the batch path's, origin by origin, since each `predict()` seeds its own
+        RNG.
+        """
+        logger.info("Evaluating baseline model artifact (streaming, one origin at a time)")
+        df_source = self._prepare_evaluation(artifact_name)
+        logger.info(f"Generating predictions for {eval_type} evaluation")
+        for seq_num, pf_dict in self._iter_predictions(self.model, df_source, eval_type):
+            origin_sink(seq_num, pf_dict)
+            del pf_dict
 
     def _forecast_model_artifact(self, artifact_name: str = None):
         """
