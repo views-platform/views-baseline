@@ -1,5 +1,6 @@
 import logging
 import pickle
+import resource
 
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
@@ -152,9 +153,18 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         logger.info("Evaluating baseline model artifact (streaming, one origin at a time)")
         df_source = self._prepare_evaluation(artifact_name)
         logger.info(f"Generating predictions for {eval_type} evaluation")
+        n_origins = 0
         for seq_num, pf_dict in self._iter_predictions(self.model, df_source, eval_type):
             origin_sink(seq_num, pf_dict)
             del pf_dict
+            n_origins += 1
+        # Peak RSS of this process up to here: prediction and saving, NOT pipeline-core's
+        # scoring step, which runs after this method returns. ru_maxrss is KiB on Linux.
+        peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+        logger.info(
+            f"Streamed {n_origins} origins; peak RSS so far {peak_gib:.2f} GiB "
+            "(before scoring)"
+        )
 
     def _forecast_model_artifact(self, artifact_name: str = None):
         """

@@ -560,3 +560,21 @@ def test_streaming_output_equals_batch_output(
         assert len(streamed[t]) == len(batch[t]) == _STREAM_CONFIG["sequence_numbers"]
         for a, b in zip(streamed[t], batch[t]):
             np.testing.assert_array_equal(np.asarray(a.values), np.asarray(b.values))
+
+
+def test_streaming_logs_origin_count_and_peak_rss(
+    monkeypatch, manager_df, manager_partition_dict, targets, caplog
+):
+    """The run's own log records the peak memory of prediction, so a campaign needs no
+    one sampling `ps` at the right moment (views-baseline#120 follow-up)."""
+    import logging
+
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    with caplog.at_level(logging.INFO, logger=bm.__name__):
+        manager._evaluate_model_artifact_streaming(
+            "temporal", None, origin_sink=lambda i, d: None
+        )
+    n = _STREAM_CONFIG["sequence_numbers"]
+    peak = [r.getMessage() for r in caplog.records if "peak RSS" in r.getMessage()]
+    assert len(peak) == 1
+    assert re.search(rf"Streamed {n} origins; peak RSS so far \d+\.\d\d GiB", peak[0])
