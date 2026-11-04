@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import logging
 import pickle
 import resource
+import sys
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from views_pipeline_core.files.utils import generate_model_file_name, read_dataframe
 from views_pipeline_core.managers.model import ForecastingModelManager, ModelPathManager
@@ -13,7 +18,20 @@ from views_pipeline_core.modules.dataloaders.frame_cache import load_frame_cache
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
 
+if TYPE_CHECKING:
+    from views_frames import PredictionFrame
+
 logger = logging.getLogger(__name__)
+
+
+def _peak_rss_gib() -> float:
+    """Peak resident memory of this process so far, in GiB.
+
+    Whole-process lifetime: data loading, fitting and any training earlier in the same run
+    count too. ``ru_maxrss`` is KiB on Linux and bytes on macOS.
+    """
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / (2**30 if sys.platform == "darwin" else 2**20)
 
 
 class BaselineForecastingModelManager(ForecastingModelManager):
@@ -88,7 +106,7 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         model.fit(df_source)
         return model, df_source
 
-    def _iter_predictions(self, model, df, eval_type):
+    def _iter_predictions(self, model, df, eval_type: str):
         """Yield ``(sequence_number, Dict[str, PredictionFrame])`` one rolling origin at a time.
 
         The single per-origin loop, shared by the batch path (`_generate_predictions`) and the
@@ -118,8 +136,13 @@ class BaselineForecastingModelManager(ForecastingModelManager):
                 predictions.setdefault(target, []).append(pf)
         return predictions
 
-    def _prepare_evaluation(self, artifact_name):
-        """Resolve the artifact timestamp, fit the model and load the data, for evaluation."""
+    def _prepare_evaluation(self, artifact_name: str | None):
+        """Set-up shared by both evaluation paths.
+
+        Persists the artifact's timestamp in the config (from ``artifact_name``, or the
+        latest artifact for the run type), then fits the model. Side effect: sets
+        ``self.model``. Returns the input data (DataFrame or FeatureFrame).
+        """
         if artifact_name:
             path_artifact = self._model_path.artifacts / artifact_name
         else:
@@ -139,31 +162,45 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         logger.info(f"Generating predictions for {eval_type} evaluation")
         return self._generate_predictions(self.model, df_source, eval_type)
 
-    def _evaluate_model_artifact_streaming(self, eval_type, artifact_name, origin_sink):
+    def _evaluate_model_artifact_streaming(
+        self,
+        eval_type: str,
+        artifact_name: str | None,
+        origin_sink: Callable[[int, dict[str, PredictionFrame]], None],
+    ) -> None:
         """
         Evaluate trained model artifact one rolling origin at a time (views-baseline#120).
 
         Overrides pipeline-core's default, which calls the batch method first and so keeps
         all origins in memory (13 × 7.2 GB at pgm `land`, S = 256: 93 GB). Each origin's
         ``Dict[str, PredictionFrame]`` is handed to ``origin_sink(i, pf_dict)`` as soon as it
-        is predicted; the sink saves and frees it. Peak memory is one origin. The output is
-        identical to the batch path's, origin by origin, since each `predict()` seeds its own
-        RNG.
+        is predicted, and this method drops its own reference before predicting the next.
+        With a sink that frees what it saves (pipeline-core's does), peak memory is one
+        origin. The output is identical to the batch path's, origin by origin, since both
+        run `_iter_predictions` and each `predict()` seeds its own RNG.
+
+        Logs the process's peak RSS after every origin, so a run that dies part-way still
+        leaves the figure behind. Sink errors propagate.
         """
         logger.info("Evaluating baseline model artifact (streaming, one origin at a time)")
         df_source = self._prepare_evaluation(artifact_name)
         logger.info(f"Generating predictions for {eval_type} evaluation")
         n_origins = 0
         for seq_num, pf_dict in self._iter_predictions(self.model, df_source, eval_type):
+            if not isinstance(pf_dict, dict):
+                raise TypeError(
+                    f"{self.config['algorithm']}.predict() returned "
+                    f"{type(pf_dict).__name__} for origin {seq_num}, expected "
+                    "dict[str, PredictionFrame] (ADR-017)."
+                )
             origin_sink(seq_num, pf_dict)
-            del pf_dict
+            del pf_dict  # else origin i stays alive while origin i+1 is predicted
             n_origins += 1
-        # Peak RSS of this process up to here: prediction and saving, NOT pipeline-core's
-        # scoring step, which runs after this method returns. ru_maxrss is KiB on Linux.
-        peak_gib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
+            logger.info(f"Origin {seq_num} streamed; process peak RSS so far "
+                        f"{_peak_rss_gib():.2f} GiB")
         logger.info(
-            f"Streamed {n_origins} origins; peak RSS so far {peak_gib:.2f} GiB "
-            "(before scoring)"
+            f"Streamed {n_origins} origins; process peak RSS so far {_peak_rss_gib():.2f} GiB "
+            "(before pipeline-core's scoring step)"
         )
 
     def _forecast_model_artifact(self, artifact_name: str = None):

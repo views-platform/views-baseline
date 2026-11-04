@@ -450,6 +450,7 @@ def test_manager_forecast_distributional_model(
 
 
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Tests: streaming evaluation, one origin at a time (views-baseline#120)
 # ---------------------------------------------------------------------
 
@@ -474,13 +475,8 @@ def _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets):
     return manager
 
 
-def test_streaming_hands_each_origin_to_the_sink_before_predicting_the_next(
-    monkeypatch, manager_df, manager_partition_dict, targets
-):
-    """Origin i reaches the sink before origin i+1 is predicted: nothing is accumulated
-    and emitted afterwards (which is what pipeline-core's default does, #120)."""
-    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
-    events = []
+def _spy_on_predict(manager, before_predict):
+    """Make the fitted model call ``before_predict(sequence_number)`` before each predict."""
     real_setup = manager._setup_model_and_data
 
     def setup_with_spy():
@@ -488,13 +484,40 @@ def test_streaming_hands_each_origin_to_the_sink_before_predicting_the_next(
         real_predict = model.predict
 
         def predict(**kw):
-            events.append(("predict", kw["sequence_number"]))
+            before_predict(kw["sequence_number"])
             return real_predict(**kw)
 
         model.predict = predict
         return model, df
 
     manager._setup_model_and_data = setup_with_spy
+
+
+def test_streaming_override_matches_pipeline_cores_hook():
+    """pipeline-core calls the hook by name with these parameters. If it renames or
+    re-signs it, the override silently stops being called and the batch-then-emit default
+    runs again (the 93 GB OOM, C-54), while every other streaming test, which calls the
+    override directly, stays green (C-44)."""
+    import inspect
+
+    from views_pipeline_core.managers.model import ForecastingModelManager
+
+    name = "_evaluate_model_artifact_streaming"
+    assert name in vars(ForecastingModelManager), "pipeline-core no longer defines the hook"
+    base = list(inspect.signature(getattr(ForecastingModelManager, name)).parameters)
+    ours = list(inspect.signature(getattr(bm.BaselineForecastingModelManager, name)).parameters)
+    assert base == ours == ["self", "eval_type", "artifact_name", "origin_sink"]
+    assert name in vars(bm.BaselineForecastingModelManager)
+
+
+def test_streaming_hands_each_origin_to_the_sink_before_predicting_the_next(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """Origin i reaches the sink before origin i+1 is predicted: nothing is accumulated
+    and emitted afterwards (which is what pipeline-core's default does, #120)."""
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    events = []
+    _spy_on_predict(manager, lambda i: events.append(("predict", i)))
 
     def sink(i, pf_dict):
         assert set(pf_dict) == set(targets)
@@ -522,32 +545,37 @@ def test_streaming_never_calls_the_batch_path(
     assert calls == list(range(_STREAM_CONFIG["sequence_numbers"]))
 
 
-def test_streaming_releases_each_origin_after_the_sink(
+def test_streaming_frees_each_origin_before_predicting_the_next(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
-    """A sink that drops its PredictionFrames leaves no live reference to them in the
-    manager: peak memory is one origin, not all of them."""
+    """Peak memory is ONE origin: by the time origin i+1 is predicted, origin i is
+    unreachable. The sink leaves its dict intact and keeps only weak references, so this
+    tests the manager's own release, not the sink's."""
     import gc
     import weakref
 
     manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
-    refs = []
+    refs, alive_at_next_predict = [], []
 
-    def sink(i, pf_dict):
-        for target in list(pf_dict):
-            refs.append(weakref.ref(pf_dict.pop(target)))
+    def check(_seq):
         gc.collect()
-        # every earlier origin is already gone while this one is being handled
-        assert all(r() is None for r in refs[: i * len(targets)])
+        alive_at_next_predict.extend(r for r in refs if r() is not None)
+
+    _spy_on_predict(manager, check)
+
+    def sink(i, pf_dict):  # saves nothing, drops nothing
+        refs.extend(weakref.ref(pf) for pf in pf_dict.values())
 
     manager._evaluate_model_artifact_streaming("temporal", None, origin_sink=sink)
-    gc.collect()
-    assert all(r() is None for r in refs)
+    assert len(refs) == _STREAM_CONFIG["sequence_numbers"] * len(targets)
+    assert alive_at_next_predict == []
 
 
 def test_streaming_output_equals_batch_output(
     monkeypatch, manager_df, manager_partition_dict, targets
 ):
+    """Values, index and identifiers equal the batch path's, origin by origin, so results
+    are comparable across the change."""
     manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
     batch = manager._evaluate_model_artifact(eval_type="temporal")
     streamed = {}
@@ -560,21 +588,89 @@ def test_streaming_output_equals_batch_output(
         assert len(streamed[t]) == len(batch[t]) == _STREAM_CONFIG["sequence_numbers"]
         for a, b in zip(streamed[t], batch[t]):
             np.testing.assert_array_equal(np.asarray(a.values), np.asarray(b.values))
+            np.testing.assert_array_equal(np.asarray(a.index.time), np.asarray(b.index.time))
+            np.testing.assert_array_equal(np.asarray(a.index.unit), np.asarray(b.index.unit))
 
 
-def test_streaming_logs_origin_count_and_peak_rss(
+def test_streaming_predictions_have_the_configured_horizon(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """Absolute check: equality with the batch path cannot catch a defect both share."""
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    seen = []
+    manager._evaluate_model_artifact_streaming(
+        "temporal", None, origin_sink=lambda i, d: seen.extend(d.values())
+    )
+    assert seen
+    for pf in seen:
+        assert len(set(np.asarray(pf.index.time).tolist())) == _STREAM_CONFIG["time_steps"]
+
+
+def test_streaming_sets_the_timestamp_from_the_named_artifact(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    manager._evaluate_model_artifact_streaming(
+        "temporal", "calibration_model_20250505_090909.pkl", origin_sink=lambda i, d: None
+    )
+    assert manager._config_manager.get_combined_config()["timestamp"] == "20250505_090909"
+
+
+def test_streaming_propagates_sink_errors(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    """In production the sink writes to disk; a failed write must stop the run, never be
+    skipped."""
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+
+    def sink(i, d):
+        raise RuntimeError("disk full")
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        manager._evaluate_model_artifact_streaming("temporal", None, origin_sink=sink)
+
+
+def test_streaming_rejects_a_predict_that_does_not_return_a_dict(
+    monkeypatch, manager_df, manager_partition_dict, targets
+):
+    manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    real_setup = manager._setup_model_and_data
+
+    def setup_returning_list():
+        model, df = real_setup()
+        model.predict = lambda **kw: ["not", "a", "dict"]
+        return model, df
+
+    manager._setup_model_and_data = setup_returning_list
+    sink_calls = []
+    with pytest.raises(TypeError, match="expected dict"):
+        manager._evaluate_model_artifact_streaming(
+            "temporal", None, origin_sink=lambda i, d: sink_calls.append(i)
+        )
+    assert sink_calls == []
+
+
+def test_streaming_logs_the_process_peak_rss_in_gib(
     monkeypatch, manager_df, manager_partition_dict, targets, caplog
 ):
-    """The run's own log records the peak memory of prediction, so a campaign needs no
-    one sampling `ps` at the right moment (views-baseline#120 follow-up)."""
+    """Logged after every origin and once at the end, in GiB, from RUSAGE_SELF."""
     import logging
+    import resource as real_resource
 
     manager = _stream_manager(monkeypatch, manager_df, manager_partition_dict, targets)
+    monkeypatch.setattr(bm.sys, "platform", "linux")
+    monkeypatch.setattr(
+        bm.resource, "getrusage",
+        lambda who: SimpleNamespace(
+            ru_maxrss=3 * 2**20 if who == real_resource.RUSAGE_SELF else 0
+        ),
+    )
     with caplog.at_level(logging.INFO, logger=bm.__name__):
         manager._evaluate_model_artifact_streaming(
             "temporal", None, origin_sink=lambda i, d: None
         )
+    msgs = [r.getMessage() for r in caplog.records if "peak RSS" in r.getMessage()]
     n = _STREAM_CONFIG["sequence_numbers"]
-    peak = [r.getMessage() for r in caplog.records if "peak RSS" in r.getMessage()]
-    assert len(peak) == 1
-    assert re.search(rf"Streamed {n} origins; peak RSS so far \d+\.\d\d GiB", peak[0])
+    assert len(msgs) == n + 1
+    assert all("peak RSS so far 3.00 GiB" in m for m in msgs)
+    assert msgs[-1].startswith(f"Streamed {n} origins;")
