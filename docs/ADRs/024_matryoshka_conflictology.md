@@ -109,9 +109,14 @@ the two added ideas (rings, decay), nothing else.
 condition on months up to each origin instead is #82's question, and the sliding-window control
 below answers it separately.
 
-**The neighbour rings follow a rule, not free knobs:** ring_weight[k] = ρ^k and memory[k] =
-memory[0] × γ^k for k = 0, 1, 2, so the neighbourhood costs 3 knobs (memory[0], ρ, γ). The country
-and the whole map each add a weight and a memory. That is **7 knobs per target**.
+**Each doll has its own free weight and memory** (decided 2026-11-05):
+- the cell: a memory, with its weight fixed at 1 as the reference;
+- ring 1, ring 2, the country and the whole map: a weight and a memory each.
+
+That is **9 knobs per target**. A geometric rule (ring_weight[k] = ρ^k, memory[k] = memory[0] × γ^k)
+would save only one knob with two rings, so it is not imposed. The fit reports whether the free values
+happen to follow it, with the Currents-of-Conflict ρ ≈ 0.4 as the check. The rule is reconsidered only
+if a later version adds more rings.
 
 **Separate knobs per violence type** (sb, ns, os), decided 2026-11-05: they plausibly persist and
 spread differently, and the model already runs per target. A shared fit is reported as a check, and
@@ -150,7 +155,7 @@ to do, and that is worth knowing first.
   calendar, conditioned on the forecast, and robust to the choice of cutoffs.
 - **One mechanism, three open issues.** It joins lead-awareness (#82), temporal decay (#111) and spatial
   pooling (#112) into one weighting, instead of three models whose interactions would be untested.
-- **Minimal and interpretable.** No covariates; ≤ 7 fitted numbers, each with a physical meaning (a
+- **Minimal and interpretable.** No covariates; 9 fitted numbers per violence type, each with a physical meaning (a
   memory in months, a ring's share). It nests A exactly.
 - **No new values invented.** Unlike C, every draw happened somewhere nearby and recently. That keeps
   integers natural and keeps the C boundary bias (ADR-023) out.
@@ -221,6 +226,7 @@ Decided 2026-11-05 (Simon):
 - separate knobs per violence type;
 - no rings at cm for now;
 - **one memory per doll in v1**;
+- **free weight and memory per doll in v1** (no geometric ring rule);
 - **at least 10 years of history**;
 - **the country doll is the FAO GAUL 2024 country (`gaul0_code`)**, the platform's country identity
   (views-datafactory ADR-025). It reaches the data as `c_id`, and is fixed per cell over time.
@@ -243,9 +249,7 @@ modelling one. The literature supports a long reach:
   slowly than exponentially, so a 120-month exponential memory at the country doll may still forget too
   fast (weight e⁻² ≈ 0.14 at 20 years). The backtest should report where the fitted country memory lands.
 
-Still open:
-1. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
-   free per-ring knobs.
+Nothing in v1's design is still open; the remaining unknowns are what the backtest measures.
 
 **For v2:**
 - **two memories in the inner doll**: a short burst memory (~4 months in Currents of Conflict) on top of
