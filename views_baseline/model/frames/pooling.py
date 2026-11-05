@@ -121,7 +121,8 @@ def tail_pools(
 
     ``s_unit`` **must** be sorted ascending (entity primary, as :func:`sort_train_panel`
     returns it): each entity's rows are located by binary search, so an unsorted panel would
-    pool the wrong rows. It is checked, and an unsorted panel raises.
+    pool the wrong rows. Entity order is checked (an unsorted ``s_unit`` raises); time order
+    within an entity is the caller's responsibility (:func:`sort_train_panel` provides it).
 
     Fails loud on ``window_months <= 0`` (else every pool would be empty) and on a NaN in
     the pooled tail (C-33) — the pre-PR pandas path silently skipna'd (``last()`` /

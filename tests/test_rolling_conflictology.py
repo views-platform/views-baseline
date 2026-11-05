@@ -268,6 +268,13 @@ def test_common_random_numbers_need_pools_of_at_least_two(df):
     shift = (np.asarray(r.values) - np.asarray(a.values)) / 10
     rows = _row_entities(a)
     assert not np.all(shift[rows != 0] == 3)              # pairing is lost after cell 0
+    # ...and it is that cell that breaks it: without it, the same cells are paired again.
+    full = short.drop(index=0, level="priogrid_id")
+    a2 = ConflictologyModel(**KW).fit(full).predict(full, sequence_number=3, output_length=6)
+    r2 = RollingConflictology(**KW).fit(full).predict(full, sequence_number=3, output_length=6)
+    np.testing.assert_array_equal(
+        (np.asarray(r2["y1"].values) - np.asarray(a2["y1"].values)) / 10, 3
+    )
 
 
 # --- added after the guard audit of ed7fb19 (survivors R6, R7) -------------------------------

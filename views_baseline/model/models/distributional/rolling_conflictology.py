@@ -28,8 +28,10 @@ class RollingConflictology(ConflictologyModel):
     `window_pool_arrays`, only anchored later. It is a subclass, so ``__init__``, ``fit`` and the
     origin-0 pools *are* conflictology's: origin 0 is byte-identical to `ConflictologyModel`.
     At every origin the same seed picks the same pool positions (common random numbers),
-    provided every forecast cell's pool has at least 2 values at both: a 1-value pool consumes
-    no randomness, which shifts the shared random stream for the cells after it.
+    provided every forecast cell has a full ``window_months`` history at ``train_end``, so the
+    two models' pools have the same length. With a shorter history the same random words map to
+    different positions for that cell; a 1-value pool also consumes no randomness, which shifts
+    the shared random stream for every cell after it.
 
     **Fails loud** if, for any forecast cell, a month after ``train_end`` that lies inside the
     window (``max(train_end + 1, train_end + k − window_months + 1) .. train_end + k``) is missing

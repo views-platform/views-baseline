@@ -56,9 +56,11 @@ that ages within one forecast as it looks further ahead (which it does not).
     `sample_prediction_grid`, seeded by `seed`), and returns `dict[str, PredictionFrame]` of shape
     `(N, n_samples)`.
 - **Pairing with conflictology:** at every origin the same seed picks the same pool positions as
-  `ConflictologyModel` (common random numbers), **provided every forecast cell's pool has at least 2
-  values** in both models. A 1-value pool (a cell whose history starts at `train_end`) consumes no
-  randomness, which shifts the shared random stream for the cells after it. Real pgm `land` data has
+  `ConflictologyModel` (common random numbers), **provided every forecast cell has a full
+  `window_months` history at `train_end`**, so both models' pools have the same length. With a shorter
+  history the same random words map to different positions for that cell; a 1-value pool (a cell whose
+  history starts at `train_end`) also consumes no randomness, which shifts the shared random stream for
+  every cell after it. Real pgm `land` data has
   full history for every cell, so this does not arise there.
 - **It never reads a forecast month.** The newest month in origin `k`'s window is `train_end + k`; its first
   forecast month is `train_end + k + 1`.
@@ -153,7 +155,7 @@ All in `tests/test_rolling_conflictology.py` unless noted. The test input encode
 | `test_a_cell_that_is_never_forecast_cannot_stop_the_run` | A NaN in a cell that first appears after `train_end` is ignored. |
 | `test_training_months_follow_conflictology_rules` | A gap before `train_end` is handled as conflictology handles it, not as an error. |
 | `test_a_gap_after_train_end_but_outside_the_window_is_accepted` | When k > `window_months`, a gap or NaN in post-`train_end` months outside the window does not stop the run. |
-| `test_common_random_numbers_need_pools_of_at_least_two` | Pins the limit of the pairing claim: a cell with a 1-value conflictology pool breaks the pairing for later cells. |
+| `test_common_random_numbers_need_pools_of_at_least_two` | Pins the limit of the pairing claim: a cell with a 1-value conflictology pool breaks the pairing for the cells after it, and removing that cell restores it. |
 | `tests/test_pooling_tail_equivalence.py::test_tail_pools_rejects_an_unsorted_panel` | `tail_pools` refuses an unsorted panel instead of pooling the wrong rows. |
 | `test_nan_after_train_end_in_a_second_target_is_rejected` | Every target is checked for NaN after `train_end`, not only the first. |
 | `test_nan_after_the_origin_is_ignored` | A NaN in a month after the origin (never used) does not stop the run. |
