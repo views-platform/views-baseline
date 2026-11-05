@@ -73,6 +73,8 @@ Both draw `n_samples` i.i.d. samples per cell from a fresh, seeded generator (`n
 
 For each unit `i`, collects that unit's **last `window_months` observed values** up to `train_end`, then draws `n_samples` samples **with replacement** from that per-unit history for every forecast cell. The predictive distribution for a cell is the recent empirical distribution of that same unit — a conflict "climatology." It uses only the unit's own recent history: no pooling across units, no older history.
 
+**The window is fixed at `train_end` for every forecast origin, on purpose.** It mirrors the production regime, where models are trained once a year and the saved artifacts are used for inference for the rest of the year. Note that this is stricter than what the learned models get: they freeze their *parameters* but still read the latest observed data at each origin, whereas for a climatology the data *is* the model, so freezing it also freezes its inputs. `RollingConflictology` below is the version whose information matches the learned models' (#82).
+
 ```python
 ConflictologyModel(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
