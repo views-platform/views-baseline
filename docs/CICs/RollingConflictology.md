@@ -160,6 +160,7 @@ All in `tests/test_rolling_conflictology.py` unless noted. The test input encode
 | `test_nan_after_train_end_in_a_second_target_is_rejected` | Every target is checked for NaN after `train_end`, not only the first. |
 | `test_nan_after_the_origin_is_ignored` | A NaN in a month after the origin (never used) does not stop the run. |
 | `tests/test_pooling_tail_equivalence.py` (float64, NaN position, NaN in a second target) | The shared helper returns float64, and rejects a NaN anywhere in the tail and in any target. |
+| `test_window_start_is_checked_when_k_exceeds_the_window` | When k > `window_months`, the first month of the window is checked (pins the start of the checked range). |
 | `test_negative_sequence_number_is_rejected` | `sequence_number < 0` raises. |
 | `test_is_a_conflictology_subclass` | Pins the subclass relationship (the behaviour is covered by the byte-identity test). |
 | `tests/test_pooling_tail_equivalence.py` | The faster `tail_pools` returns exactly what the old per-cell scan returned, on random, gappy, unsorted panels. |

@@ -295,3 +295,12 @@ def test_nan_after_the_origin_is_ignored(df):
     bad.loc[(520, 2), "y1"] = np.nan
     pf = RollingConflictology(**KW).fit(bad).predict(bad, sequence_number=5, output_length=6)["y1"]
     assert np.isfinite(np.asarray(pf.values)).all()
+
+
+def test_window_start_is_checked_when_k_exceeds_the_window(df):
+    """k = 8 > window 6: the checked range is the window itself, 502..507, so its first month
+    must be checked (pins start = anchor - window_months + 1 against an off-by-one)."""
+    holed = df.drop(index=(502, 1))
+    m = RollingConflictology(**KW).fit(holed)
+    with pytest.raises(ValueError, match=r"\(1, \[502\]\)"):
+        m.predict(holed, sequence_number=8, output_length=6)
