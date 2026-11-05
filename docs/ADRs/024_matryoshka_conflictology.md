@@ -1,6 +1,6 @@
 # ADR-024: MatryoshkaConflictology: a climatology that opens outward as its information ages
 
-**Status:** Proposed (draft for discussion)
+**Status:** Accepted
 **Date:** 2026-11-05
 **Deciders:** Simon
 **Consulted:** views-models session (Phase-1 measurements, lead-vs-calendar and cliff checks); views-hydranet session (evaluation lessons)
