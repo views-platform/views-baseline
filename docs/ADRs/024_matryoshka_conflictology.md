@@ -151,15 +151,21 @@ At grid-cell level (pgm), from the inside out:
 1. **The cell itself.**
 2. **Ring 1:** the 8 cells touching it, including diagonally.
 3. **Ring 2:** the 16 cells touching ring 1.
-4. **The country** the cell belongs to.
-5. **The whole map.** This is a backstop: it only gets weight if the data shows it helps. It is also the
-   only outer doll for the 76 cells that have no country (mostly small islands).
+4. **The rest of the country:** the cell's country, minus the cell and its two rings.
+5. **The rest of the map:** everything else. This is a backstop: it only gets weight if the data shows
+   it helps. For the 76 cells that have no country (mostly small islands), it is the only outer doll.
+
+**Each doll is a shell: it leaves out the dolls inside it.** So no cell is ever counted twice. Without
+this, the country would contain the cell and its rings, and the whole map would contain everything, so the
+cell's own history would be counted several times over. A shell can be empty: for example, a coastal cell
+may have no land cells in its ring 2, and a small country may lie entirely within the rings. An empty shell
+simply takes no part in the forecast.
 
 Neighbours can be computed directly from each cell's ID, because `priogrid_id = (row − 1) × 720 + col`.
 We verified this on all 64,818 land cells, so no new data is needed.
 
-At **country level (cm)** there are no rings for now: the dolls are the country itself, then the whole
-map. Neighbouring countries, or a region/theatre doll, can be added in a later version.
+At **country level (cm)** there are no rings for now: the dolls are the country itself, then the rest of
+the map. Neighbouring countries, or a region/theatre doll, can be added in a later version.
 
 ### What "country" means here
 
@@ -175,60 +181,89 @@ translation table first.
 
 ### How the forecast is made
 
-To forecast one cell for one future month, the model looks at every past observation in every doll and
-gives it a **weight**:
+To forecast one cell for one future month, the model picks one past observation at random and uses its
+value as a forecast draw. It does this as many times as the configuration asks for. All the modelling is
+in **how likely each past observation is to be picked**. That is decided in three steps.
+
+Notation: the history ends at month `c` (the last training month), we are forecasting month `t` (so the
+forecast looks `t − c` months ahead), and `s` is the month a past observation comes from.
+
+**Step 1: pick a doll.** Doll `k` is picked with probability proportional to
 
 ```
-weight = (how much this doll counts) × (how much this observation has faded) / (number of cells in this doll that month)
+ring_weight[k] × exp(−(t − c) / memory[k])
 ```
 
-or, in symbols, for an observation from doll k in month s, when forecasting month t:
+- `ring_weight[k]` is how much the doll counts when we forecast the month right after the history ends.
+  The cell itself is the reference: its weight is fixed at 1.
+- `exp(−(t − c) / memory[k])` is how that say shrinks the further ahead we forecast. A doll with a short
+  memory loses its say quickly; one with a long memory keeps it. For example, with a memory of 12 months, a
+  doll keeps 92% of its say one month ahead, 37% twelve months ahead and 5% three years ahead.
+
+Because the inner dolls have shorter memories than the outer ones, their share shrinks faster, and the
+forecast **opens outward** as we look further ahead.
+
+**Step 2: pick a month within that doll.** Month `s` is picked with probability
 
 ```
-w(k, s; t) = ring_weight[k] × exp(−(t − s) / memory[k]) / n_k(s)
+exp(−(c − s) / memory[k]) / Z_k        where  Z_k = sum over all history months s of exp(−(c − s) / memory[k])
 ```
 
-Each part, in plain words:
+Recent months are more likely than old ones, at the doll's own pace. Dividing by `Z_k` makes these
+probabilities add up to exactly 1, so this step only decides *which* months the doll's say goes to, never
+*how much* say the doll has.
 
-- **How much this doll counts** (`ring_weight[k]`): how important this level is overall. The cell itself
-  is the reference and counts 1; the other dolls' weights are estimated from data.
-- **How much the observation has faded** (`exp(−age / memory)`): an observation that is `memory` months
-  old keeps about 37% of its weight; one that is twice as old keeps about 14%; and so on. Each doll has
-  its own memory. We expect the cell's memory to be the shortest and the world's the longest, but the
-  data decides. If it comes out the other way, that is a finding, not an error.
-- **Age is counted up to the month being forecast**, not up to the end of the history. So the further
-  ahead we forecast, the older every observation is, and the more the short-memory inner dolls have
-  faded relative to the long-memory outer ones. The forecast "opens outward" automatically, without any
-  separate setting for lead time.
-- **Divided by the number of cells in the doll:** ring 2 has 16 cells, a country may have thousands.
-  Without this, large dolls would drown out the cell itself simply by having more cells. Dividing makes
-  each doll count as one voice, however many cells it has.
+**Step 3: pick a cell within that doll in that month,** uniformly. If the shell has `n_k(s)` cells that
+month, each has probability `1 / n_k(s)`. This makes every doll count as one voice however many cells it
+has; without it, a large country would drown out the cell itself.
 
-**Then the model draws:** it picks one past observation at random, with probability proportional to its
-weight, and uses that observation's value as the forecast draw. It repeats this as many times as the
-number of draws the configuration asks for. So:
+**Put together,** the probability of drawing the observation of cell `i` in doll `k` in month `s` is
+proportional to
 
-- every draw is a real observed value (whole numbers of fatalities, nothing invented between them);
-- the chance of conflict is simply the weighted share of past observations that had conflict;
-- the size of conflict, when it happens, comes from the same draw.
+```
+w(k, s, i; t) = ring_weight[k] × exp(−(t − c) / memory[k]) × exp(−(c − s) / memory[k]) / Z_k / n_k(s)
+```
+
+(the forecast divides by the sum of `w` over everything, so the probabilities add up to 1).
+
+**Why `Z_k` matters.** Without it, a doll's total say would grow with its memory: summed over 28 years of
+history, a doll with a 120-month memory would carry about 25 times the say of a doll with a 4-month
+memory at the same weight (113 against 4.5). "How much a doll counts" and "how quickly it forgets" would
+then be tangled together, and the fit could not tell them apart. With `Z_k`, each doll's total say is
+exactly `ring_weight[k] × exp(−(t − c) / memory[k])`, whatever its memory and however long the history.
+
+**What a forecast draw then is:** a real observed value, so a whole number of fatalities, with nothing
+invented between observed values. The chance of conflict is simply the share of the probability that
+falls on observations with conflict. The size of conflict, when there is some, comes from the same draw.
+
+**Checked numerically.** `reports/matryoshka/matryoshka_math_check.py` verifies on a small synthetic
+grid that:
+- each doll's total say is exactly `ring_weight × exp(−(t − c)/memory)`, independent of memory and
+  history length;
+- the cell's share falls and the outer dolls' share rises as the forecast looks further ahead;
+- the shells never overlap and together cover the map;
+- the three-step draw gives exactly the probabilities of the combined formula;
+- the special case below is exactly conflictology.
 
 ### A small worked example
 
 Take a cell that has been quiet for the last ten years, in a country fighting a war elsewhere.
 
 - **Conflictology today:** its window has no conflict, so it forecasts 0% for every month ahead, forever.
-- **Matryoshka, one month ahead:** the cell's own quiet months are recent and carry most of the weight,
-  so the forecast is close to zero, but not exactly zero: the neighbours and the country contribute a
-  little.
-- **Matryoshka, three years ahead:** the cell's own history has faded much more than the country's, so
-  the country's war contributes a larger share of the draws. The forecast now gives a small but real
-  chance of conflict, which is what our measurements say it should.
+- **Matryoshka, one month ahead:** the cell's own quiet months carry most of the say, so the forecast is
+  close to zero, but not exactly zero: the neighbours and the rest of the country contribute a little.
+- **Matryoshka, three years ahead:** the cell's own say has shrunk much more than the country's, so the
+  country's war contributes a larger share of the draws. The forecast now gives a small but real chance of
+  conflict, which is what our measurements say it should.
 
 ### Plain conflictology is a special case
 
-If only the cell itself counts (all other doll weights zero), nothing fades (an infinitely long memory),
-and the history is cut at 36 months, Matryoshka is exactly conflictology. That means comparing the two
-tests precisely the two new ideas, the outer dolls and the fading, and nothing else.
+Give every doll except the cell a weight of zero, let the cell's memory be infinite (nothing fades), and
+use only the last 36 months of history. Then step 1 always picks the cell; in step 2 every month has
+`exp(0) = 1`, so `Z = 36` and each month has probability `1/36`; step 3 has only one cell. That is a
+uniform draw over the cell's last 36 values, which is exactly conflictology. Comparing Matryoshka with
+conflictology therefore tests precisely the two new ideas, the outer dolls and the fading, and nothing
+else.
 
 ### Where the history ends
 
@@ -260,8 +295,8 @@ only be a way to save computing time. The literature supports looking far back:
 | the cell | fixed at 1 (the reference) | estimated |
 | ring 1 | estimated | estimated |
 | ring 2 | estimated | estimated |
-| the country | estimated | estimated |
-| the whole map | estimated | estimated |
+| the rest of the country | estimated | estimated |
+| the rest of the map | estimated | estimated |
 
 That is **9 knobs**, and there is a separate set for each violence type (state-based, non-state,
 one-sided), because the evidence shows they age differently. A single shared set is also fitted as a
@@ -290,12 +325,41 @@ near them, that is independent confirmation; if it lands far away, that differen
 
 The knobs are estimated by **backtesting within the training period**: pretend the history ended at an
 earlier month, forecast the following months, compare with what actually happened, and repeat for several
-such cutoffs. The knob values that forecast best are kept.
+such cutoffs. The knob values with the best score are kept.
 
-"Forecast best" is judged mainly on whether the **chance of conflict is honest** at each forecast
-distance (using a proper score such as the Brier score or log loss, which reward calibration), with the
-**size** of conflict checked separately on cells that had conflict. CRPS alone is not used to choose,
-because we found it can prefer the wrong model (#122).
+**The score used for fitting: a log score over size classes.** Each cell-month's outcome is put into one
+of seven classes:
+
+> 0 · 1 · 2–5 · 6–25 · 26–100 · 101–1,000 · more than 1,000 fatalities
+
+For each cell-month, the model's forecast gives a probability for each class. The score is the logarithm
+of the probability the model gave to the class that actually happened, averaged over all cell-months,
+forecast distances and backtest cutoffs. Higher is better.
+
+Why this score, and not CRPS or the Brier score (lessons from the hydranet evaluation report,
+`views-hydranet/reports/2026-09-30_evaluation_learning_report.md`, §0 and §2–§3):
+
+- **It is one proper score over every possible outcome.** A proper score is one that a forecaster cannot
+  improve by saying something other than what they believe. The report's rule is that *one* such score,
+  over all outcomes, does the choosing, and everything else is a diagnostic. Scores computed only on cells
+  that had conflict must never choose: a forecaster who always predicts conflict would win them (the
+  "forecaster's dilemma", Lerch et al. 2017).
+- **It does not drown in zeros.** About 99.7% of cell-months have no conflict. Scores that average a
+  *distance* over all cells, such as CRPS and the Brier score, then mostly measure the zeros: in hydranet,
+  four models sat within 0.0007 CRPS of each other while their ability to locate conflict differed 13-fold,
+  and CRPS picked the worst of our ten baselines in Phase-1 (#122). A log score instead charges heavily for
+  having said "almost impossible" about something that happened.
+- **It punishes exactly the failure we want to fix.** A cell forecast as *certainly* quiet (probability
+  0) that then sees conflict gets a very bad score. That forces the outer dolls to earn their weight.
+- **Classes keep it finite and robust.** Scoring exact counts would give an infinitely bad score whenever
+  the model had never seen that exact count. Classes avoid that, and one misplaced record, like the 113,000
+  Tigray deaths in a single cell, costs one bad class instead of dominating the score (it made up 38% of
+  every model's CRPS in Phase-1). If a class never occurred anywhere in the history of a violence type, it
+  is merged with its neighbour for that type, so no class can have probability zero for every cell.
+
+**The fitting score is never used to judge the model.** The hydranet report's rule (§8, row 16): *no
+quantity in the training objective may serve as a promotion criterion*. The log score is reported, but the
+model is judged on the separate checks below, on months the fit never saw.
 
 The fitted values are reported in full. They are the scientific result, not just settings. When reporting
 them:
@@ -388,7 +452,8 @@ month ahead as three years ahead.
   with explicit configuration keys and no hidden defaults (ADR-021).
 - Structural choices (number of rings, the outer dolls, how much history, the backtest design) are
   configuration. The fitted knob values are stored on the model and reported, not configured.
-- Neighbours are computed from `priogrid_id`. Grid level first; country level uses country → whole map,
+- Neighbours are computed from `priogrid_id`. Each doll is a shell that excludes the dolls inside it.
+  Grid level first; country level uses country → rest of the map,
   without rings.
 - Random draws follow the same seeding discipline as the other distributional models
   (`sample_prediction_grid`), so results are reproducible.
@@ -398,20 +463,30 @@ month ahead as three years ahead.
 
 ## How we will check it
 
-- **Equivalence check:** with the special-case settings (only the cell, no fading, a 36-month history),
-  Matryoshka must match conflictology in distribution. This is a test, in the same way model E at α = 0
-  was tested against conflictology.
-- **Measured the same way as Phase-1:** compared with conflictology and with the moving-window control,
-  using the same number of draws. We report:
-  - whether the chance of conflict is honest **at each forecast distance** (the check that revealed the
-    problem);
-  - how well it ranks where conflict happens (this must not get worse);
-  - size of conflict, grouped by what the forecast said;
-  - CRPS, split into cells with and without conflict.
+**Before anything else: the equivalence check.** With the special-case settings (only the cell, no
+fading, a 36-month history), Matryoshka must match conflictology in distribution. This is a test, in the
+same way model E at α = 0 was tested against conflictology.
 
-  All of these are reported with and without the cells affected by views-datafactory#533, until that fix
-  is in.
-- **Report-only**, as in ADR-023: we publish a table of properties, not a declared winner.
+**Then the evaluation**, on the calibration test period (months the fit never saw), using hydranet's
+frozen scoring code (`lodestar_score.py`) rather than our own re-implementations. Matryoshka is always
+compared with **plain conflictology and the moving-window control**, with the **same number of draws** and
+the **same random seeds** (a paired comparison: the report shows pairing makes differences about six
+times easier to detect).
+
+What we report, each answering one question, side by side and never folded into a single number:
+
+| question | what we report |
+|---|---|
+| Does the chance of conflict come true as often as it says, **at each forecast distance**? | Calibration of P(conflict), grouped by what the forecast said, per forecast-distance band. This is the check that revealed the problem, and the main thing Matryoshka must improve. |
+| Does it still find **where** conflict happens? | Average precision (AP). It must not get worse. First we check that AP actually separates the models being compared; the report's rule is to check a metric's range before ranking on it. |
+| Does it predict conflict **as often as it happens**? | How often it fires compared with reality. |
+| When there is conflict, **how big**? | The typical (median) and the average size, reported separately: a few huge cells can flatter the average. These are grouped by what the forecast said where possible; anything grouped by what happened is a diagnostic only. |
+| What does CRPS say, and **is any CRPS gain real**? | CRPS split into cells with and without conflict, plus hydranet's check of how much of a gain comes from correctly predicted zeros (a gain that is mostly zeros is an artefact). |
+
+All of these are reported **with and without** the cells affected by views-datafactory#533 until that fix
+is in, and with and without months 501–504.
+
+**Report-only**, as in ADR-023: we publish a table of properties, not a declared winner.
 
 ---
 
@@ -419,7 +494,12 @@ month ahead as three years ahead.
 
 All settled by Simon on 2026-11-05:
 
-- The country is the outer doll, with the whole map as backstop.
+- The country is the outer doll, with the whole map as backstop. Each doll is a **shell** that leaves out
+  the dolls inside it, so nothing is counted twice.
+- Each doll's fade is **normalised** (`Z_k`), so a doll's weight and its memory mean separate things.
+  Checked numerically (`reports/matryoshka/matryoshka_math_check.py`).
+- The knobs are fitted on a **log score over seven size classes**, and that score is never used to judge
+  the model.
 - Two rings of neighbours.
 - A separate set of knobs for each violence type.
 - No rings at country level for now.
@@ -460,5 +540,9 @@ there to measure.
   timescales (about 4.09 and 122.38 months).
 - Hegre, H., Karlsen, J., Nygård, H. M., Strand, H. & Urdal, H. (2013). Predicting Armed Conflict,
   2010–2050. *International Studies Quarterly* 57(2): 250–270.
+- Lerch, S., Thorarinsdottir, T. L., Ravazzolo, F. & Gneiting, T. (2017). Forecaster's dilemma: Extreme
+  events and forecast evaluation. *Statistical Science* 32(1): 106–127.
+- views-hydranet `reports/2026-09-30_evaluation_learning_report.md` (the living evaluation report; read
+  2026-11-05, last changed 2026-11-04), §0, §2.2–2.4, §3.2, §8 (row 16) and §8.3.
 - Hegre, H., Nygård, H. M. & Ræder, R. F. (2017). Evaluating the scope and intensity of the conflict trap.
   *Journal of Peace Research* 54(2): 243–261.
