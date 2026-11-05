@@ -6,9 +6,12 @@ so the month each draw came from can be read back exactly.
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 from conftest import make_dummy_df
 
+from views_baseline.model.frames.input import panel, to_feature_frame
+from views_baseline.model.frames.pooling import window_pool_arrays
 from views_baseline.model.models.distributional import ConflictologyModel, RollingConflictology
 
 PARTITION = {"test": (500, 535)}           # train_end = 499
@@ -65,14 +68,14 @@ def test_fails_loud_when_the_data_does_not_reach_the_origin(df):
     short = make_dummy_df(time_range=range(440, 505))       # data ends at month 504
     m = RollingConflictology(**KW).fit(short)
     m.predict(short, sequence_number=5, output_length=6)     # anchor 504: present
-    with pytest.raises(ValueError, match="month 505"):
+    with pytest.raises(ValueError, match=r"every month 500\.\.505"):
         m.predict(short, sequence_number=6, output_length=6)  # anchor 505: absent
 
 
 def test_fails_loud_when_one_cell_is_missing_at_the_origin(df):
     holed = df.drop(index=(503, 2))                          # entity 2 has no row at month 503
     m = RollingConflictology(**KW).fit(holed)
-    with pytest.raises(ValueError, match="1 of 2 cells"):
+    with pytest.raises(ValueError, match=r"1 of 2 cells are missing months.*\(2, \[503\]\)"):
         m.predict(holed, sequence_number=4, output_length=6)
 
 
@@ -104,8 +107,6 @@ def test_each_target_draws_from_its_own_history_at_every_origin(df):
 def test_entity_set_is_fixed_at_fit_even_if_a_cell_appears_later(df):
     """A cell that first appears after train_end never enters the forecast, at any origin,
     and an earlier predict() call cannot change a later one."""
-    import pandas as pd
-
     months = range(501, 540)
     extra = pd.DataFrame(
         {"y1": [t * 10 + 3 for t in months], "y2": [t * 100 + 3 for t in months]},
@@ -128,3 +129,59 @@ def test_same_draw_indices_as_conflictology_at_every_origin(df, k):
     np.testing.assert_array_equal(
         (np.asarray(r.values) - np.asarray(a.values)) / 10, k
     )
+
+
+# --- added after review-diff and code-review (high) of #129 --------------------------------
+
+
+@pytest.mark.parametrize("k", [1, 12, 30])
+def test_pools_equal_window_pool_arrays_on_a_complete_panel(df, k):
+    """The direct (cell, month) read gives exactly the pools the shared pooling helper gives,
+    anchored at train_end + k, so the speed-up changes nothing on complete data."""
+    m = RollingConflictology(**KW2).fit(df)
+    ours = m._pools_for_origin(df, k)
+    time, unit, values = panel(to_feature_frame(df, loa="pgm", targets=["y1", "y2"]), ["y1", "y2"])
+    _, ref = window_pool_arrays(time, unit, values, ["y1", "y2"], WINDOW, TRAIN_END + k)
+    assert set(ours) == set(m.entity_ids)
+    for cid in m.entity_ids:
+        for t in ("y1", "y2"):
+            np.testing.assert_array_equal(ours[cid][t], ref[cid][t])
+
+
+def test_fails_loud_on_a_gap_earlier_in_the_window(df):
+    """A cell present at the anchor month but missing an earlier month of the window must not
+    pass: the old row-based tail would have silently reached back into the training months."""
+    holed = df.drop(index=(505, 1))                          # window for k = 8 is 502..507
+    m = RollingConflictology(**KW).fit(holed)
+    with pytest.raises(ValueError, match=r"\(1, \[505\]\)"):
+        m.predict(holed, sequence_number=8, output_length=6)
+
+
+def test_nan_after_train_end_names_the_month(df):
+    bad = df.copy()
+    bad.loc[(504, 2), "y1"] = np.nan
+    m = RollingConflictology(**KW).fit(bad)
+    with pytest.raises(ValueError, match=r"NaN in target 'y1' for cell 2 in month\(s\) \[504\]"):
+        m.predict(bad, sequence_number=5, output_length=6)
+
+
+def test_a_cell_that_is_never_forecast_cannot_stop_the_run(df):
+    """Only the fitted (forecast) cells are pooled: a NaN in a cell that first appears after
+    train_end is irrelevant and must not raise."""
+    months = range(501, 540)
+    extra = pd.DataFrame(
+        {"y1": [np.nan] * len(months), "y2": [np.nan] * len(months)},
+        index=pd.MultiIndex.from_product([months, [3]], names=df.index.names),
+    )
+    df2 = pd.concat([df, extra]).sort_index()
+    m = RollingConflictology(**KW2).fit(df2)
+    pf = m.predict(df2, sequence_number=6, output_length=6)["y1"]
+    assert set(_row_entities(pf).tolist()) == {1, 2}
+
+
+def test_is_a_conflictology_subclass():
+    """Byte-identity with conflictology at origin 0 rests on sharing its __init__ and fit, not on
+    a copy that could drift."""
+    assert issubclass(RollingConflictology, ConflictologyModel)
+    assert "fit" not in vars(RollingConflictology)
+    assert "__init__" not in vars(RollingConflictology)

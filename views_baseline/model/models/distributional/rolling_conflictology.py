@@ -4,84 +4,94 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from views_baseline.model.defaults import DEFAULT_SEED
 from views_baseline.model.frames.input import panel, to_feature_frame, to_level
 from views_baseline.model.frames.output import sample_prediction_grid
-from views_baseline.model.frames.pooling import window_pool, window_pool_arrays
 from views_baseline.model.grid import train_test_boundary
+from views_baseline.model.models.distributional.conflictology import ConflictologyModel
 
 if TYPE_CHECKING:
     import pandas as pd
     from views_frames import FeatureFrame
 
 
-class RollingConflictology:
+class RollingConflictology(ConflictologyModel):
     """Conflictology whose window moves with each rolling origin (#126, #82; ADR-024's control).
 
     `ConflictologyModel` draws every origin's forecast from one window ending at ``train_end``.
-    This model draws origin ``k``'s forecast from the ``window_months`` ending at
-    ``train_end + k``: the month just before that origin's first forecast month
+    This model draws origin ``k``'s forecast from the ``window_months`` calendar months ending
+    at ``train_end + k``: the month just before that origin's first forecast month
     (``test_start + k``). That is the information rule views-stepshifter uses for the same
     rolling evaluation, so no forecast month is ever inside its own window.
 
-    Everything else is conflictology's: the same pooling (`window_pool`), the same draw
-    (`rng.choice` over the pool), the same RNG seeding. At origin 0 the window ends at
-    ``train_end``, so origin 0's output is byte-identical to `ConflictologyModel`'s.
+    It is a subclass, so ``__init__``, ``fit`` and the stored origin-0 pools *are*
+    conflictology's. Origin 0 is therefore byte-identical to `ConflictologyModel`, and at every
+    origin the same seed picks the same pool positions (common random numbers), which keeps the
+    comparison with conflictology paired.
 
-    **Fails loud** if the input does not reach ``train_end + k`` for some cell. A silent fall
-    back to an older window would turn this control back into conflictology without saying so.
+    **Fails loud** if, for any forecast cell, the window ``train_end + k − window_months + 1 ..
+    train_end + k`` is not complete in the input (a missing month or a NaN). A silent fall back
+    to an older window would turn this control back into conflictology without saying so.
     """
 
-    distributional = True
-
-    def __init__(
-        self,
-        targets: list[str],
-        window_months: int,
-        partition_dict: dict,
-        loa: str,
-        n_samples: int,
-        seed: int = DEFAULT_SEED,
-    ):
-        self.targets = targets
-        self.partition_dict = partition_dict
-        self.loa = loa
-        self.window_months = window_months
-        self.n_samples = n_samples
-        self.seed = seed
-        self.entity_ids = None
-        self.hist_per_entity = None  # the origin-0 pools (window ending at train_end)
-
-    def fit(self, df: pd.DataFrame | FeatureFrame) -> RollingConflictology:
-        """Fix the entity set and the origin-0 pools (identical to `ConflictologyModel.fit`)."""
-        _, train_end = train_test_boundary(self.partition_dict)
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        self.entity_ids, self.hist_per_entity = window_pool(
-            ff, self.targets, self.window_months, train_end
-        )
-        return self
-
     def _pools_for_origin(self, df, sequence_number: int) -> dict:
-        """The pools for one origin: the ``window_months`` ending at ``train_end + k``."""
+        """The pools for one origin: the ``window_months`` months ending at ``train_end + k``.
+
+        Reads the window directly by (cell, month) position for the fitted cells only: one pass
+        over the panel, no per-cell scan (measured on the 24.9M-row pgm `land` panel: about
+        0.5 s, against about 14 minutes for re-running `window_pool_arrays`). On a complete
+        panel the result equals `window_pool_arrays` anchored at ``train_end + k``.
+        """
         if sequence_number == 0:
             return self.hist_per_entity
         _, train_end = train_test_boundary(self.partition_dict)
         anchor = train_end + sequence_number
+        first = anchor - self.window_months + 1
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
         time, unit, values = panel(ff, self.targets)
-        entity_ids, pools = window_pool_arrays(
-            time, unit, values, self.targets, self.window_months, anchor
-        )
-        reached = set(np.asarray(unit)[np.asarray(time) == anchor].tolist())
-        missing = [cid for cid in self.entity_ids if cid not in reached]
-        if missing:
+        time, unit = np.asarray(time), np.asarray(unit)
+
+        cells = np.asarray(self.entity_ids)          # ascending (np.unique at fit)
+        in_window = (time >= first) & (time <= anchor)
+        row = np.searchsorted(cells, unit[in_window])
+        known = row < cells.size
+        known[known] = cells[row[known]] == unit[in_window][known]
+        row = row[known]
+        col = (time[in_window] - first)[known]
+
+        present = np.zeros((cells.size, self.window_months), dtype=bool)
+        present[row, col] = True
+        incomplete = ~present.all(axis=1)
+        if incomplete.any():
+            examples = [
+                (int(cells[i]), [int(first + m) for m in np.nonzero(~present[i])[0][:3]])
+                for i in np.nonzero(incomplete)[0][:3]
+            ]
             raise ValueError(
-                f"RollingConflictology needs observed data up to month {anchor} "
-                f"(train_end {train_end} + sequence_number {sequence_number}) for every cell, "
-                f"but {len(missing)} of {len(self.entity_ids)} cells have no row at month "
-                f"{anchor} (e.g. {missing[:3]}). Refusing to fall back to an older window."
+                f"RollingConflictology needs every month {first}..{anchor} (the window for "
+                f"sequence_number {sequence_number}, ending at train_end {train_end} + "
+                f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
+                f"{cells.size} cells are missing months (cell, first missing months: "
+                f"{examples}). Refusing to fall back to an older window."
             )
-        return pools
+
+        dense = {}
+        for t in self.targets:
+            block = np.empty((cells.size, self.window_months), dtype=np.float64)
+            block[row, col] = values[t][in_window][known]
+            bad = np.isnan(block).any(axis=1)
+            if bad.any():
+                i = int(np.nonzero(bad)[0][0])
+                months = [int(first + m) for m in np.nonzero(np.isnan(block[i]))[0][:3]]
+                raise ValueError(
+                    f"RollingConflictology: NaN in target {t!r} for cell {int(cells[i])} in "
+                    f"month(s) {months}, inside the window {first}..{anchor} for "
+                    f"sequence_number {sequence_number}. {int(bad.sum())} cell(s) affected."
+                )
+            dense[t] = block
+        return {
+            cid: {t: dense[t][i] for t in self.targets}
+            for i, cid in enumerate(self.entity_ids)
+        }
 
     def predict(
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int
