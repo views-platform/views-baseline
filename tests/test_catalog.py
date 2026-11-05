@@ -9,6 +9,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
@@ -239,6 +240,7 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
         ("ConflictologyModel", ConflictologyModel),
         ("MixtureBaseline", MixtureBaseline),
         ("InterpolatedQuantileConflictology", InterpolatedQuantileConflictology),
+        ("RollingConflictology", RollingConflictology),
         ("KDEConflictology", KDEConflictology),
         ("EmpiricalKDEMixtureConflictology", EmpiricalKDEMixtureConflictology),
     ],

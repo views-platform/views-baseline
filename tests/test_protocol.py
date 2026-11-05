@@ -8,6 +8,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 from views_baseline.model.protocol import BaselineModel, DistributionalBaselineModel
@@ -33,6 +34,7 @@ _DISTRIBUTIONAL_MODELS = [
         {**_BASE, "window_months": 3, "n_samples": 10, "family": "gumbel", "transform": "log1p"},
     ),
     (InterpolatedQuantileConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
+    (RollingConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
     (KDEConflictology, {**_BASE, "window_months": 3, "n_samples": 10, "bandwidth": "sj"}),
     (
         EmpiricalKDEMixtureConflictology,

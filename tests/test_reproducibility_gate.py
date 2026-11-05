@@ -92,7 +92,7 @@ def test_algorithm_genomes_covers_all_catalog_models():
         "ConflictologyModel", "MixtureBaseline",
         "ParametricConflictology", "ParametricHurdleConflictology",
         "InterpolatedQuantileConflictology", "KDEConflictology",
-        "EmpiricalKDEMixtureConflictology",
+        "EmpiricalKDEMixtureConflictology", "RollingConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
 
@@ -393,3 +393,9 @@ def test_smoothed_climatology_genomes_are_exact():
         "window_months", "n_samples", "seed", "bandwidth"}
     assert set(genomes["EmpiricalKDEMixtureConflictology"]) == {
         "window_months", "n_samples", "seed", "alpha", "bandwidth"}
+
+
+def test_rolling_conflictology_genome_is_exact():
+    """#126: the moving-window control audits exactly conflictology's keys."""
+    assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["RollingConflictology"]) == {
+        "window_months", "n_samples", "seed"}
