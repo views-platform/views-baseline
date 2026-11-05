@@ -39,10 +39,17 @@ Add **`MatryoshkaConflictology`**: a climatology that draws from nested spatial 
 own memory. As the forecast looks further ahead, the inner rings' information ages and the forecast
 **opens outward** to larger, slower-changing rings.
 
-**The dolls.** Ring k = 0 is the cell itself. Ring k = 1..K are its k-th order queen-contiguity
-neighbours on the PRIO-GRID (computed from `priogrid_id = (row − 1) × 720 + col`, verified on all
-64,818 `land` cells). An outermost ring is a broad level (country, or the whole map; see Open
-Questions).
+**The dolls (pgm).**
+- **Ring k = 0** is the cell itself.
+- **Rings k = 1, 2** are its first- and second-order queen-contiguity neighbours on the PRIO-GRID,
+  computed from `priogrid_id = (row − 1) × 720 + col` (verified on all 64,818 `land` cells).
+  **Two rings**, decided 2026-11-05.
+- **The country** is the next doll (`c_id`, one per cell).
+- **The whole map** is the outermost doll, as a backstop. It must earn a non-zero weight in the fit;
+  it always serves the ~76 `land` cells with no country.
+
+**At cm level, no rings for now:** the country itself, with memory decay, then the whole map. A
+region or theatre doll, or country contiguity, can be added later.
 
 **The weight** of a past observation of ring k in month s, when forecasting target month t:
 
@@ -71,9 +78,26 @@ the two added ideas (rings, decay), nothing else.
 condition on months up to each origin instead is #82's question, and the sliding-window control
 below answers it separately.
 
-**Knobs are fitted, not tuned by hand.** With K = 2 plus the broad level, there are 4 memories and 3
-free ring weights. They are shared across the whole map and fitted by rolling backtest **inside the
-training partition**. The objective is a proper score on occurrence by lead (Brier or log loss, so
+**The neighbour rings follow a rule, not free knobs:** ring_weight[k] = ρ^k and memory[k] =
+memory[0] × γ^k for k = 0, 1, 2, so the neighbourhood costs 3 knobs (memory[0], ρ, γ). The country
+and the whole map each add a weight and a memory. That is **7 knobs per target**.
+
+**Separate knobs per violence type** (sb, ns, os), decided 2026-11-05: they plausibly persist and
+spread differently, and the model already runs per target. A shared fit is reported as a check, and
+taken instead if it does as well.
+
+**Starting values and plausible ranges** come from von der Maase (2025), *The Currents of Conflict*
+(arXiv:2506.06828):
+- Spatial Matérn-3/2 lengthscale ℓ = 0.72° over cell centroids. That gives a ring-average correlation
+  of ≈ 0.58 (ring 1) and ≈ 0.24 (ring 2), i.e. **ρ ≈ 0.4**, with ring 3 ≤ 0.1.
+- Temporal lengthscales ≈ **4 months** (short-term trend) and ≈ **122 months** (long-term trend).
+
+Those were fitted on log fatalities and the 60 most conflict-heavy cells. So they seed the backtest
+and bound a plausible range; they are not fixed. A fit that lands near them is independent
+confirmation; one that lands far away is a finding.
+
+**Knobs are fitted, not tuned by hand.** They are shared across the whole map and fitted by rolling
+backtest **inside the training partition**. The objective is a proper score on occurrence by lead (Brier or log loss, so
 calibration is rewarded), with size checked by CRPS on positive cells. **Not CRPS alone** (#122). The
 fitted values are reported; they are the scientific output.
 
@@ -133,8 +157,7 @@ h = 36.
   genome keys (ADR-021: no defaults for the fitted or structural keys).
 - Structural keys: number of rings K, the broad level's definition, the history cap, the backtest
   design. Fitted values are stored on the model and reported, not configured.
-- Neighbours are computed from `priogrid_id`. pgm only at first; cm has no geometry here (Open
-  Questions).
+- Neighbours are computed from `priogrid_id`. pgm first; cm uses country → whole map, without rings.
 - The same RNG and seeding discipline as the other distributional models (`sample_prediction_grid`).
 - Evaluation memory is handled by the streaming path (#121).
 
@@ -154,22 +177,28 @@ h = 36.
 
 ## Open Questions
 
-1. **The broad level:** country (borders matter for conflict) or the whole map? Decided by the
-   backtest; both are cheap. Note that in the datafactory pull, `c_id` is a GAUL code, not a VIEWS
-   country id (views-models#660).
-2. **K, the number of neighbour rings:** 2 is the proposal; the backtest can test 1 and 3.
-3. **Lead vs calendar month** is not yet separated in the evidence: does the decay follow months since
+Decided 2026-11-05 (Simon): the country as the outer doll, with the whole map as backstop; two
+neighbour rings; separate knobs per violence type; no rings at cm for now.
+
+Still open:
+1. **Two time scales in the inner doll?** The Currents paper finds a ~4-month short trend on top of a
+   ~122-month long one. A cell keeps a long-run level (why "where" is still well predicted 13+ months
+   out) plus bursts that fade within months. One memory per doll cannot represent both. The backtest
+   should compare a one-memory and a two-memory inner doll (+1 knob).
+2. **Lead vs calendar month** is not yet separated in the evidence: does the decay follow months since
    the history ended, or the calendar? Pending the models session's check on another origin. The design
    assumes the former.
-4. **The history cap:** with decay, the full history can be used, but a cap bounds cost and the
+3. **The history cap:** with decay, the full history can be used, but a cap bounds cost and the
    influence of early, sparser data.
-5. **cm level:** no ring geometry here. Either cell-only with decay at cm, or a country-contiguity source.
-6. **Per-target memories** (sb / ns / os) or shared? Shared is simpler; violence types may age
-   differently.
+4. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
+   a grouping key; matters only if joined to anything else.
+5. **The geometric ring rule** (ρ^k, γ^k) is an assumption that saves knobs. With only two rings it is
+   cheap to test against free per-ring knobs.
 
 ## References
 
 - #82 (fixed vs sliding window), #109 (Phase-1 results and corrections), #111, #112, #122 (scoring).
 - ADR-021 (no magic defaults), ADR-023 (smoothed climatology; report-only evaluation).
+- von der Maase, S. (2025). *The Currents of Conflict: Decomposing Conflict Trends with Gaussian Processes.* arXiv:2506.06828. Table 2 (ℓ_SCE = 0.72°, Matérn 3/2) and the temporal lengthscales (≈ 4.09 and 122.38 months).
 - views-models `reports/2026-11-04_baseline_phase1/` (measurements, including `cond_fcst.py`).
 - views-datafactory#533 (misplaced aggregate events).
