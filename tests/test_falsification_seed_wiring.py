@@ -49,7 +49,7 @@ def _catalog(seed):
 @pytest.mark.parametrize(
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
-        "KDEConflictology", "EmpiricalKDEMixtureConflictology",
+        "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
     ]
 )
 def test_catalog_forwards_seed(algo):
@@ -64,7 +64,7 @@ def test_catalog_forwards_seed(algo):
 @pytest.mark.parametrize(
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
-        "KDEConflictology", "EmpiricalKDEMixtureConflictology",
+        "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
     ]
 )
 def test_different_seed_produces_different_output(algo):
@@ -85,7 +85,7 @@ def test_different_seed_produces_different_output(algo):
 @pytest.mark.parametrize(
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
-        "KDEConflictology", "EmpiricalKDEMixtureConflictology",
+        "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
     ]
 )
 def test_catalog_requires_seed(algo):

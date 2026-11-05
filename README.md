@@ -106,6 +106,14 @@ A two-part law per unit: a **zero-spike** (empirical zero-rate, Bernoulli) plus 
 ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_samples, family, transform="none", seed=42)
 ```
 
+#### RollingConflictology — conflictology with a moving window
+
+`ConflictologyModel` whose window moves with each rolling forecast origin (#126; the control for ADR-024). `ConflictologyModel` draws every origin's forecast from one window ending at the last training month. `RollingConflictology` draws origin `k`'s forecast from the window ending at `train_end + k`: the month just before that origin's first forecast month, the same information rule views-stepshifter uses. At origin 0 it is identical to `ConflictologyModel`. It stops with an error if the data does not reach `train_end + k` for every cell, rather than quietly using an older window.
+
+```python
+RollingConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
+```
+
 #### InterpolatedQuantileConflictology — smoothed climatology B
 
 `ConflictologyModel` with the positive part smoothed (ADR-023). The zero rate is the window's, exactly as in `ConflictologyModel`. A positive draw comes from the **linearly interpolated quantile function** of the window's positive values, rounded to a whole count. So it can draw the counts between the observed ones, but never beyond the smallest or largest. Cells with fewer than two distinct positive values are drawn as `ConflictologyModel` draws them, and counted in one warning.
@@ -150,7 +158,7 @@ catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
-#  'EmpiricalKDEMixtureConflictology']
+#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology']
 ```
 
 ---

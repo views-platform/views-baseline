@@ -7,6 +7,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
@@ -47,6 +48,7 @@ class BaselineModelCatalog:
             "InterpolatedQuantileConflictology": self._get_interpolated_quantile,
             "KDEConflictology": self._get_kde,
             "EmpiricalKDEMixtureConflictology": self._get_empirical_kde_mixture,
+            "RollingConflictology": self._get_rolling_conflictology,
         }
 
     @property
@@ -117,6 +119,16 @@ class BaselineModelCatalog:
             loa=self.loa,
             n_samples=self.config["n_samples"],
             seed=self.config["seed"],  # required + audited genome key (ADR-021); no silent default
+        )
+
+    def _get_rolling_conflictology(self):
+        return RollingConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            seed=self.config["seed"],
         )
 
     def _get_mixture_model(self):
