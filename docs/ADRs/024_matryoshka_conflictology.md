@@ -222,6 +222,13 @@ Decided 2026-11-05 (Simon):
 - no rings at cm for now;
 - **one memory per doll in v1**;
 - **at least 10 years of history**;
+- **the country doll is the FAO GAUL 2024 country (`gaul0_code`)**, the platform's country identity
+  (views-datafactory ADR-025). It reaches the data as `c_id`, and is fixed per cell over time.
+  hydranet (`bright_starship`) and the chrome_box/crate members (e.g. `ashen_sparrow`) use the same
+  mapping. The legacy, time-varying academic country id (G&W / CShapes) is **not** used. In the
+  Phase-1 `land` pull: 202 countries; 76 of 64,818 cells have `c_id` ≤ 0 (no country) and draw from
+  the whole-map doll instead. Any join to data keyed by another country id (ISO3, legacy ids) needs
+  an explicit crosswalk first.
 - **fading follows the age of the information (time since the data ended), per violence type.**
   Confirmed by refitting at multiple cutoffs (see Context: Evidence on age). Strong for quiet cells;
   for hot cells, robust in sign only; nil for sb hot cells.
@@ -237,9 +244,7 @@ modelling one. The literature supports a long reach:
   fast (weight e⁻² ≈ 0.14 at 20 years). The backtest should report where the fitted country memory lands.
 
 Still open:
-1. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
-   a grouping key; matters only if joined to anything else.
-2. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
+1. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
    free per-ring knobs.
 
 **For v2:**
@@ -255,6 +260,6 @@ Still open:
 - ADR-021 (no magic defaults), ADR-023 (smoothed climatology; report-only evaluation).
 - von der Maase, S. (2025). *The Currents of Conflict: Decomposing Conflict Trends with Gaussian Processes.* arXiv:2506.06828. Table 2 (ℓ_SCE = 0.72°, Matérn 3/2) and the temporal lengthscales (≈ 4.09 and 122.38 months).
 - views-models `reports/2026-11-04_baseline_phase1/` (measurements, including `cond_fcst.py`).
-- views-datafactory#533 (misplaced aggregate events).
+- views-datafactory#533 (misplaced aggregate events); views-datafactory ADR-025 (country identity: GAUL).
 - Hegre, H., Karlsen, J., Nygård, H. M., Strand, H. & Urdal, H. (2013). Predicting Armed Conflict, 2010–2050. *International Studies Quarterly* 57(2): 250–270 (conflict history as log years in state).
 - Hegre, H., Nygård, H. M. & Ræder, R. F. (2017). Evaluating the scope and intensity of the conflict trap. *Journal of Peace Research* 54(2): 243–261 (effects linger ≥ 25 years; 20 years of peace lowers the risk 84%).
