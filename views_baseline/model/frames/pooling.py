@@ -119,21 +119,35 @@ def tail_pools(
 ) -> dict:
     """Per-entity last ``window_months`` values from a ``(entity, time)``-sorted panel.
 
-    Fails loud on ``window_months <= 0`` (else the numpy ``block[-0:]`` slice returns the
-    whole history) and on a NaN in the pooled tail (C-33) — the pre-PR pandas path silently
-    skipna'd (``last()`` / ``mean(skipna=True)``); the numpy port surfaces it instead of
-    forward-filling / poisoning the forecast. This guards only the **tail** each pooling model
+    ``s_unit`` **must** be sorted ascending (entity primary, as :func:`sort_train_panel`
+    returns it): each entity's rows are located by binary search, so an unsorted panel would
+    pool the wrong rows. Entity order is checked (an unsorted ``s_unit`` raises); time order
+    within an entity is the caller's responsibility (:func:`sort_train_panel` provides it).
+
+    Fails loud on ``window_months <= 0`` (else every pool would be empty) and on a NaN in
+    the pooled tail (C-33) — the pre-PR pandas path silently skipna'd (``last()`` /
+    ``mean(skipna=True)``); the numpy port surfaces it instead of forward-filling / poisoning
+    the forecast. This guards only the **tail** each pooling model
     uses; a model that consumes non-tail rows (``MixtureBaseline``'s global pool) applies its
     own NaN guard on the full panel.
     """
     if window_months <= 0:
         raise ValueError(f"window_months must be >= 1, got {window_months}.")
+    if s_unit.size > 1 and np.any(s_unit[1:] < s_unit[:-1]):
+        raise ValueError(
+            "tail_pools: s_unit is not sorted ascending by entity; pass the panel from "
+            "sort_train_panel."
+        )
 
+    # s_unit is sorted (entity primary, time secondary), so each entity's rows are one contiguous
+    # block: find its bounds by binary search instead of scanning the whole panel per entity
+    # (that scan made pooling O(entities x rows): ~14 min at pgm `land`). Same rows, same order.
+    starts = np.searchsorted(s_unit, entity_ids, side="left")
+    ends = np.searchsorted(s_unit, entity_ids, side="right")
     pools = {}
-    for cid in entity_ids:
+    for cid, start, end in zip(entity_ids, starts, ends):
         # entity_ids come from rows present at train_end, so every block is non-empty.
-        block = np.nonzero(s_unit == cid)[0]  # this entity's rows, already in time order
-        tail = block[-window_months:]  # last window_months in time order
+        tail = np.arange(max(start, end - window_months), end)  # last window_months, time order
         pool = {}
         for t in targets:
             vals = s_vals[t][tail].astype(np.float64)
