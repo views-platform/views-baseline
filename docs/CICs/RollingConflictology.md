@@ -47,13 +47,19 @@ that ages within one forecast as it looks further ahead (which it does not).
     `window_months` rows per forecast cell up to `train_end + k`, from the shared
     `window_pool_arrays`. Only the forecast cells (present at `train_end`) are pooled, so a cell that
     is never forecast cannot affect or stop the run;
-  - before that, it checks that **every month from `train_end + 1` to `train_end + k` is present and
-    not NaN** for every forecast cell. Those are the months conflictology never sees; a gap there would
+  - before that, it checks that **every month after `train_end` that lies inside the window**
+    (`max(train_end + 1, train_end + k − window_months + 1)` to `train_end + k`) is present and not
+    NaN for every forecast cell. Those are the months conflictology never sees; a gap there would
     silently pull older months back into the window. Months up to `train_end` follow conflictology's
     rules exactly (a training-period gap or a short history is handled as conflictology handles it);
   - draws exactly as `ConflictologyModel` does (`rng.choice` over the pool, through
     `sample_prediction_grid`, seeded by `seed`), and returns `dict[str, PredictionFrame]` of shape
     `(N, n_samples)`.
+- **Pairing with conflictology:** at every origin the same seed picks the same pool positions as
+  `ConflictologyModel` (common random numbers), **provided every forecast cell's pool has at least 2
+  values** in both models. A 1-value pool (a cell whose history starts at `train_end`) consumes no
+  randomness, which shifts the shared random stream for the cells after it. Real pgm `land` data has
+  full history for every cell, so this does not arise there.
 - **It never reads a forecast month.** The newest month in origin `k`'s window is `train_end + k`; its first
   forecast month is `train_end + k + 1`.
 
@@ -80,8 +86,8 @@ once per cell, about 14 minutes). Twelve origins add about a minute and a half t
 
 | Failure | Loudness | Notes |
 |---|---|---|
-| A month between `train_end + 1` and `train_end + k` missing for a forecast cell (the data ends early, or a gap after `train_end`) | `ValueError` naming the months, how many cells, and example cells with their missing months | A silent fall back to older months would turn this control back into conflictology without anyone noticing. |
-| NaN in a month between `train_end + 1` and `train_end + k` for a forecast cell | `ValueError` naming the target, the cell and the month(s) | Points at the post-`train_end` month. |
+| A month after `train_end` and inside the window missing for a forecast cell (the data ends early, or a gap after `train_end`). Months after `train_end` that fall outside the window (when k > `window_months`) are not required. | `ValueError` naming the months, how many cells, and example cells with their missing months | A silent fall back to older months would turn this control back into conflictology without anyone noticing. |
+| NaN in a month after `train_end` and inside the window, for a forecast cell | `ValueError` naming the target, the cell and the month(s) | Points at the post-`train_end` month. |
 | `sequence_number < 0` | `ValueError` | A negative origin would build a window ending before `train_end` and look valid. |
 | NaN in the training months of the window, `window_months <= 0`, bad input | `ValueError` | As `ConflictologyModel` (`tail_pools`, `window_pool`, `to_feature_frame`). |
 
@@ -146,6 +152,9 @@ All in `tests/test_rolling_conflictology.py` unless noted. The test input encode
 | `test_an_unfitted_cell_cannot_fill_a_fitted_cell_gap` (foreign id below / between fitted ids) | A never-forecast cell cannot stand in for a forecast cell's missing month. |
 | `test_a_cell_that_is_never_forecast_cannot_stop_the_run` | A NaN in a cell that first appears after `train_end` is ignored. |
 | `test_training_months_follow_conflictology_rules` | A gap before `train_end` is handled as conflictology handles it, not as an error. |
+| `test_a_gap_after_train_end_but_outside_the_window_is_accepted` | When k > `window_months`, a gap or NaN in post-`train_end` months outside the window does not stop the run. |
+| `test_common_random_numbers_need_pools_of_at_least_two` | Pins the limit of the pairing claim: a cell with a 1-value conflictology pool breaks the pairing for later cells. |
+| `tests/test_pooling_tail_equivalence.py::test_tail_pools_rejects_an_unsorted_panel` | `tail_pools` refuses an unsorted panel instead of pooling the wrong rows. |
 | `test_negative_sequence_number_is_rejected` | `sequence_number < 0` raises. |
 | `test_is_a_conflictology_subclass` | Pins the subclass relationship (the behaviour is covered by the byte-identity test). |
 | `tests/test_pooling_tail_equivalence.py` | The faster `tail_pools` returns exactly what the old per-cell scan returned, on random, gappy, unsorted panels. |

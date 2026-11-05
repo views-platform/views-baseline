@@ -119,15 +119,24 @@ def tail_pools(
 ) -> dict:
     """Per-entity last ``window_months`` values from a ``(entity, time)``-sorted panel.
 
-    Fails loud on ``window_months <= 0`` (else the numpy ``block[-0:]`` slice returns the
-    whole history) and on a NaN in the pooled tail (C-33) — the pre-PR pandas path silently
-    skipna'd (``last()`` / ``mean(skipna=True)``); the numpy port surfaces it instead of
-    forward-filling / poisoning the forecast. This guards only the **tail** each pooling model
+    ``s_unit`` **must** be sorted ascending (entity primary, as :func:`sort_train_panel`
+    returns it): each entity's rows are located by binary search, so an unsorted panel would
+    pool the wrong rows. It is checked, and an unsorted panel raises.
+
+    Fails loud on ``window_months <= 0`` (else every pool would be empty) and on a NaN in
+    the pooled tail (C-33) — the pre-PR pandas path silently skipna'd (``last()`` /
+    ``mean(skipna=True)``); the numpy port surfaces it instead of forward-filling / poisoning
+    the forecast. This guards only the **tail** each pooling model
     uses; a model that consumes non-tail rows (``MixtureBaseline``'s global pool) applies its
     own NaN guard on the full panel.
     """
     if window_months <= 0:
         raise ValueError(f"window_months must be >= 1, got {window_months}.")
+    if s_unit.size > 1 and np.any(s_unit[1:] < s_unit[:-1]):
+        raise ValueError(
+            "tail_pools: s_unit is not sorted ascending by entity; pass the panel from "
+            "sort_train_panel."
+        )
 
     # s_unit is sorted (entity primary, time secondary), so each entity's rows are one contiguous
     # block: find its bounds by binary search instead of scanning the whole panel per entity

@@ -38,3 +38,9 @@ def test_tail_pools_equals_the_per_entity_scan(seed, window):
     for cid in old:
         for t in ("a", "b"):
             np.testing.assert_array_equal(new[cid][t], old[cid][t])
+
+
+def test_tail_pools_rejects_an_unsorted_panel():
+    s_unit = np.array([2, 2, 1, 1])
+    with pytest.raises(ValueError, match="not sorted"):
+        tail_pools(np.array([1, 2]), s_unit, {"a": np.zeros(4)}, ["a"], 3)

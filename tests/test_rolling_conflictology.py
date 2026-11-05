@@ -190,17 +190,17 @@ def test_is_a_conflictology_subclass():
 
 def test_fails_loud_on_a_gap_in_the_first_month_after_train_end(df):
     holed = df.drop(index=(500, 1))                       # first month after train_end 499
-    m = RollingConflictology(**KW).fit(holed)
+    m = RollingConflictology(**KW).fit(holed)             # k = 4: window 498..503
     with pytest.raises(ValueError, match=r"\(1, \[500\]\)"):
-        m.predict(holed, sequence_number=8, output_length=6)
+        m.predict(holed, sequence_number=4, output_length=6)
 
 
 def test_nan_in_the_first_month_after_train_end_names_the_month(df):
     bad = df.copy()
     bad.loc[(500, 2), "y1"] = np.nan
-    m = RollingConflictology(**KW).fit(bad)
+    m = RollingConflictology(**KW).fit(bad)               # k = 4: window 498..503
     with pytest.raises(ValueError, match=r"NaN in target 'y1' for cell 2 in month\(s\) \[500\]"):
-        m.predict(bad, sequence_number=8, output_length=6)
+        m.predict(bad, sequence_number=4, output_length=6)
 
 
 @pytest.mark.parametrize("foreign", [0, 2])                # below, and between, the fitted cells
@@ -238,3 +238,33 @@ def test_negative_sequence_number_is_rejected(df):
     m = RollingConflictology(**KW).fit(df)
     with pytest.raises(ValueError, match="sequence_number must be >= 0"):
         m.predict(df, sequence_number=-1, output_length=6)
+
+
+def test_a_gap_after_train_end_but_outside_the_window_is_accepted(df):
+    """With window 6 and k = 8 the window is 502..507: month 500 cannot affect the pool, so a gap
+    or a NaN there must not stop the run."""
+    holed = df.drop(index=(500, 1))
+    holed.loc[(501, 2), "y1"] = np.nan
+    m = RollingConflictology(**KW).fit(holed)
+    pf = m.predict(holed, sequence_number=8, output_length=6)["y1"]
+    months = _months_drawn(pf, _row_entities(pf))
+    assert months.min() == 502 and months.max() == 507
+
+
+def test_common_random_numbers_need_pools_of_at_least_two(df):
+    """The documented limit of the pairing claim: a cell whose conflictology pool has 1 value
+    (it first appears at train_end) consumes no randomness there, so the cells after it are no
+    longer paired. Pins the docstring's precondition so it cannot silently become wrong."""
+    short = pd.concat([
+        df,
+        pd.DataFrame({"y1": [t * 10 + 0 for t in range(499, 540)],
+                      "y2": [t * 100 + 0 for t in range(499, 540)]},
+                     index=pd.MultiIndex.from_product([range(499, 540), [0]],
+                                                      names=df.index.names)),
+    ]).sort_index()                                       # cell 0: history starts at train_end
+    a = ConflictologyModel(**KW).fit(short).predict(short, sequence_number=3, output_length=6)
+    r = RollingConflictology(**KW).fit(short).predict(short, sequence_number=3, output_length=6)
+    a, r = a["y1"], r["y1"]
+    shift = (np.asarray(r.values) - np.asarray(a.values)) / 10
+    rows = _row_entities(a)
+    assert not np.all(shift[rows != 0] == 3)              # pairing is lost after cell 0

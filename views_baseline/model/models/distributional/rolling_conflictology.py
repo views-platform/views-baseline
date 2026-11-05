@@ -26,13 +26,15 @@ class RollingConflictology(ConflictologyModel):
 
     The window is conflictology's own: the last ``window_months`` rows per cell, from the shared
     `window_pool_arrays`, only anchored later. It is a subclass, so ``__init__``, ``fit`` and the
-    origin-0 pools *are* conflictology's: origin 0 is byte-identical to `ConflictologyModel`, and
-    at every origin the same seed picks the same pool positions (common random numbers).
+    origin-0 pools *are* conflictology's: origin 0 is byte-identical to `ConflictologyModel`.
+    At every origin the same seed picks the same pool positions (common random numbers),
+    provided every forecast cell's pool has at least 2 values at both: a 1-value pool consumes
+    no randomness, which shifts the shared random stream for the cells after it.
 
-    **Fails loud** if, for any forecast cell, a month between ``train_end + 1`` and
-    ``train_end + k`` is missing or NaN. Those are the months conflictology never sees; a gap
-    there would silently pull older months back into the window and turn this control back into
-    conflictology.
+    **Fails loud** if, for any forecast cell, a month after ``train_end`` that lies inside the
+    window (``max(train_end + 1, train_end + k − window_months + 1) .. train_end + k``) is missing
+    or NaN. Those are the months conflictology never sees; a gap there would silently pull older
+    months back into the window and turn this control back into conflictology.
     """
 
     def _pools_for_origin(self, df, sequence_number: int) -> dict:
@@ -61,22 +63,24 @@ class RollingConflictology(ConflictologyModel):
     def _check_months_after_train_end(
         self, time, unit, values, train_end: int, anchor: int, sequence_number: int
     ) -> None:
-        """Every forecast cell must have every month ``train_end + 1 .. anchor``, none NaN."""
+        """Every forecast cell must have every month after train_end that lies inside the window,
+        none NaN: months ``max(train_end + 1, anchor - window_months + 1) .. anchor``."""
+        start = max(train_end + 1, anchor - self.window_months + 1)
         cells = np.asarray(self.entity_ids)
-        after = (time > train_end) & (time <= anchor)
+        after = (time >= start) & (time <= anchor)
         row = np.searchsorted(cells, unit[after])          # unit is already restricted to cells
-        col = time[after] - (train_end + 1)
-        present = np.zeros((cells.size, sequence_number), dtype=bool)
+        col = time[after] - start
+        present = np.zeros((cells.size, anchor - start + 1), dtype=bool)
         present[row, col] = True
         incomplete = ~present.all(axis=1)
         if incomplete.any():
             examples = [
-                (int(cells[i]), [int(train_end + 1 + m) for m in np.nonzero(~present[i])[0][:3]])
+                (int(cells[i]), [int(start + m) for m in np.nonzero(~present[i])[0][:3]])
                 for i in np.nonzero(incomplete)[0][:3]
             ]
             raise ValueError(
-                f"RollingConflictology needs every month {train_end + 1}..{anchor} (after "
-                f"train_end {train_end}, up to the origin for sequence_number "
+                f"RollingConflictology needs every month {start}..{anchor} (after "
+                f"train_end {train_end} and inside the window for sequence_number "
                 f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
                 f"{cells.size} cells are missing months (cell, first missing months: "
                 f"{examples}). Refusing to fall back to an older window."
