@@ -3,8 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-11-05
 **Deciders:** Simon
-**Consulted:** views-models session (Phase-1 measurements, lead-vs-calendar and cliff checks); views-hydranet session (evaluation lessons)
-**Informed:** views-models maintainers
+**Consulted:** views-baseline #109 and #82 (Phase-1 results and the age checks); views-models `reports/2026-11-04_baseline_phase1/sparse_support_question.md` (branch `docs/baseline-phase1-campaign`, commit `a001aba7`); views-hydranet `reports/2026-09-30_evaluation_learning_report.md` (evaluation lessons)
+**Informed:** UFFAC research team (Gudmond, Celine, Mike, Håvard)
 
 ---
 
