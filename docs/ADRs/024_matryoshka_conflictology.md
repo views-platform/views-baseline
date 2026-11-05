@@ -177,23 +177,39 @@ h = 36.
 
 ## Open Questions
 
-Decided 2026-11-05 (Simon): the country as the outer doll, with the whole map as backstop; two
-neighbour rings; separate knobs per violence type; no rings at cm for now.
+Decided 2026-11-05 (Simon):
+- the country is the outer doll, with the whole map as backstop;
+- two neighbour rings;
+- separate knobs per violence type;
+- no rings at cm for now;
+- **one memory per doll in v1**;
+- **at least 10 years of history**;
+- **the working assumption that fading follows the time since the data ended**, pending the check below.
+
+**History length.** Use **at least 120 months** of history, by default all available history (from month
+121, i.e. ~28 years at `train_end` = 456), and let the decay do the weighting. A cap is a cost knob, not a
+modelling one. The literature supports a long reach:
+- Currents of Conflict's long trend has ℓ ≈ 122 months.
+- Conflict effects linger for at least 20–25 years, and 20 years of uninterrupted peace lowers the risk
+  of major conflict by 84% for a Liberia-like case (Hegre, Nygård & Ræder 2017).
+- Hegre et al. (2013) represent the conflict history as **log** years since conflict. That decays more
+  slowly than exponentially, so a 120-month exponential memory at the country doll may still forget too
+  fast (weight e⁻² ≈ 0.14 at 20 years). The backtest should report where the fitted country memory lands.
 
 Still open:
-1. **Two time scales in the inner doll?** The Currents paper finds a ~4-month short trend on top of a
-   ~122-month long one. A cell keeps a long-run level (why "where" is still well predicted 13+ months
-   out) plus bursts that fade within months. One memory per doll cannot represent both. The backtest
-   should compare a one-memory and a two-memory inner doll (+1 knob).
-2. **Lead vs calendar month** is not yet separated in the evidence: does the decay follow months since
-   the history ended, or the calendar? Pending the models session's check on another origin. The design
-   assumes the former.
-3. **The history cap:** with decay, the full history can be used, but a cap bounds cost and the
-   influence of early, sparser data.
-4. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
+1. **Lead vs calendar month:** does the fading follow the time since the data ended (the working
+   assumption), or the calendar? The models session is checking this on another origin.
+2. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
    a grouping key; matters only if joined to anything else.
-5. **The geometric ring rule** (ρ^k, γ^k) is an assumption that saves knobs. With only two rings it is
-   cheap to test against free per-ring knobs.
+3. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
+   free per-ring knobs.
+
+**For v2:**
+- **two memories in the inner doll**: a short burst memory (~4 months in Currents of Conflict) on top of
+  a long-run level;
+- **a region/theatre doll**, and rings at cm (country contiguity);
+- **a slower-than-exponential fade** (e.g. log time, after Hegre et al. 2013), if the fitted country
+  memory runs to its limit.
 
 ## References
 
@@ -202,3 +218,5 @@ Still open:
 - von der Maase, S. (2025). *The Currents of Conflict: Decomposing Conflict Trends with Gaussian Processes.* arXiv:2506.06828. Table 2 (ℓ_SCE = 0.72°, Matérn 3/2) and the temporal lengthscales (≈ 4.09 and 122.38 months).
 - views-models `reports/2026-11-04_baseline_phase1/` (measurements, including `cond_fcst.py`).
 - views-datafactory#533 (misplaced aggregate events).
+- Hegre, H., Karlsen, J., Nygård, H. M., Strand, H. & Urdal, H. (2013). Predicting Armed Conflict, 2010–2050. *International Studies Quarterly* 57(2): 250–270 (conflict history as log years in state).
+- Hegre, H., Nygård, H. M. & Ræder, R. F. (2017). Evaluating the scope and intensity of the conflict trap. *Journal of Peace Research* 54(2): 243–261 (effects linger ≥ 25 years; 20 years of peace lowers the risk 84%).
