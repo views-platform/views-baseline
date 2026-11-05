@@ -3,7 +3,7 @@
 **Status:** Proposed (draft for discussion)
 **Date:** 2026-11-05
 **Deciders:** Simon
-**Consulted:** views-models session (Phase-1 measurements); views-hydranet session (evaluation lessons)
+**Consulted:** views-models session (Phase-1 measurements, lead-vs-calendar and cliff checks); views-hydranet session (evaluation lessons)
 **Informed:** views-models maintainers
 
 ---
@@ -18,16 +18,47 @@ ADR-023 added three smoothings of A (B, C, E). The Phase-1 run of all ten views-
    91× chance), in every arm.
 2. **Smoothing is not the lever.** The arms differ by at most 1.09–1.29× on any properly conditioned
    axis. B, C and E inherit A's main defect unchanged.
-3. **The defect is staleness.** The pool is fixed at `train_end` for every origin (#82), so a cell's
-   P(y>0) is the same at every lead, while reality reverts: in the top predicted bin (~0.85), the
-   realised rate falls from 0.64 at h = 1 to 0.60 at h = 18 and 0.28 at h = 36. At origin_12, "h = 1" is
-   already 13 months after the window ends. The pattern holds on all three arms tested, in two bins.
-   It is not an end-of-data artefact: month 504's prevalence is normal.
-4. **Cold cells are under-confident.** ~1,800 conflict cells had predicted P = 0 exactly: a cell whose
-   own window has no positives can never fire.
+3. **The forecasts are too narrow at both ends, and the zero end gets worse with age.**
+   - *Hot cells:* where conflictology predicts P(y>0) ≥ 0.70, conflict happens about 0.73 as often
+     as predicted, i.e. ~27% over-confidence. Per month it is flat over months 457–500.
+   - *Quiet cells:* ~1,800 conflict cells had predicted P = 0 exactly. A cell whose own window has no
+     positives can never fire.
+   - *Age:* a cell's own quiet history stops being evidence of quiet as it ages. Measured by refitting
+     at six cutoffs (below); conditioned on the forecast (P = 0 exactly), not on the outcome.
 
-Both defects are the same mechanism. The forecast does not know that a cell's own past loses
-relevance with lead time, and has nothing to fall back on when it does.
+**Evidence on age (2026-11-05, #109).** With one pool fixed at `train_end`, lead and calendar month are
+the same variable (lead = month − 456), so Phase-1 could not test age. Its apparent "fading over the
+horizon" (0.75 → 0.70 → 0.33) was a flat line plus a **global** drop in Sep–Dec 2021 (months 501–504,
+rest of world 0.73 → 0.34; not Ethiopia, not views-datafactory#533; cause open). **It is withdrawn as
+evidence.**
+
+The test that does separate them: conflictology refitted with the pool ending at 396, 408, …, 456, every
+later month scored up to 492 (2021 excluded), and age separated from calendar year by a two-way fit. The
+fit assumes no cutoff-specific effect; checked by dropping the earliest and then the latest cutoff.
+
+| stratum (conditioned on the forecast) | age effect by year 7 | all cutoffs / −396 / −456 |
+|---|---|---|
+| quiet (P = 0), sb: conflict per 1,000 cell-months | rises from ~0.4 | +0.89 / +0.88 / +0.94 |
+| quiet, ns | rises | +0.62 / +0.62 / +0.69 |
+| quiet, os | rises | +0.42 / +0.39 / +0.43 |
+| hot (P ≥ 0.5), os: realised / predicted | falls | −0.33 / −0.51 / −0.29 |
+| hot, ns (year 3) | falls | −0.38 / −0.29 / −0.60 |
+| hot, sb (year 3) | about nil | −0.07 / −0.03 / −0.08 |
+
+- **The quiet-cell gradient is robust in sign and size** (within ~11% across cutoff sets; tens of
+  thousands of cell-months per entry). It can carry a fitted value.
+- **The hot-cell fading is robust in sign only** (its size moves 75–100% when one cutoff is dropped).
+  It supports memories that differ by violence type, not their length.
+- **sb hot cells have no age effect,** only the constant offset. That is a calibration defect this
+  design is not aimed at. Pulling them toward their rings may reduce it; that is not promised.
+- Calendar effects (e.g. the late-2021 drop) remain. A climatology cannot foresee them.
+
+Scripts: views-baseline session scratch `cutoff_check.py` (to be committed with the backtest); the
+models session's `lead_vs_calendar.py` and `eth_step.py` (views-models `docs/baseline-phase1-campaign`,
+`a001aba7`).
+
+The mechanism behind the age effect: the forecast does not know that a cell's own past loses relevance
+with age, and has nothing to fall back on when it does.
 
 **Second purpose (as in ADR-023): an uncertainty prototype.** The question "how fast does a cell's own
 history stop predicting it, and what should replace it" is exactly what a learned model should beat.
@@ -101,6 +132,12 @@ backtest **inside the training partition**. The objective is a proper score on o
 calibration is rewarded), with size checked by CRPS on positive cells. **Not CRPS alone** (#122). The
 fitted values are reported; they are the scientific output.
 
+- **Report stability, not just values:** refit each knob with each backtest cutoff left out in turn.
+  A memory pinned down mainly by hot cells is expected to be unstable (see the age evidence), and is
+  reported as uncertain.
+- **Print n beside every number,** so a reader can see which figures are solid.
+- **Report every evaluation window ending at 504 with and without months 501–504.**
+
 **First step, before Matryoshka: a sliding-window control.** A with its window ending at each origin
 (#82's other option). It is small to build and separates "the window is stale at the origin" from
 "lead time within an origin". If it fixes most of the staleness, Matryoshka's lead mechanism has less
@@ -109,7 +146,8 @@ to do, and that is worth knowing first.
 ## Rationale
 
 - **It targets the measured defect,** not a hypothesised one. Smoothing addressed a gap that turned
-  out not to matter; staleness is measured, on all arms, in a properly conditioned check.
+  out not to matter. The quiet-cell age effect is measured by a design that separates age from
+  calendar, conditioned on the forecast, and robust to the choice of cutoffs.
 - **One mechanism, three open issues.** It joins lead-awareness (#82), temporal decay (#111) and spatial
   pooling (#112) into one weighting, instead of three models whose interactions would be untested.
 - **Minimal and interpretable.** No covariates; ≤ 7 fitted numbers, each with a physical meaning (a
@@ -184,7 +222,9 @@ Decided 2026-11-05 (Simon):
 - no rings at cm for now;
 - **one memory per doll in v1**;
 - **at least 10 years of history**;
-- **the working assumption that fading follows the time since the data ended**, pending the check below.
+- **fading follows the age of the information (time since the data ended), per violence type.**
+  Confirmed by refitting at multiple cutoffs (see Context: Evidence on age). Strong for quiet cells;
+  for hot cells, robust in sign only; nil for sb hot cells.
 
 **History length.** Use **at least 120 months** of history, by default all available history (from month
 121, i.e. ~28 years at `train_end` = 456), and let the decay do the weighting. A cap is a cost knob, not a
@@ -197,11 +237,9 @@ modelling one. The literature supports a long reach:
   fast (weight e⁻² ≈ 0.14 at 20 years). The backtest should report where the fitted country memory lands.
 
 Still open:
-1. **Lead vs calendar month:** does the fading follow the time since the data ended (the working
-   assumption), or the calendar? The models session is checking this on another origin.
-2. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
+1. **`c_id` is a GAUL code** in the datafactory pull, not a VIEWS country id (views-models#660). Fine as
    a grouping key; matters only if joined to anything else.
-3. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
+2. **The geometric ring rule** (ρ^k, γ^k) saves knobs. With only two rings it is cheap to test against
    free per-ring knobs.
 
 **For v2:**
