@@ -1,6 +1,6 @@
 # ADR-024: MatryoshkaConflictology: a climatology that opens outward as its information ages
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-11-05: data up to each forecast origin; see "Where the history ends")
 **Date:** 2026-11-05
 **Deciders:** Simon
 **Consulted:** views-baseline #109 and #82 (Phase-1 results and the age checks); views-models `reports/2026-11-04_baseline_phase1/sparse_support_question.md` (branch `docs/baseline-phase1-campaign`, commit `a001aba7`); views-hydranet `reports/2026-09-30_evaluation_learning_report.md` (evaluation lessons)
@@ -185,7 +185,8 @@ To forecast one cell for one future month, the model picks one past observation 
 value as a forecast draw. It does this as many times as the configuration asks for. All the modelling is
 in **how likely each past observation is to be picked**. That is decided in three steps.
 
-Notation: the history ends at month `c` (the last training month), we are forecasting month `t` (so the
+Notation: the history ends at month `c`, the last month observed when the forecast is made (for rolling
+origin `k` that is `train_end + k`; see "Where the history ends"). We are forecasting month `t` (so the
 forecast looks `t − c` months ahead), and `s` is the month a past observation comes from.
 
 **Step 1: pick a doll.** Doll `k` is picked with probability proportional to
@@ -261,15 +262,38 @@ Take a cell that has been quiet for the last ten years, in a country fighting a 
 Give every doll except the cell a weight of zero, let the cell's memory be infinite (nothing fades), and
 use only the last 36 months of history. Then step 1 always picks the cell; in step 2 every month has
 `exp(0) = 1`, so `Z = 36` and each month has probability `1/36`; step 3 has only one cell. That is a
-uniform draw over the cell's last 36 values, which is exactly conflictology. Comparing Matryoshka with
-conflictology therefore tests precisely the two new ideas, the outer dolls and the fading, and nothing
-else.
+uniform draw over the cell's last 36 values, which is exactly conflictology with a moving window
+(`RollingConflictology`, whose window ends at each forecast origin like Matryoshka's history). Fix the
+history end at `train_end` as well, and it is plain `ConflictologyModel`. Comparing Matryoshka with
+`RollingConflictology` therefore tests precisely the two new ideas, the outer dolls and the fading, and
+nothing else; comparing with `ConflictologyModel` adds the effect of using the latest data.
 
 ### Where the history ends
 
-Like conflictology, the model's history ends at the last training month (`train_end`). That keeps the
-two directly comparable. Whether forecasts should instead use all months up to each forecast's start
-date is a separate question (issue #82), which the control model below answers.
+**Decided 2026-11-05 (amendment): the knobs are fitted once; the data is the latest at each forecast
+origin.**
+
+The production regime trains models once a year, up to the first out-of-sample forecasting window, and
+uses the saved artifacts for inference for the rest of the year. Conflictology mirrors that by fixing its
+window at the last training month for every forecast origin. But what a frozen artifact freezes differs
+between learned models and climatologies:
+
+- **A learned model freezes its parameters, not its inputs.** views-stepshifter is trained up to
+  `train_end`, but when forecasting from origin `k` it still reads the observed data up to `train_end + k`.
+- **For a climatology, the data is the model.** Freezing conflictology's window also freezes its inputs,
+  which denies it information the learned models get. And "retraining" a baseline costs seconds.
+
+So Matryoshka follows the learned models' regime:
+
+- **What is frozen, like a trained model:** the knobs (the weights and memories). They are fitted once,
+  by backtest on data up to `train_end`, and stored in the artifact.
+- **What is fresh at each origin, like a learned model's inputs:** the observed data. For rolling origin
+  `k`, the history ends at `c = train_end + k`, the month just before that origin's first forecast month.
+  No forecast month is ever part of its own history. In a forecasting run there is one origin, and `c` is
+  the last observed month.
+
+Age is still measured to the month being forecast, so the forecast still opens outward the further ahead
+it looks within one origin. The reasoning is recorded on #82.
 
 ### How much history
 
@@ -370,13 +394,13 @@ them:
 - **For any evaluation that ends in December 2021 (month 504), report results with and without the last
   four months**, because of the unexplained worldwide drop there.
 
-### The first step: a simpler control
+### The comparison model: conflictology with a moving window
 
-Before building Matryoshka, we build a much simpler **control**: plain conflictology whose window ends at
-each forecast's start date instead of always at month 456 (issue #126). It is quick to build. It shows how
-much of the problem is simply that the window is out of date at the start of the forecast, as opposed to
-how far ahead the forecast looks. If the control already fixes most of the problem, that is important to
-know before building the full model (issue #127).
+`RollingConflictology` (views-baseline 1.2.0, issue #126) is plain conflictology whose window ends at each
+forecast origin, the same information rule as above. It is the right comparison for Matryoshka: both see
+the same data at each origin, so any difference comes from the dolls and the fading, not from fresher
+data. It also answers #82's own question, how much plain conflictology gains just from using the latest
+data. It is not a prerequisite for building Matryoshka (#127); the two can be run side by side.
 
 ---
 
@@ -469,7 +493,8 @@ same way model E at α = 0 was tested against conflictology.
 
 **Then the evaluation**, on the calibration test period (months the fit never saw), using hydranet's
 frozen scoring code (`lodestar_score.py`) rather than our own re-implementations. Matryoshka is always
-compared with **plain conflictology and the moving-window control**, with the **same number of draws** and
+compared with **the moving-window control (`RollingConflictology`, the like-for-like comparison) and plain
+conflictology**, with the **same number of draws** and
 the **same random seeds** (a paired comparison: the report shows pairing makes differences about six
 times easier to detect).
 
@@ -507,6 +532,8 @@ All settled by Simon on 2026-11-05:
 - A free weight and memory for every doll (no fixed ring rule).
 - At least 10 years of history, by default all of it.
 - The country is the GAUL 2024 country code (`gaul0_code`), not the older academic codes.
+- **Knobs frozen at `train_end`, data up to each forecast origin** (amendment, see "Where the history
+  ends"): the climatology analogue of a yearly-trained model that reads the latest inputs.
 - Fading follows the **age of the information**, per violence type. This is confirmed by the
   multiple-cutoff check: strong for quiet cells, solid in direction only for hot cells, and absent for
   state-based hot cells.
