@@ -268,3 +268,23 @@ def test_common_random_numbers_need_pools_of_at_least_two(df):
     shift = (np.asarray(r.values) - np.asarray(a.values)) / 10
     rows = _row_entities(a)
     assert not np.all(shift[rows != 0] == 3)              # pairing is lost after cell 0
+
+
+# --- added after the guard audit of ed7fb19 (survivors R6, R7) -------------------------------
+
+
+def test_nan_after_train_end_in_a_second_target_is_rejected(df):
+    """Every target is checked, not only the first (k = 4: window 498..503)."""
+    bad = df.copy()
+    bad.loc[(500, 2), "y2"] = np.nan
+    m = RollingConflictology(**KW2).fit(bad)
+    with pytest.raises(ValueError, match=r"NaN in target 'y2' for cell 2 in month\(s\) \[500\]"):
+        m.predict(bad, sequence_number=4, output_length=6)
+
+
+def test_nan_after_the_origin_is_ignored(df):
+    """Months after the origin are never used, so a NaN there must not stop the run."""
+    bad = df.copy()
+    bad.loc[(520, 2), "y1"] = np.nan
+    pf = RollingConflictology(**KW).fit(bad).predict(bad, sequence_number=5, output_length=6)["y1"]
+    assert np.isfinite(np.asarray(pf.values)).all()

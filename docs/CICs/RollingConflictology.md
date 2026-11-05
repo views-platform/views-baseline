@@ -155,6 +155,9 @@ All in `tests/test_rolling_conflictology.py` unless noted. The test input encode
 | `test_a_gap_after_train_end_but_outside_the_window_is_accepted` | When k > `window_months`, a gap or NaN in post-`train_end` months outside the window does not stop the run. |
 | `test_common_random_numbers_need_pools_of_at_least_two` | Pins the limit of the pairing claim: a cell with a 1-value conflictology pool breaks the pairing for later cells. |
 | `tests/test_pooling_tail_equivalence.py::test_tail_pools_rejects_an_unsorted_panel` | `tail_pools` refuses an unsorted panel instead of pooling the wrong rows. |
+| `test_nan_after_train_end_in_a_second_target_is_rejected` | Every target is checked for NaN after `train_end`, not only the first. |
+| `test_nan_after_the_origin_is_ignored` | A NaN in a month after the origin (never used) does not stop the run. |
+| `tests/test_pooling_tail_equivalence.py` (float64, NaN position, NaN in a second target) | The shared helper returns float64, and rejects a NaN anywhere in the tail and in any target. |
 | `test_negative_sequence_number_is_rejected` | `sequence_number < 0` raises. |
 | `test_is_a_conflictology_subclass` | Pins the subclass relationship (the behaviour is covered by the byte-identity test). |
 | `tests/test_pooling_tail_equivalence.py` | The faster `tail_pools` returns exactly what the old per-cell scan returned, on random, gappy, unsorted panels. |
