@@ -136,8 +136,8 @@ def test_same_draw_indices_as_conflictology_at_every_origin(df, k):
 
 @pytest.mark.parametrize("k", [1, 12, 30])
 def test_pools_equal_window_pool_arrays_on_a_complete_panel(df, k):
-    """The direct (cell, month) read gives exactly the pools the shared pooling helper gives,
-    anchored at train_end + k, so the speed-up changes nothing on complete data."""
+    """The pools are exactly the shared pooling helper's, anchored at train_end + k: the window
+    is conflictology's own definition, only moved."""
     m = RollingConflictology(**KW2).fit(df)
     ours = m._pools_for_origin(df, k)
     time, unit, values = panel(to_feature_frame(df, loa="pgm", targets=["y1", "y2"]), ["y1", "y2"])
@@ -180,8 +180,61 @@ def test_a_cell_that_is_never_forecast_cannot_stop_the_run(df):
 
 
 def test_is_a_conflictology_subclass():
-    """Byte-identity with conflictology at origin 0 rests on sharing its __init__ and fit, not on
-    a copy that could drift."""
+    """Origin-0 identity rests on sharing conflictology's fit (behaviour: see the byte-identity
+    test); this only pins the relationship."""
     assert issubclass(RollingConflictology, ConflictologyModel)
-    assert "fit" not in vars(RollingConflictology)
-    assert "__init__" not in vars(RollingConflictology)
+
+
+# --- added after the second review round (guard audit of 632084f, code-review high) -----------
+
+
+def test_fails_loud_on_a_gap_in_the_first_month_after_train_end(df):
+    holed = df.drop(index=(500, 1))                       # first month after train_end 499
+    m = RollingConflictology(**KW).fit(holed)
+    with pytest.raises(ValueError, match=r"\(1, \[500\]\)"):
+        m.predict(holed, sequence_number=8, output_length=6)
+
+
+def test_nan_in_the_first_month_after_train_end_names_the_month(df):
+    bad = df.copy()
+    bad.loc[(500, 2), "y1"] = np.nan
+    m = RollingConflictology(**KW).fit(bad)
+    with pytest.raises(ValueError, match=r"NaN in target 'y1' for cell 2 in month\(s\) \[500\]"):
+        m.predict(bad, sequence_number=8, output_length=6)
+
+
+@pytest.mark.parametrize("foreign", [0, 2])                # below, and between, the fitted cells
+def test_an_unfitted_cell_cannot_fill_a_fitted_cell_gap(df, foreign):
+    """A cell that is never forecast, whatever its id, cannot stand in for a forecast cell's
+    missing month."""
+    base = df.drop(index=(505, 1))
+    if foreign == 2:                                      # make 1 and 3 the fitted cells
+        base = base.rename(index={2: 3}, level="priogrid_id")
+    months = range(501, 540)
+    extra = pd.DataFrame(
+        {"y1": [-1.0] * len(months), "y2": [-1.0] * len(months)},
+        index=pd.MultiIndex.from_product([months, [foreign]], names=df.index.names),
+    )
+    df2 = pd.concat([base, extra]).sort_index()
+    m = RollingConflictology(**KW).fit(df2)
+    assert foreign not in set(np.asarray(m.entity_ids).tolist())
+    with pytest.raises(ValueError, match=r"\(1, \[505\]\)"):
+        m.predict(df2, sequence_number=8, output_length=6)
+
+
+def test_training_months_follow_conflictology_rules(df):
+    """A gap BEFORE train_end is treated exactly as conflictology treats it (last window_months
+    rows), at every origin: the strict check covers only the months after train_end."""
+    holed = df.drop(index=(497, 1))                       # a training month inside the k=2 window
+    m = RollingConflictology(**KW).fit(holed)
+    ours = m._pools_for_origin(holed, 2)
+    time, unit, values = panel(to_feature_frame(holed, loa="pgm", targets=["y1"]), ["y1"])
+    _, ref = window_pool_arrays(time, unit, values, ["y1"], WINDOW, TRAIN_END + 2)
+    np.testing.assert_array_equal(ours[1]["y1"], ref[1]["y1"])
+    assert 497 * 10 + 1 not in ours[1]["y1"]              # the gap is skipped, not an error
+
+
+def test_negative_sequence_number_is_rejected(df):
+    m = RollingConflictology(**KW).fit(df)
+    with pytest.raises(ValueError, match="sequence_number must be >= 0"):
+        m.predict(df, sequence_number=-1, output_length=6)

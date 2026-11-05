@@ -129,11 +129,15 @@ def tail_pools(
     if window_months <= 0:
         raise ValueError(f"window_months must be >= 1, got {window_months}.")
 
+    # s_unit is sorted (entity primary, time secondary), so each entity's rows are one contiguous
+    # block: find its bounds by binary search instead of scanning the whole panel per entity
+    # (that scan made pooling O(entities x rows): ~14 min at pgm `land`). Same rows, same order.
+    starts = np.searchsorted(s_unit, entity_ids, side="left")
+    ends = np.searchsorted(s_unit, entity_ids, side="right")
     pools = {}
-    for cid in entity_ids:
+    for cid, start, end in zip(entity_ids, starts, ends):
         # entity_ids come from rows present at train_end, so every block is non-empty.
-        block = np.nonzero(s_unit == cid)[0]  # this entity's rows, already in time order
-        tail = block[-window_months:]  # last window_months in time order
+        tail = np.arange(max(start, end - window_months), end)  # last window_months, time order
         pool = {}
         for t in targets:
             vals = s_vals[t][tail].astype(np.float64)
