@@ -1,6 +1,6 @@
 # Class Intent Contract: BaselineForecastingModelManager
 
-**Date:** 2026-03-17
+**Date:** 2026-03-17 (updated 2026-11-05, #120)
 **Owner:** Project maintainers
 **Status:** Active
 **Related ADRs:** ADR-001, ADR-002, ADR-006, ADR-008, ADR-009, ADR-014, ADR-016
@@ -21,6 +21,8 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 - Does not own data loading. Input is read from disk inside `_load_source()`, dispatching on the declared `data_format`: a pandas DataFrame via `read_dataframe` (legacy default) or a `views_frames.FeatureFrame` via `load_frame_cache` when the model declares `data_format: feature_frame` (issue #64). Both come from `views_pipeline_core`.
 - Does not define the configuration schema. Config structure is the responsibility of the pipeline configuration layer.
 - Does not sweep hyperparameters in any non-trivial way; `_evaluate_sweep` delegates entirely to `_generate_predictions`.
+- Does not stream the sweep path. `_evaluate_sweep` stays batch (all origins in memory); pipeline-core's sweep does not use the streaming sink.
+- Does not bound the memory of pipeline-core's scoring step, which runs after evaluation returns and reloads the saved origins.
 
 ---
 
@@ -45,15 +47,30 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 - Pickles the fitted model to `{path_artifacts}/{run_type}_model_{timestamp}.pkl` via `generate_model_file_name`.
 - Returns the fitted model. The artifact is required by the downstream ensemble manager to resolve artifact paths.
 
+**`_iter_predictions(model, df, eval_type)`**:
+- The single per-origin loop. Calls `_resolve_evaluation_sequence_number(eval_type)` to determine the iteration count, then yields `(seq_num, model.predict(df=df, sequence_number=seq_num, output_length=config["time_steps"]))` one origin at a time.
+- Keeps no reference to an origin once it is yielded.
+
 **`_generate_predictions(model, df, eval_type)`**:
-- Calls `_resolve_evaluation_sequence_number(eval_type)` to determine iteration count.
-- Iterates over sequence numbers, calls `model.predict(df=df, sequence_number=seq_num, output_length=...)` for each, accumulates `dict[str, list[PredictionFrame]]`.
+- Batch form: collects `_iter_predictions` into `dict[str, list[PredictionFrame]]`. Every origin is in memory at once. Used by `_evaluate_model_artifact` and `_evaluate_sweep`.
+
+**`_prepare_evaluation(artifact_name)`**:
+- Shared set-up for both evaluation paths: resolves the artifact path and persists its timestamp (as below), sets `self.model` via `_setup_model_and_data()`, and returns the input data.
 
 **`_evaluate_model_artifact(eval_type, artifact_name)`**:
 - If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
 - Extracts the 15-character timestamp from the artifact filename stem and persists it via `self._config_manager.add_config({"timestamp": ...})`.
-- Calls `_setup_model_and_data()` then `_generate_predictions()`.
+- Calls `_setup_model_and_data()` then `_generate_predictions()` (via `_prepare_evaluation`).
 - Returns the accumulated predictions.
+
+**`_evaluate_model_artifact_streaming(eval_type, artifact_name, origin_sink)`** (#120):
+- Overrides pipeline-core's default, which calls the batch method first and so holds all origins (13 × 7.2 GB at pgm `land`, S = 256: 93 GB, an OOM at a 87.5 GiB container limit).
+- Same set-up as `_evaluate_model_artifact` (`_prepare_evaluation`), then calls `origin_sink(seq_num, pf_dict)` for each origin from `_iter_predictions`, before the next origin is predicted, and drops its own reference afterwards. With a sink that frees what it saves (pipeline-core's does), peak memory is one origin.
+- Raises `TypeError` before calling the sink if `predict()` returns anything but a dict (pipeline-core's default had the same guard). Sink errors propagate; origins already written stay on disk.
+- Its name and parameters must match pipeline-core's hook exactly, or pipeline-core silently runs its batch default instead (C-44). `test_streaming_override_matches_pipeline_cores_hook` pins both.
+- Output is identical to the batch path's, origin by origin (each `predict()` seeds its own RNG).
+- Logs the process's peak RSS so far after every origin, and a summary with the origin count at the end, so a run killed part-way still leaves the figure. Peak RSS covers the whole process up to that point (loading, fitting, any earlier training), not the scoring that follows.
+- This is the path pipeline-core's evaluation uses for `prediction_format: prediction_frame`.
 
 **`_forecast_model_artifact(artifact_name)`**:
 - If `artifact_name` is provided, resolves the artifact path as `self._model_path.artifacts / artifact_name`. Otherwise, resolves the latest artifact path via `self._model_path.get_latest_model_artifact_path(run_type=...)`. Raises `FileNotFoundError` if no artifact `.pkl` exists for the run type.
@@ -91,8 +108,10 @@ Output type is **uniform** across point and distributional models (ADR-010): all
 |---|---|---|
 | `_train_model_artifact()` | Fitted model instance | Writes `.pkl` file to `artifacts/` |
 | `_evaluate_model_artifact()` | `dict[str, list[PredictionFrame]]` | Persists artifact timestamp in config via `add_config` |
+| `_evaluate_model_artifact_streaming()` | `None`; each origin goes to `origin_sink` | Persists artifact timestamp; logs peak RSS per origin and at the end |
 | `_forecast_model_artifact()` | `dict[str, PredictionFrame]` | Persists artifact timestamp in config via `add_config` |
 | `_setup_model_and_data()` | `(model, df_source)` | None |
+| `_iter_predictions()` | generator of `(int, dict[str, PredictionFrame])` | None |
 | `_generate_predictions()` | `dict[str, list[PredictionFrame]]` | None |
 | `_evaluate_sweep()` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
 
@@ -110,11 +129,13 @@ Output type is **uniform** across point and distributional models (ADR-010): all
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
-| No artifact `.pkl` for the run type on disk | `FileNotFoundError` from `get_latest_model_artifact_path()` | Raised in `_evaluate_model_artifact` and `_forecast_model_artifact` before setup. New precondition introduced by ADR-016 fix. |
+| `predict()` returns a non-dict during streaming | `TypeError` | Raised before the sink sees it, naming the algorithm and origin. |
+| The sink raises during streaming (e.g. disk full) | Propagates to caller | Never swallowed. Origins already saved remain on disk. |
+| No artifact `.pkl` for the run type on disk | `FileNotFoundError` from `get_latest_model_artifact_path()` | Raised in `_evaluate_model_artifact`, `_evaluate_model_artifact_streaming` (both via `_prepare_evaluation`) and `_forecast_model_artifact` before setup. New precondition introduced by ADR-016 fix. |
 | `artifact_name` points to non-existent file | No error at resolve time | The path is constructed but not checked for existence; the timestamp is still extracted from the filename stem. Downstream failure occurs only if the artifact is loaded (baseline models don't load artifacts, so this is benign). |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 
-The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry, prediction generation, and forecast entry (6 messages total in `baseline_manager.py`). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
+The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry (batch and streaming), prediction generation (batch and streaming), peak RSS after each streamed origin, the streaming summary (origin count and peak RSS), and forecast entry (10 `logger.info` calls in `baseline_manager.py`). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
 
 ---
 
@@ -248,6 +269,16 @@ File: `tests/test_baseline_manager.py`
 | `test_manager_frame_declared_missing_cache_fails_loud` | A frames-declared model with an absent cache raises `RuntimeError` — never a silent pandas fallback (C-214). |
 | `test_manager_legacy_format_never_calls_frame_loader` | An explicitly `dataframe`-declared model uses `read_dataframe` and never the frame loader. |
 | `test_manager_default_format_is_dataframe` | With no `_data_format` set, the manager defaults to the pandas path (byte-identical legacy behavior). |
+| `test_streaming_override_matches_pipeline_cores_hook` | pipeline-core still defines the hook, and the override's name and parameters match it, so a rename upstream fails here instead of silently restoring the batch default (C-44). |
+| `test_streaming_hands_each_origin_to_the_sink_before_predicting_the_next` | Origin i reaches the sink before origin i+1 is predicted: nothing is accumulated and emitted later (#120). |
+| `test_streaming_never_calls_the_batch_path` | The streaming path never builds the batch dict. |
+| `test_streaming_frees_each_origin_before_predicting_the_next` | When origin i+1 is predicted, origin i is unreachable, with a sink that frees nothing, so it is the manager's own release that is tested. |
+| `test_streaming_output_equals_batch_output` | Values, time index and unit index equal the batch path's, origin by origin. |
+| `test_streaming_predictions_have_the_configured_horizon` | Every streamed frame covers `time_steps` months: an absolute check that equality with batch cannot give. |
+| `test_streaming_sets_the_timestamp_from_the_named_artifact` | `artifact_name` is honoured and its timestamp persisted. |
+| `test_streaming_propagates_sink_errors` | A failing sink stops the run. |
+| `test_streaming_rejects_a_predict_that_does_not_return_a_dict` | `TypeError` before the sink is called. |
+| `test_streaming_logs_the_process_peak_rss_in_gib` | One peak-RSS line per origin plus a summary, in GiB, from `RUSAGE_SELF`. |
 | `test_manager_gate_rejects_incomplete_config` | `_setup_model_and_data()` raises `MissingHyperparameterError` when core keys are missing. (In `test_reproducibility_gate.py`.) |
 
 File: `tests/test_falsification_timestamp_contract.py`
@@ -279,6 +310,7 @@ File: `tests/test_falsification_ship_readiness.py`
 
 - The distributional code paths in `_generate_predictions` and `_forecast_model_artifact` are now covered by `test_manager_evaluate_distributional_model` and `test_manager_forecast_distributional_model`.
 - `_evaluate_sweep` is now covered by `test_manager_evaluate_sweep`.
+- **#120 (2026-11-05):** evaluation streams one origin at a time (`_evaluate_model_artifact_streaming`). Verified on the pod on all ten views-models#695 models at S = 64, global `land`: all exited 0. RSS was 2.3 GiB during prediction and 11.3 GiB later, in pipeline-core's scoring step (sampled with `ps`, not a traced peak). The scoring reload is the next memory ceiling and is pipeline-core's (C-54).
 - Manager log messages are currently all `INFO` level. If `WARNING` or `ERROR` messages are added, they should follow the two-tier observability pattern (ADR-008).
 
 ---
