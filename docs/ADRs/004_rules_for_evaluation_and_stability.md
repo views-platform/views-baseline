@@ -38,6 +38,7 @@ Each component carries one of two stability labels:
 | `ParametricHurdleConflictology` | Evolving | Parametric hurdle (ADR-022); zero-spike + continuous positive-part; `EMIT_FLOOR`/`EMIT_LOG_CEIL` non-negativity/overflow guards |
 | `InterpolatedQuantileConflictology` | Evolving | Smoothed climatology B (ADR-023); report-only evaluation (#109), no tuning key |
 | `EmpiricalKDEMixtureConflictology` | Evolving | Smoothed climatology E (ADR-023); `alpha`/`bandwidth` audited genome keys; common-random-number coupling across α is tested |
+| `RollingConflictology` | Evolving | Moving-window control for ADR-024 (#126); conflictology's genome; reads observed months up to `train_end + k` |
 | `KDEConflictology` | Evolving | Smoothed climatology C (ADR-023); `bandwidth` audited genome key; SJ stability on small windows is an open question |
 | `BaselineModel` (protocol) | Stable | Universal contract — all models return `dict[str, PredictionFrame]`; changes ripple to all implementing classes |
 | `DistributionalBaselineModel` (protocol) | Stable | Semantic marker for sampled models (`distributional = True`); no longer drives manager dispatch (ADR-017) |

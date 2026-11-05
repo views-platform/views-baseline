@@ -11,6 +11,9 @@ from views_baseline.model.models.distributional.parametric import ParametricConf
 from views_baseline.model.models.distributional.parametric_hurdle import (
     ParametricHurdleConflictology,
 )
+from views_baseline.model.models.distributional.rolling_conflictology import (
+    RollingConflictology,
+)
 
 __all__ = [
     "ConflictologyModel",
@@ -20,4 +23,5 @@ __all__ = [
     "MixtureBaseline",
     "ParametricConflictology",
     "ParametricHurdleConflictology",
+    "RollingConflictology",
 ]
