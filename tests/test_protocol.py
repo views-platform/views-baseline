@@ -53,7 +53,10 @@ def test_model_satisfies_baseline_protocol(Model, kwargs):
 
 @pytest.mark.parametrize("Model,kwargs", _DISTRIBUTIONAL_MODELS)
 def test_distributional_models_satisfy_distributional_protocol(Model, kwargs):
-    assert isinstance(Model(**kwargs), DistributionalBaselineModel)
+    model = Model(**kwargs)
+    assert isinstance(model, DistributionalBaselineModel)
+    # isinstance on a runtime-checkable Protocol only checks the attribute EXISTS; pin its value.
+    assert model.distributional is True
 
 
 @pytest.mark.parametrize("Model,kwargs", _POINT_MODELS)

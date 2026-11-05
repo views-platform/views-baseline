@@ -121,7 +121,10 @@ All in `tests/test_rolling_conflictology.py` unless noted. The test input encode
 | `test_fails_loud_when_the_data_does_not_reach_the_origin` | `ValueError` naming the first missing month. |
 | `test_fails_loud_when_one_cell_is_missing_at_the_origin` | `ValueError` when a single cell lacks the anchor month. |
 | `test_reproducible_and_seed_sensitive` | Same seed, same output; different seed, different output. |
-| Shared lists in `test_protocol.py`, `test_dual_input.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_rolling_conflictology_genome_is_exact`), `test_config_conformance.py` | Protocol, both input types, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. |
+| `test_each_target_draws_from_its_own_history_at_every_origin` | With two targets, each target's draws come from its own history at k > 0 (re-pooling never mixes targets). |
+| `test_entity_set_is_fixed_at_fit_even_if_a_cell_appears_later` | A cell that first appears after `train_end` never enters the forecast, and one `predict()` call cannot change a later one. |
+| `test_same_draw_indices_as_conflictology_at_every_origin` (k = 1, 12) | The same seed picks the same pool positions as `ConflictologyModel` at every origin, so each draw is conflictology's shifted by exactly k months: the comparison stays paired. |
+| Shared lists in `test_protocol.py` (which now also pins `distributional is True` for every distributional model), `test_dual_input.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_rolling_conflictology_genome_is_exact`), `test_config_conformance.py` | Protocol, both input types, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. |
 
 ---
 

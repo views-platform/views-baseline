@@ -82,3 +82,49 @@ def test_reproducible_and_seed_sensitive(df):
         return np.asarray(m.predict(df, sequence_number=3, output_length=6)["y1"].values)
     np.testing.assert_array_equal(run(7), run(7))
     assert not np.array_equal(run(7), run(8))
+
+
+# --- added after the independent guard audit of ca78cdf (survivors K, F, I) ---------------
+
+KW2 = {**KW, "targets": ["y1", "y2"]}
+
+
+def test_each_target_draws_from_its_own_history_at_every_origin(df):
+    """Guards against mixing targets when re-pooling at k > 0 (y1 = month*10 + e < 10,000;
+    y2 = month*100 + e >= 10,000)."""
+    m = RollingConflictology(**KW2).fit(df)
+    for k in (0, 3):
+        out = m.predict(df, sequence_number=k, output_length=6)
+        e = _row_entities(out["y1"])[:, None]
+        y1, y2 = np.asarray(out["y1"].values), np.asarray(out["y2"].values)
+        assert np.all((y1 - e) % 10 == 0) and np.all(y1 < 10_000)
+        assert np.all(y2 >= 10_000)
+
+
+def test_entity_set_is_fixed_at_fit_even_if_a_cell_appears_later(df):
+    """A cell that first appears after train_end never enters the forecast, at any origin,
+    and an earlier predict() call cannot change a later one."""
+    import pandas as pd
+
+    months = range(501, 540)
+    extra = pd.DataFrame(
+        {"y1": [t * 10 + 3 for t in months], "y2": [t * 100 + 3 for t in months]},
+        index=pd.MultiIndex.from_product([months, [3]], names=df.index.names),
+    )
+    df2 = pd.concat([df, extra]).sort_index()
+    m = RollingConflictology(**KW2).fit(df2)
+    for k in (5, 0):
+        pf = m.predict(df2, sequence_number=k, output_length=6)["y1"]
+        assert set(_row_entities(pf).tolist()) == {1, 2}
+
+
+@pytest.mark.parametrize("k", [1, 12])
+def test_same_draw_indices_as_conflictology_at_every_origin(df, k):
+    """Common random numbers at every origin, not only origin 0: the same seed picks the same
+    positions in the pool, so each draw is conflictology's shifted forward by exactly k months.
+    That keeps the control-vs-conflictology comparison paired."""
+    a = ConflictologyModel(**KW).fit(df).predict(df, sequence_number=k, output_length=6)["y1"]
+    r = RollingConflictology(**KW).fit(df).predict(df, sequence_number=k, output_length=6)["y1"]
+    np.testing.assert_array_equal(
+        (np.asarray(r.values) - np.asarray(a.values)) / 10, k
+    )
