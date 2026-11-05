@@ -4,10 +4,10 @@
 |-------------------|--------------------------------------|
 | Project           | views-baseline                       |
 | Owner             | Project maintainers                  |
-| Last Updated      | 2026-09-09                           |
-| Total Concerns    | 53                                   |
+| Last Updated      | 2026-11-05                           |
+| Total Concerns    | 54                                   |
 | Open Concerns     | 22                                   |
-| Resolved Concerns | 31 (incl. 1 withdrawn — C-27)         |
+| Resolved Concerns | 32 (incl. 1 withdrawn — C-27)         |
 | Last Review       | 2026-09-09 (`review-rr` strategic)    |
 
 ---
@@ -306,6 +306,8 @@ See also C-05 (the broader "index structure assumed, not validated" family, now 
 | Location | `views_baseline/manager/baseline_manager.py:70-72` (`_data_format`, `_get_cached_frame_path()`, `_get_cached_data_path()`), `:97` (`_resolve_evaluation_sequence_number`), `:109-141` (`_model_path.get_latest_model_artifact_path`, `_config_manager.add_config`); mocked at `tests/conftest.py:90-122` (`__new__` bypass + `SimpleNamespace`) |
 
 The manager is the single sanctioned coupling point to views-pipeline-core (ADR-013), but the surface it couples to is **private API**: four underscore-prefixed members of the base `ForecastingModelManager`, none of which carry a stability guarantee. This is a normal cost of the template-method integration and is not itself a defect. What makes it a tracked risk is that the coupling is verified against nothing: `make_manager` constructs the manager through `__new__`, bypassing `__init__` entirely, and attaches hand-built `SimpleNamespace` stand-ins for `_model_path`, `_data_loader`, and `_config_manager` plus a fake `_resolve_evaluation_sequence_number`. The mock, not the dependency, therefore defines the contract — a pipeline-core rename would leave all 248 tests green while production breaks. There is no integration test that instantiates the real base class. Compounding it, CI cannot install pipeline-core at all today (C-38), so even an integration test would not run there.
+
+> **Fifth member (2026-11-05, #120/#121).** The manager now also overrides `_evaluate_model_artifact_streaming(eval_type, artifact_name, origin_sink)`. Its failure mode differs from the four above: if pipeline-core renames the hook or changes its signature, nothing breaks. The override just stops being called, pipeline-core's default batch-then-emit shim runs instead, and land-scale evaluation OOMs again (C-54). The `test_streaming_*` tests call the override directly, so they stay green through such a rename. **Check on any pipeline-core release that touches `managers/model/model.py`:** `type(manager)._evaluate_model_artifact_streaming.__qualname__` must start with `BaselineForecastingModelManager`. The models session verified exactly this on the pods before the 2026-11-04 runs.
 
 See also C-39 (the specific silent-degradation instance this coupling enables), C-09 (topology rules enforced by convention only), C-13/C-14 (the other cross-repo contracts asserted only from this side). Part of causal cluster **K4 — PredictionFrame-as-sampled ecosystem**.
 
@@ -1005,6 +1007,25 @@ Cleanup from the reorg: `self.time_idx` is assigned in every model's `fit()` but
 | ID | C-27 |
 | Resolved | 2026-07-18 |
 | Resolution | **Withdrawn 2026-07-18**, not fixed: the Tweedie family was removed from the parametric registry after the S9 closeness evaluation excluded it (ADR-022 / `reports/closeness_experiment/FINDINGS.md`). `fit_tweedie`/`sample_tweedie` no longer exist, so the unbounded-`lam` path is unreachable. Filed here rather than under Open Concerns, where it had been sitting with its status encoded in the Tier cell. |
+
+---
+
+### C-54: Evaluation held every rolling origin in memory, so land-scale evaluation OOMed — RESOLVED
+
+| Field | Value |
+|-------|-------|
+| ID | C-54 |
+| Source | pod run (views-models session, 2026-11-04), issue #120 |
+| Resolved | 2026-11-05 |
+| Resolution | #121: `BaselineForecastingModelManager` overrides `_evaluate_model_artifact_streaming`. One generator, `_iter_predictions`, drives both paths. Streaming hands each origin to the sink before predicting the next and keeps no reference to it; the batch path (sweeps) is unchanged. Output is byte-identical (`test_streaming_output_equals_batch_output`). One log line at the end records the origin count and the peak RSS so far. |
+
+Evaluation peak memory was proportional to the number of rolling origins: 64,818 cells × 36 steps × 256 samples × 3 targets × 4 B = 7.17 GB per origin, × 13 = 93.2 GB. The first land-scale evaluation (views-models#695 control `plain_burlap`, S = 256) was killed at 87.3 GB against the pod's 87.5 GiB cgroup limit; training was fine. The defect was hidden by the platform: pipeline-core already defines the streaming hook (`managers/model/model.py:730`), but its default calls the batch method first, *"memory footprint is unchanged relative to the old code path"*. A manager that doesn't override it gets the interface with none of the benefit. views-hydranet overrides it; views-baseline did not.
+
+**Verified (2026-11-04):** all ten #695 models ran with the override at global `land`, S = 64, and all exited 0. The override was confirmed live by qualname on each pod.
+
+**Residual, not resolved here:** the step after evaluation, pipeline-core's scoring, reloads the saved origins. On the pod, RSS was 2.3 GiB during prediction and 11.3 GiB during scoring, about 6× one origin at S = 64. If that scales linearly it is roughly 45 GB at S = 256: inside 87.5 GiB, but not by much. These are `ps` samples, not traced peaks; the cgroup `memory.peak` was not captured before the pods were deleted. That ceiling belongs to pipeline-core. Separately, at S = 256 the binding limit is now disk (~180 GB written per model), not memory.
+
+**Same pattern elsewhere:** views-r2darts2 and views-stepshifter don't override the hook either; issues filed there. Cross-refs: C-44 (the override is a fifth private pipeline-core member, and a rename would silently undo this fix).
 
 ---
 
