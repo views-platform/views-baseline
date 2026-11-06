@@ -609,3 +609,27 @@ Training data only (≤ 456). An *onset* is a violent cell-month whose cell had 
 - **One-sided's oversized fallback is a memory problem, not an onset problem.** Recent one-sided violence is small (mean 9.8) either way. Matryoshka gives 26–41 because the map memory sits at 600 months, so the 1990s dominate. That is #140, and an onset pool with the same memory would not fix it.
 - **Remote onsets are too rare to build a pool from** (29–56 in the last three years). So the onset definition stays on the cell's own history.
 - **Class shares** (what the score sees) differ only modestly between onsets and all violence. Expect a small score change; judge the step mostly on the size check and the maps.
+
+## 2026-11-06: model declared done (Simon)
+
+**Simon's framing.** Matryoshka is conflictology that answers one extra question: *which set of past observations do we draw from?* Judged by that, the model is done.
+
+- **Final design: v5 kernel** (`results/v5_kernel/`).
+  - Four groups: the cell, a smooth neighbourhood (≤ 5 cells, ∝ exp(−d/ℓ)), the rest of the country, the rest of the map.
+  - 8 settings; the fit takes about 1 min.
+- **Nothing is broken.**
+  - The large "if something happens" value in quiet places is what the world pool honestly gives.
+  - The one-sided map memory at 600 months means "the whole history, roughly equally"; 600 is stated as a deliberate ceiling.
+- **No low-hanging fruit left:**
+  - **#137 closed.** A size-by-outbreak rule is a new kind of machinery, and the gain would be in sizes only.
+  - **#138 closed.** The kernel already crosses borders.
+  - **#141 closed.** ℓ is under one cell.
+  - **#140 decided: accept.** Report the ranges.
+- **Smoothing (Silverman KDE) considered and rejected.**
+  - It widens the pool but does not move its centre, so it does not help the Canada level. On the log scale it nudges the mean up.
+  - Matryoshka has no support gap: the outer groups reach every observed value, which is why there are 0 near-zero misses.
+- **Next:**
+  - #142: amend ADR-024 and #127's plan to the v5 design;
+  - the package build (#127 stages 1–4);
+  - release 1.3.0;
+  - evaluation against conflictology in views-models.
