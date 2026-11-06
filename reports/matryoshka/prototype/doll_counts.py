@@ -1,18 +1,15 @@
 """Per month, how many cells of each doll fall in each size class: the data stage of the prototype.
 
-For cell i in month s, the five dolls are disjoint shells (ADR-024; smooth neighbourhood from #139;
-province re-test #136):
-  cell      {i}
-  near      its land neighbours at grid distance 0 < d ≤ NEAR_RADIUS, grouped in distance bands; at
-            draw time a neighbour j is picked with probability ∝ exp(−d_ij / length_scale)
-  province  the other cells of its province (GAUL admin-1), outside the cell and its neighbourhood
-  country   the other cells of its country, outside the cell, its neighbourhood and its province
-  map       every other cell (outside the cell, its neighbourhood and its country)
+For cell i in month s, the four dolls are disjoint shells (ADR-024; smooth neighbourhood from #139):
+  cell     {i}
+  near     its land neighbours at grid distance 0 < d ≤ NEAR_RADIUS, grouped in distance bands; at
+           draw time a neighbour j is picked with probability ∝ exp(−d_ij / length_scale)
+  country  the other cells of its country, outside the cell and its neighbourhood
+  map      every other cell (outside the cell, its neighbourhood and its country)
 
-Provinces nest in countries, so with "inner" = cell + neighbourhood:
-  province rest = province total − inner cells in the same province
-  country rest  = country total − inner cells in the same country − province rest
-  map rest      = global total − inner cells − (country total − inner cells in the same country)
+With "inner" = cell + neighbourhood:
+  country rest = country total − inner cells in the same country
+  map rest     = global total − inner cells − country rest
 
 Almost every cell-month has no deaths (class 0), so only the non-zero classes are stored, as sparse
 (N, M) matrices. A doll's class-0 share is 1 minus its other shares (the shares of a non-empty shell
@@ -25,12 +22,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from grid_geometry import BAND_DISTANCE, NO_PROVINCE, OFFSET_BAND, Geometry
+from grid_geometry import BAND_DISTANCE, OFFSET_BAND, Geometry
 from scipy import sparse
 from size_classes import N_CLASSES
 
-DOLLS = ["cell", "near", "province", "country", "map"]
-CELL, NEAR, PROVINCE, COUNTRY, MAP = range(len(DOLLS))
+DOLLS = ["cell", "near", "country", "map"]
+CELL, NEAR, COUNTRY, MAP = range(len(DOLLS))
 
 
 @dataclass(frozen=True)
@@ -40,23 +37,19 @@ class DollCounts:
     Lists indexed by class hold sparse (N, M) CSR matrices for classes 1..K−1 (index 0 is None):
       own[k]                 1 where the cell is in class k that month
       band[k][b]             number of the cell's neighbours in band b that are in class k
-      inner_same_province[k] cell + neighbourhood, own province only, in class k
       inner_same_country[k]  cell + neighbourhood, own country only, in class k
     Dense, classes 1..K−1 (row 0 unused, zero):
-      province_tot (K, M, P), country_tot (K, M, C), global_tot (K, M)
-    band_sizes (B, N): land neighbours per band; sizes (5, N): shell sizes in DOLLS order (for the
+      country_tot (K, M, C), global_tot (K, M)
+    band_sizes (B, N): land neighbours per band; sizes (4, N): shell sizes in DOLLS order (for the
     neighbourhood: its number of land cells; whether it is empty is what matters for the mix).
     """
 
     months: np.ndarray
     own: list
     band: list
-    inner_same_province: list
     inner_same_country: list
-    province_tot: np.ndarray
     country_tot: np.ndarray
     global_tot: np.ndarray
-    province_index: np.ndarray  # (N,) row into province_tot, or -1 for no province
     country_index: np.ndarray   # (N,) row into country_tot, or -1 for no country
     band_sizes: np.ndarray
     sizes: np.ndarray
@@ -81,8 +74,6 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
     nbr = geo.neighbours
     has_country = geo.country > 0
     country_index, n_countries = group_index(geo.country, has_country)
-    has_province = geo.province != NO_PROVINCE
-    province_index, n_provinces = group_index(geo.province, has_province)
 
     s, j = np.nonzero(classes > 0)                       # the non-zero cell-months
     k = classes[s, j]
@@ -95,9 +86,8 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
     i_hit, s_hit, k_hit = i_all[e_idx, o_idx], s[e_idx], k[e_idx]
     b_hit = OFFSET_BAND[o_idx]
     same_c = has_country[j[e_idx]] & (country_index[i_hit] == country_index[j[e_idx]])
-    same_p = has_province[j[e_idx]] & (province_index[i_hit] == province_index[j[e_idx]])
 
-    own, band, inner_c, inner_p = [None], [None], [None], [None]
+    own, band, inner_c = [None], [None], [None]
     for cls in range(1, N_CLASSES):
         sel = k == cls
         own.append(_sparse(j[sel], s[sel], np.ones(sel.sum()), (N, M)))
@@ -108,17 +98,10 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
         rows = np.concatenate([i_hit[hit & same_c], j[own_in_country]])
         cols = np.concatenate([s_hit[hit & same_c], s[own_in_country]])
         inner_c.append(_sparse(rows, cols, np.ones(rows.size), (N, M)))
-        own_in_province = sel & has_province[j]
-        rows = np.concatenate([i_hit[hit & same_p], j[own_in_province]])
-        cols = np.concatenate([s_hit[hit & same_p], s[own_in_province]])
-        inner_p.append(_sparse(rows, cols, np.ones(rows.size), (N, M)))
 
     country_tot = np.zeros((N_CLASSES, M, n_countries))
     in_c = has_country[j]
     np.add.at(country_tot, (k[in_c], s[in_c], country_index[j[in_c]]), 1.0)
-    province_tot = np.zeros((N_CLASSES, M, n_provinces))
-    in_p = has_province[j]
-    np.add.at(province_tot, (k[in_p], s[in_p], province_index[j[in_p]]), 1.0)
     global_tot = np.zeros((N_CLASSES, M))
     np.add.at(global_tot, (k, s), 1.0)
 
@@ -127,19 +110,11 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
     n_near = (nbr >= 0).sum(axis=1)
     same_country_nbr = (nbr >= 0) & has_country[:, None] & (
         country_index[np.where(nbr >= 0, nbr, 0)] == country_index[:, None])
-    same_province_nbr = (nbr >= 0) & has_province[:, None] & (
-        province_index[np.where(nbr >= 0, nbr, 0)] == province_index[:, None])
     country_size = np.bincount(country_index[has_country], minlength=n_countries)
-    province_size = np.bincount(province_index[has_province], minlength=n_provinces)
-    n_province = np.where(has_province, province_size[np.maximum(province_index, 0)]
-                          - 1 - same_province_nbr.sum(axis=1), 0)
-    n_country_outside_inner = np.where(has_country, country_size[np.maximum(country_index, 0)]
-                                       - 1 - same_country_nbr.sum(axis=1), 0)
-    n_map = N - 1 - n_near - n_country_outside_inner
-    sizes = np.stack([np.ones(N, int), n_near, n_province, n_country_outside_inner - n_province,
-                      n_map])
-    return DollCounts(months=months, own=own, band=band, inner_same_province=inner_p,
-                      inner_same_country=inner_c, province_tot=province_tot,
-                      country_tot=country_tot, global_tot=global_tot,
-                      province_index=province_index, country_index=country_index,
+    n_country = np.where(has_country, country_size[np.maximum(country_index, 0)]
+                         - 1 - same_country_nbr.sum(axis=1), 0)
+    n_map = N - 1 - n_near - n_country
+    sizes = np.stack([np.ones(N, int), n_near, n_country, n_map])
+    return DollCounts(months=months, own=own, band=band, inner_same_country=inner_c,
+                      country_tot=country_tot, global_tot=global_tot, country_index=country_index,
                       band_sizes=band_sizes, sizes=sizes)

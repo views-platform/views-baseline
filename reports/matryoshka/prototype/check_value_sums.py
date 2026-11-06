@@ -15,12 +15,9 @@ rng = np.random.default_rng(2)
 rows, cols = np.meshgrid(np.arange(100, 114), np.arange(200, 218), indexing="ij")
 cells = np.sort((rows * N_COLS + cols + 1).ravel())
 c = (cells - 1) % N_COLS
-r = (cells - 1) // N_COLS
 country = np.where(c < 208, 7, 9)
-province = np.where(country == 7, np.where(r < 107, 71, 72), 91)
-province[5] = NO_PROVINCE
-country[3], province[3] = 0, NO_PROVINCE
-geo = build_geometry(cells, country, province)
+country[3] = 0
+geo = build_geometry(cells, country, np.full(cells.size, NO_PROVINCE))
 months = np.arange(100, 160)
 classes = classify(rng.choice([0, 0, 0, 1, 3, 12, 40, 300, 2000], size=(months.size, cells.size)))
 dc = build_doll_counts(classes, months, geo)

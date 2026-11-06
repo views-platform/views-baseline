@@ -5,7 +5,7 @@ Data in:   the calibration input pull (parquet, index month_id × priogrid_id; l
 Transform: size classes → per-month doll counts → for each knob setting, class probabilities at every
            backtest cutoff and horizon → mean log score and its exact slope (for L-BFGS-B).
 Config:    the constants below (cutoffs, horizon, bounds, starting values), all from ADR-024 / the plan.
-Out:       one JSON per violence type in ../results/v6_kernel_province/ (knobs, references, stability, timings).
+Out:       one JSON per violence type in ../results/v5_kernel/ (knobs, references, stability, timings).
 
 Run: python fit_knobs.py <input.parquet> <gaul1_code.parquet> [--stability]
 """
@@ -43,14 +43,13 @@ HORIZON = 36
 # thresholds (ftol 2.2e-9 relative, gtol 1e-5) are tightened; LOG.md 2026-11-06.
 MEMORY_BOUNDS = (1.0, 600.0)      # months; a fit at 600 means "longer than we can see"
 WEIGHT_BOUNDS = (1e-6, 1e3)
-# In DOLLS order: cell, near, province, country, map. Currents of Conflict as a guide: the near weight
-# starts at the sum of the two former rings; the length scale at 0.72° = 1.44 cells (#139); the
-# province sits between the neighbourhood and the country (#136 re-test).
-START_MEMORY = np.array([4.0, 12.0, 36.0, 60.0, 122.0])
-START_WEIGHT = np.array([1.0, 0.6, 0.05, 0.1, 0.01])           # cell fixed at 1
+# In DOLLS order: cell, near, country, map. Currents of Conflict as a guide: the near weight starts at
+# the sum of the two former rings; the length scale at 0.72° = 1.44 cells (#139).
+START_MEMORY = np.array([4.0, 12.0, 60.0, 122.0])
+START_WEIGHT = np.array([1.0, 0.6, 0.1, 0.01])                 # cell fixed at 1
 START_LENGTH = 1.44                                             # cells
 LENGTH_BOUNDS = (0.25, 10.0)                                    # cells; NEAR_RADIUS is 5
-RESULTS = Path(__file__).resolve().parent.parent / "results" / "v6_kernel_province"
+RESULTS = Path(__file__).resolve().parent.parent / "results" / "v5_kernel"
 
 
 def load(path: str, province_path: str, last_month: int = TRAIN_END):

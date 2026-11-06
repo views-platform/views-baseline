@@ -36,7 +36,7 @@ length scale, with a'_b = ∂a_b/∂log ℓ = a_b · d_b / ℓ:
 from __future__ import annotations
 
 import numpy as np
-from doll_counts import CELL, COUNTRY, DOLLS, NEAR, PROVINCE, DollCounts
+from doll_counts import CELL, COUNTRY, DOLLS, NEAR, DollCounts
 from grid_geometry import BAND_DISTANCE
 from size_classes import N_CLASSES
 
@@ -96,7 +96,6 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int, length: float | None =
     q = np.zeros((R, N, N_CLASSES))
     size = dc.sizes[doll].astype(np.float64)
     has_country, ci = dc.country_index >= 0, np.maximum(dc.country_index, 0)
-    has_province, pi = dc.province_index >= 0, np.maximum(dc.province_index, 0)
     if doll == NEAR:
         a, _ = _kernel(length)
         z = a @ dc.band_sizes                                                    # (N,)
@@ -108,17 +107,13 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int, length: float | None =
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(z > 0, num / z, 0.0)
         else:
-            province_rest = np.where(has_province, (W @ dc.province_tot[k])[:, pi]
-                                     - _weigh(dc.inner_same_province[k], W), 0.0)
-            country_outside_inner = np.where(has_country, (W @ dc.country_tot[k])[:, ci]
-                                             - _weigh(dc.inner_same_country[k], W), 0.0)
-            if doll == PROVINCE:
-                q[..., k] = province_rest
-            elif doll == COUNTRY:
-                q[..., k] = country_outside_inner - province_rest
+            country_rest = np.where(has_country, (W @ dc.country_tot[k])[:, ci]
+                                    - _weigh(dc.inner_same_country[k], W), 0.0)
+            if doll == COUNTRY:
+                q[..., k] = country_rest
             else:
                 inner = _weigh(dc.own[k], W) + sum(_weigh(x, W) for x in dc.band[k])
-                q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_outside_inner
+                q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_rest
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(size > 0, q[..., k] / size, 0.0)
     q[..., 0] = np.where(size > 0, W.sum(axis=1)[:, None] - q[..., 1:].sum(axis=2), 0.0)

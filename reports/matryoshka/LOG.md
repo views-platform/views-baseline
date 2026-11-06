@@ -579,3 +579,13 @@ The province starts with weight 0.05 and memory 36 months. Results go to `result
 - **Close #136 as not planned.**
 - **Revert the model to the kernel-only version (v5),** keeping the province commits (`fa4273d`, `2957a20`) for the record.
 - The extended checks stay valid for the kernel model once the province is removed.
+
+## 2026-11-06: #136 closed (Simon: close and revert)
+
+- **The prototype code is restored to the kernel-only model** (`prototype/` as of `eef6cf6`: four groups, 8 settings). All three checks pass again.
+- **The province code stays in git history:**
+  - `fa4273d`: province with the square rings;
+  - `2957a20`: province on the kernel.
+- **The results stay** in `results/v4_province/` and `results/v6_kernel_province/`, with maps in `maps/province/` and `maps/kernel_province/`.
+- **No issue in views-models for `gaul1_code` is needed.**
+- **Next: #137** (whether violence happens vs how big it is).
