@@ -30,6 +30,8 @@ from size_classes import classify  # noqa: E402
 
 CUTOFF = TRAIN_END
 HORIZON = 36
+FLOOR = 1e-6   # colour floor; below it (including exact zeros) a land cell is grey. Was 1e-4, which hid
+               # real low levels (Saudi Arabia one-sided ≈ 6e-5; LOG.md 2026-11-06)
 HERE = Path(__file__).resolve().parent
 LABEL = {"lr_sb_best": "state-based", "lr_ns_best": "non-state", "lr_os_best": "one-sided"}
 AFRICA_ME = {"rows": (120, 260), "cols": (320, 480)}   # roughly 20°W–60°E, 40°S–40°N
@@ -78,23 +80,23 @@ def main(path: str, province_path: str, knobs_dir: Path, out: Path) -> None:
     for name, window in (("world", None), ("africa_middle_east", AFRICA_ME)):
         fig, axes = plt.subplots(3, 3, figsize=(18, 11) if window is None else (15, 14),
                                  constrained_layout=True)
-        norm = LogNorm(1e-4, 1)
+        norm = LogNorm(FLOOR, 1)
         for r, target in enumerate(TARGETS):
             for c, (title, v) in enumerate(panels[target]):
                 ax = axes[r, c]
-                grid, base = to_grid(cells, np.maximum(v, 1e-4)), land
+                grid, base = to_grid(cells, np.maximum(v, FLOOR)), land
                 if window is not None:
                     (r0, r1), (c0, c1) = window["rows"], window["cols"]
                     grid, base = grid[r0:r1, c0:c1], land[r0:r1, c0:c1]
                 ax.imshow(np.where(np.isnan(base), np.nan, 0.0), cmap="Greys", vmin=-1, vmax=1,
                           origin="lower", interpolation="nearest")
-                im = ax.imshow(np.where(grid > 1e-4, grid, np.nan), cmap="magma_r", norm=norm,
+                im = ax.imshow(np.where(grid > FLOOR, grid, np.nan), cmap="magma_r", norm=norm,
                                origin="lower", interpolation="nearest")
                 ax.set_title(f"{LABEL[target]}: {title}", fontsize=10)
                 ax.set_xticks([])
                 ax.set_yticks([])
         fig.colorbar(im, ax=axes, shrink=0.6,
-                     label="probability / share (log scale; grey = below 0.0001)")
+                     label="probability / share (log scale; grey = exactly 0 or below 1e-6)")
         fig.suptitle(f"History up to month {CUTOFF}; forecast months {CUTOFF + 1}–{CUTOFF + HORIZON}"
                      f" (out of sample; knobs from {knobs_dir.name}, fitted on months ≤ {TRAIN_END})", fontsize=12)
         fig.savefig(out / f"forecast_maps_{name}.png", dpi=110)

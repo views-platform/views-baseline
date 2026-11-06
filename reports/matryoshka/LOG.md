@@ -409,3 +409,29 @@ The rings and cell are unchanged from v3.
 - the parametrised map scripts and report.
 
 **Revisit provinces** only if #137's size pools turn out to need a sub-country level.
+
+## 2026-11-06: map colour floor, and the 5- vs 6-group comparison maps
+
+**Simon's question on the one-sided map:** why does Saudi Arabia show a few coloured cells but nothing for the rest of the country, and why are some single cells coloured with no rings around them?
+
+**Cause: the grey cut-off of the colour scale (0.0001), not the model.** Checked on the v4 one-sided forecasts:
+
+| Saudi Arabia (713 cells) | Chance of ≥ 1 death |
+|---|---|
+| the 6 cells with past one-sided deaths (latest month 434) | median 6.4e-3 |
+| their ring-1 neighbours | median 3.7e-4 |
+| the rest of the country | median 5.9e-5, under the cut-off, so drawn grey but not zero |
+
+- **Isolated coloured cells.** For one-sided violence, 38 cells clear 0.0001 while all their neighbours fall below it (neighbours about 5e-5 to 9e-5). These are cells whose last event was years ago, for example in Madagascar, Zimbabwe, Peru and Indonesia.
+- **Fix to the maps.** The colour floor is now 1e-6 (`map_forecasts.py`, `FLOOR`; `compare_maps.py`). Grey now means exactly 0 or below 1e-6.
+
+**Comparison maps** (`maps/province/compare_*.png`, from `prototype/dump_version.py` and `prototype/compare_maps.py`; the arrays are in `results/v3.npz` and `results/v4.npz`): 5 groups | 6 groups | ratio.
+
+| | Median ratio (6 / 5 groups) | Cells changed by > 10% |
+|---|---|---|
+| chance of ≥ 1 death | 0.98–0.995 | 4.5–7.1% |
+| conditional mean, state-based and non-state | about 1.00 | 1–3% |
+| conditional mean, one-sided | **1.25** | **84%** |
+
+- **The chance maps change by whole provinces.** The ratio maps show provinces lighting up or dimming as blocks: for example a northern Niger province up, a northern Chad province down. Those changes do not improve the fitting score.
+- **The one-sided size shift is broad, not local.** It comes from the refit (the map memory moved from 174 to 268 months, and the weights shifted), not from provinces as such.
