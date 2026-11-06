@@ -633,3 +633,16 @@ Training data only (≤ 456). An *onset* is a violent cell-month whose cell had 
   - the package build (#127 stages 1–4);
   - release 1.3.0;
   - evaluation against conflictology in views-models.
+
+## 2026-11-06: #142 done, ADR-024 amended and #127's plan updated
+
+- **ADR-024** (`docs/ADRs/024_matryoshka_conflictology.md`):
+  - the two rings are replaced by the smooth neighbourhood throughout;
+  - 8 knobs, with their limits and the 600-month ceiling;
+  - a new section, "Amendment 2026-11-06: what the prototype settled", gives each decision with its issue, the fitting method, the fitted knobs and their stability.
+  - `validate_docs.sh` passes.
+- **#127's body now carries the build plan** for stages 1–4 on the final design:
+  - a `matryoshka/` sub-package ported file by file from the prototype;
+  - the configuration keys;
+  - the prototype checks to port as tests. The value-sum check is not ported: the package draws samples and does not compute expected values in closed form.
+  - `scipy` must be declared in `pyproject.toml`; it is not declared today.
