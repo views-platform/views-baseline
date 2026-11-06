@@ -589,3 +589,23 @@ The province starts with weight 0.05 and memory 36 months. Results go to `result
 - **The results stay** in `results/v4_province/` and `results/v6_kernel_province/`, with maps in `maps/province/` and `maps/kernel_province/`.
 - **No issue in views-models for `gaul1_code` is needed.**
 - **Next: #137** (whether violence happens vs how big it is).
+
+## 2026-11-06: #137 groundwork, how big are outbreaks compared with all violence? (`prototype/describe_onset_sizes.py`)
+
+Training data only (≤ 456). An *onset* is a violent cell-month whose cell had no deaths in the 36 months before. A *remote onset* also had no deaths in its neighbourhood (≤ 5 cells) in those months.
+
+| Type | Period | All violent months: mean (median) | Onsets | Remote onsets |
+|---|---|---|---|---|
+| state-based | 157–456 | 21.8 (4), n=42,950 | 14.0 (3), n=4,861 | 17.2 (4), n=247 |
+| state-based | 421–456 | 25.0 (6), n=8,208 | **10.0 (4)**, n=677 | 5.9 (3), n=29 |
+| non-state | 157–456 | 21.0 (5), n=8,119 | 20.4 (4), n=2,195 | 23.8 (6), n=250 |
+| non-state | 421–456 | 21.4 (6), n=2,209 | **10.6 (4)**, n=410 | 11.4 (3), n=41 |
+| one-sided | 157–456 | 53.0 (2), n=19,678 | 59.2 (2), n=3,836 | 21.3 (3), n=346 |
+| one-sided | 421–456 | 9.8 (2), n=2,787 | 8.5 (2), n=611 | 11.9 (3), n=56 |
+
+**Reading:**
+- **In recent years, outbreaks are about half the size of all violence** for state-based and non-state (10 against 21–25). That matches the observed out-of-sample level for quiet places (about 8). So an onset pool should help these two types.
+- **Over the whole history the gap is small or absent.** Non-state is the same, and one-sided outbreaks are even larger (the 1990s massacres). So the onset pool only helps if the pool is weighted toward recent months.
+- **One-sided's oversized fallback is a memory problem, not an onset problem.** Recent one-sided violence is small (mean 9.8) either way. Matryoshka gives 26–41 because the map memory sits at 600 months, so the 1990s dominate. That is #140, and an onset pool with the same memory would not fix it.
+- **Remote onsets are too rare to build a pool from** (29–56 in the last three years). So the onset definition stays on the cell's own history.
+- **Class shares** (what the score sees) differ only modestly between onsets and all violence. Expect a small score change; judge the step mostly on the size check and the maps.
