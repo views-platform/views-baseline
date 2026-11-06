@@ -550,3 +550,32 @@ The province starts with weight 0.05 and memory 36 months. Results go to `result
 - the province rest without subtracting the inner cells.
 
 **Running:** the main fit plus stability (`fit_kernel_province.log`).
+
+## 2026-11-06: #136 re-test result, the province adds nothing on top of the kernel either (`results/v6_kernel_province/`)
+
+**Fit.** All three types converged.
+
+| | state-based | non-state | one-sided |
+|---|---|---|---|
+| score, kernel + province | −0.0151362 | −0.0054575 | −0.0066784 |
+| score, kernel (v5) | −0.0151347 | −0.0054613 | −0.0066772 |
+| difference | −1.6e-6 (worse) | +3.9e-6 | −1.2e-6 (worse) |
+| province weight | **0.000** (switched off) | 0.30 | 0.034 |
+| province memory (months) | 1.0 (meaningless at weight 0) | 9.7 | 192 |
+| fit time | 521 s | 249 s | 328 s |
+
+- **Every difference is within the noise level** of about 6e-6. State-based switches the province off entirely; one-sided gives it almost nothing.
+- **The province memory is unstable across the leave-one-out refits:** state-based 1–22 months, one-sided 82–439 months.
+- **Everything else matches v5:** the length scale, near weight and other memories.
+- **The fit is 5–9× slower** than the kernel alone.
+
+**Maps** (`maps/kernel_province/compare_*.png`, kernel | kernel + province | ratio):
+- **Only 2–4.5% of cells change their chance by more than 10%,** and 1–3.5% their size.
+- **The visible province blocks** (for example in Niger and Algeria) come from the country shell now *excluding* the cell's own province. That holds even where the province weight is 0, so a cell in a quiet province of a violent country borrows from the violent rest. This is not a province signal.
+
+**Reading.** With the smooth kernel the neighbourhood already covers what the province could add. The province is not worth two settings, a cross-repo data dependency (`gaul1_code` in the views-models input pull), or the slower fit.
+
+**Recommendation to Simon:**
+- **Close #136 as not planned.**
+- **Revert the model to the kernel-only version (v5),** keeping the province commits (`fa4273d`, `2957a20`) for the record.
+- The extended checks stay valid for the kernel model once the province is removed.
