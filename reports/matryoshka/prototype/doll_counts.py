@@ -9,6 +9,9 @@ For cell i in month s, the five dolls are disjoint shells (ADR-024):
 
 Everything the scoring needs can be summed over months later, so this stage stores counts, not shares.
 The panel is complete (every cell, every month), so each shell's size does not change over time.
+
+The counts are stored once as float32, class first, so that the scoring can multiply them by the time
+weights directly: converting them on every scoring cost about 0.7 s per ring (LOG.md, 2026-11-06).
 """
 
 from __future__ import annotations
@@ -25,14 +28,14 @@ DOLLS = ["cell", "ring1", "ring2", "country", "map"]
 
 @dataclass(frozen=True)
 class DollCounts:
-    """Class counts per month for every cell's dolls. M months, N cells, K = 7 classes.
+    """Class counts per month for every cell's dolls. K = 7 classes, M months, N cells; all float32.
 
-    own          (M, N) int8      the cell's own class each month
-    ring1, ring2 (M, N, K) uint8  class counts within each ring
-    inner_same   (M, N, K) uint8  counts over cell + rings, restricted to the cell's own country
-    country_tot  (M, C, K) int32  counts per country (index from `country_index`)
-    global_tot   (M, K) int32     counts over all cells
-    sizes        (5, N) int       shell sizes: cell, ring1, ring2, rest of country, rest of map
+    own          (K, M, N)  1 where the cell is in that class that month, else 0
+    ring1, ring2 (K, M, N)  class counts within each ring
+    inner_same   (K, M, N)  counts over cell + rings, restricted to the cell's own country
+    country_tot  (K, M, C)  counts per country (index from `country_index`)
+    global_tot   (K, M)     counts over all cells
+    sizes        (5, N) int shell sizes: cell, ring1, ring2, rest of country, rest of map
     """
 
     months: np.ndarray
@@ -96,6 +99,13 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
     n_map = N - (1 + n1 + n2) - np.where(has_country, country_size[np.maximum(country_index, 0)]
                                          - n_inner_same, 0)
     sizes = np.stack([np.ones(N, int), n1, n2, n_country, n_map])
-    return DollCounts(months=months, own=classes, ring1=ring1, ring2=ring2,
-                      inner_same=inner_same, country_tot=country_tot, global_tot=global_tot,
+    own = (np.arange(N_CLASSES)[:, None, None] == classes[None]).astype(np.float32)
+    return DollCounts(months=months, own=own, ring1=_class_first(ring1), ring2=_class_first(ring2),
+                      inner_same=_class_first(inner_same), country_tot=_class_first(country_tot),
+                      global_tot=np.ascontiguousarray(global_tot.T, dtype=np.float32),
                       country_index=country_index, sizes=sizes)
+
+
+def _class_first(counts: np.ndarray) -> np.ndarray:
+    """(M, X, K) counts → (K, M, X) float32, contiguous per class."""
+    return np.ascontiguousarray(np.moveaxis(counts, 2, 0), dtype=np.float32)

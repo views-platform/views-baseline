@@ -1,0 +1,65 @@
+{
+  "target": "lr_ns_best",
+  "dolls": [
+    "cell",
+    "ring1",
+    "ring2",
+    "country",
+    "map"
+  ],
+  "cutoffs": [
+    384,
+    396,
+    408,
+    420
+  ],
+  "horizon": 36,
+  "class_counts_in_history": {
+    "0": 21770087,
+    "1": 1783,
+    "2-5": 2934,
+    "6-25": 2557,
+    "26-100": 1170,
+    "101-1000": 307,
+    ">1000": 10
+  },
+  "references": {
+    "conflictology_36m": {
+      "score": -0.016381312161684036,
+      "floored": 5139
+    },
+    "cell_all_history": {
+      "score": -0.014774874784052372,
+      "floored": 4405
+    }
+  },
+  "start_score": -0.005653374828398228,
+  "fit": {
+    "weight": [
+      1.0,
+      0.5911012976121296,
+      0.3181632897440161,
+      1.8706070096441472,
+      0.2203086976773159
+    ],
+    "memory": [
+      13.593493499030922,
+      14.995679083424829,
+      16.03746748804858,
+      11.46067621158533,
+      35.966520185221654
+    ],
+    "score": -0.005466895643621683,
+    "floored": 0,
+    "converged": true,
+    "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+    "evaluations": 580,
+    "seconds": 2668.5
+  },
+  "timing_seconds": {
+    "load_all_targets": 8.9,
+    "doll_counts": 27.5,
+    "first_score_evaluation": 10.4
+  },
+  "peak_rss_gib": 3.19
+}

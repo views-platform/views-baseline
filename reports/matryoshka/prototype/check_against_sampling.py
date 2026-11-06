@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from doll_counts import build_doll_counts
-from forecast_probability import doll_shares, log_score, outcome_classes
+from forecast_probability import doll_shares, log_score, outcome_classes, time_weights
 from grid_geometry import N_COLS, build_geometry
 from size_classes import N_CLASSES, classify
 
@@ -27,7 +27,7 @@ dc = build_doll_counts(classes, months, geo)
 cutoffs = np.array([150])
 memory = np.array([3.0, 6.0, 12.0, 40.0, 200.0])
 ring_weight = np.array([1.0, 0.6, 0.3, 0.5, 0.2])
-q = np.stack([doll_shares(dc, cutoffs, k, memory[k]) for k in range(5)])
+q = np.stack([doll_shares(dc, time_weights(months, cutoffs, memory[k]), k) for k in range(5)])
 assert np.allclose(q.sum(axis=3)[:, 0][dc.sizes > 0], 1.0, atol=1e-5), "shares must sum to 1"
 
 # shell membership, built independently of doll_counts

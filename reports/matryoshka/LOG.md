@@ -89,3 +89,125 @@ Newest entries at the bottom. Numbers come from the files named in each entry.
 - **Correction.** The earlier "about ten times faster" from exact step directions was wrong. A step costs about 12–15 s now and would cost about 8 s with exact directions, so about 2× faster.
 - **Expected combined speed-up: about 3–5×,** from exact directions plus converting the counts only once. To be measured.
 - **The full runs were also slowed by the machine itself.** Their spare memory on disk (swap) was full, and the average scoring took 4.6 s against 4.1 s measured here.
+
+## 2026-11-06: speed changes (Simon: "go ahead with the speed changes")
+
+- **Committed the prototype first,** as it stood (`983badf`). The first results moved to `results/v1_nudged_slopes/`, so the new fit can be compared with them.
+- **Change 1: convert the counts once.** `doll_counts.py` now stores the counts as float32, class first, `(K, M, N)`, so each scoring multiplies them by the time weights directly.
+  - Cost: about 0.6 GB more memory per array, about 2.4 GB in total.
+- **Change 2: the exact slope.** `forecast_probability.py` (`log_score_slope`, `time_weight_slopes`) computes the slope of the score from the formula; the derivation is in the module docstring. The search (`fit_knobs.py`) uses it (`jac=True`) instead of nudging each setting.
+  - How the memory slope is computed: it is the same weighted sum as the shares, with the month weights replaced by their slope. Both are stacked into one pass over the counts.
+  - The maximum number of search steps went from 60 to 200. The old fits stopped because they had converged, not because they ran out of steps, so this changes nothing for them.
+- **Checks:**
+  - `check_against_sampling.py` gives exactly the same numbers as before the change.
+  - `check_slope.py` (new) compares the exact slope with small nudges on a synthetic grid. Passed.
+    - In float32, the memory slopes for the rest of the country and the rest of the map differed from the nudges by 4% and 30%.
+    - Redone in float64 (a scratch copy with float32 replaced by float64) with nudges from 1e-2 to 1e-5, they agree to a relative gap of 1.2e-8 at the best nudge size. So the exact formula is right, and the gap was rounding noise in the nudges.
+    - Side effect: the old search's directions for those two memories were noisy too.
+  - Not yet strong: `check_slope.py` in float32 uses a loose tolerance (atol 1e-4), which the two smallest slopes (about 3e-4 and 3e-5) cannot meaningfully fail. The float64 run is the real check, and it is not yet saved as a file.
+- **Running:** a refit of all three violence types (`fit_run2.log`). State-based and non-state are to be compared with `v1_nudged_slopes/`.
+
+## 2026-11-06: refit with the exact slope (`results/v2_default_stopping/`)
+
+**Run time.** Every type reached the search's own "converged" test ("projected gradient ≤ tolerance").
+
+| Type | Steps | Scorings | Fit time | Peak memory |
+|---|---|---|---|---|
+| state-based | 11 | 13 | 88 s | 4.7 GB |
+| non-state | 14 | 20 | 138 s | 5.9 GB |
+| one-sided | 8 | 15 | 102 s | 5.9 GB |
+
+- **Before:** 2,434 s with 530 scorings (state-based) and 2,668 s with 580 (non-state).
+- **About 25× faster.** That is more than the 3–5× estimated, because the search also needs far fewer steps once its directions are exact.
+- **One scoring with slope, including the counts:** about 6.5 s for the first one.
+- **Within the 10-minute gate.**
+
+**Scores: the same as before, to 6 digits.**
+
+| Type | New | Old |
+|---|---|---|
+| state-based | −0.015195 | −0.015196 |
+| non-state | −0.005469 | −0.005467 |
+
+**But some settings moved:**
+
+| Setting | Old | New |
+|---|---|---|
+| state-based ring 1 weight | 0.551 | 0.582 |
+| state-based map memory (months) | 96 | 101 |
+| non-state ring 2 memory (months) | 16 | 20 |
+| non-state map memory (months) | 36 | 50 |
+| non-state country weight | 1.87 | 2.12 |
+
+Two possible readings:
+- **(a) A flat score.** The score barely changes along some directions, so those settings are weakly determined by the data.
+- **(b) Stopped too early.** The default thresholds (gtol 1e-5) are coarse for slopes of about 1e-4.
+
+The test: refit with ftol 1e-13 and gtol 1e-9 (now in `fit_knobs.py`).
+
+**One-sided violence (first fit):**
+
+| Group of cells | Weight | Memory (months) |
+|---|---|---|
+| the cell | 1 (fixed) | 21.3 |
+| ring 1 | 0.652 | 16.5 |
+| ring 2 | 0.334 | 16.8 |
+| rest of country | 0.598 | 19.7 |
+| rest of map | 0.023 | 145 |
+
+- **Score: −0.00671 for Matryoshka,** against −0.01955 for conflictology and −0.01634 for the cell's whole history.
+- **Near-zero misses: 0 for Matryoshka,** against 5,861 for conflictology and 4,233 for the cell's whole history.
+- **Size classes.** The class above 1,000 has 58 entries (cell-months).
+
+## 2026-11-06: strict stopping thresholds (`results/v3_strict_stopping/`)
+
+**Run time:** 5–7 minutes per type, still inside the gate. The search now stops on "relative reduction of the score ≤ ftol".
+
+| Type | Steps | Scorings | Fit time |
+|---|---|---|---|
+| state-based | 29 | 61 | 408 s |
+| non-state | 29 | 44 | 306 s |
+| one-sided | 18 | 42 | 333 s |
+
+**Scores improved, but only a little:**
+
+| Type | Strict | Default stopping | Gain |
+|---|---|---|---|
+| state-based | −0.0151878 | −0.0151954 | 7.6e-6 |
+| non-state | −0.0054628 | −0.0054692 | 6.4e-6 |
+| one-sided | −0.0067079 | −0.0067138 | 5.9e-6 |
+
+**But several settings moved a lot:**
+
+| Setting | Default stopping | Strict |
+|---|---|---|
+| state-based map memory (months) | 101 | 26 |
+| non-state ring 1 weight | 0.66 | 1.25 |
+| non-state map memory (months) | 50 | 26 |
+| one-sided ring 1 weight | 0.65 | 1.07 |
+
+**Reading: both (a) and (b) were true.**
+- (b) The default thresholds stopped the search early.
+- (a) The score is very flat along these directions: large changes in a setting buy gains of about 1e-5. Such settings are weakly determined by the data.
+- The stability runs (each backtest period left out in turn), started with the strict thresholds, will show how much they wobble.
+
+**What stays stable across all three fits (v1, v2, v3):**
+- the cell's memory: 14–15 months for state-based and non-state, 21–24 for one-sided;
+- the country memory: 11–21 months;
+- the score;
+- zero near-zero misses.
+
+The ring and map settings are the ones that wander.
+
+## 2026-11-06: forecast maps (`maps/`, `prototype/map_forecasts.py`)
+
+- **Setup.** History up to month 456, the last month the fit could see. Forecasts for months 457–492, which the fit never used, so the maps are out of sample. Knobs from `v3_strict_stopping`. Each cell shows the chance of at least one death, averaged over the 36 months, next to what happened and next to conflictology.
+- **Out of sample, not in sample.** A first version used history up to month 420, which would have mapped months the fit was scored on. It was changed before running.
+- **What the maps show:**
+  - **Conflictology is speckled:** only cells that had deaths in the last 36 months get any probability. Everything else is exactly zero, including many cells where deaths then happened.
+  - **Matryoshka has a country-wide floor plus halos.** The floor comes from the country doll: a whole country gets one level. The halos come from the rings: square, because the rings are squares of grid cells. Hot spots match conflictology's.
+  - **For non-state violence,** Matryoshka spreads probability across the whole of Mexico and Brazil, where the outcome was scattered events.
+  - **For one-sided violence,** quiet regions fall below 0.0001 (map weight 0.038).
+- **Things to look at:**
+  - **The country floor is uniform across a country,** however far a cell is from the fighting. This shows clearly in large countries (DR Congo, Sudan, Brazil). It is by design in v1.
+  - **The square halos** are visible around single isolated events.
