@@ -479,3 +479,43 @@ The rings and cell are unchanged from v3.
 - **`check_value_sums.py`** passes for the kernel model.
 
 **Running:** the main fit plus stability for all three types (`fit_kernel.log`).
+
+## 2026-11-06: #139 result, the smooth kernel is better, simpler and faster (`results/v5_kernel/`, `maps/kernel/`)
+
+**Fit.** All three violence types converged.
+
+| | state-based | non-state | one-sided |
+|---|---|---|---|
+| score, kernel | −0.0151347 | −0.0054613 | −0.0066772 |
+| score, square rings (v3) | −0.0151878 | −0.0054628 | −0.0067079 |
+| difference | **+5.3e-5** | +1.5e-6 (tie) | **+3.1e-5** |
+| near-zero misses | 0 | 0 | 0 |
+| length scale ℓ | 0.80 cells = 0.40° | 1.35 cells = **0.68°** | 0.98 cells = 0.49° |
+| ℓ across the four leave-one-out refits | 0.77–0.83 | 1.23–1.65 | 0.95–0.99 |
+| fit time | 61 s | 51 s | 69 s |
+
+- **The gains are real.** For state-based and one-sided they are 5–10× the noise between stopping rules (about 6e-6). They come with one setting fewer (8, against 9).
+- **The non-state length scale matches the literature.** At 0.68° it is close to Currents of Conflict's 0.72°. State-based and one-sided prefer a tighter neighbourhood (0.40–0.49°).
+- **Fitting is about 5× faster** than with the rings: about 1 minute per fit.
+
+**Fitted settings:**
+
+| Type | Near weight | Country weight | Map weight | Memory (months): cell / near / country / map |
+|---|---|---|---|---|
+| state-based | 0.95 | 0.18 | 0.046 | 13.5 / 13.4 / 11.6 / 24.8 |
+| non-state | 2.80 | 0.38 | 0.21 | 15.6 / 11.6 / 80 / 29 |
+| one-sided | 1.72 | 0.47 | 0.028 | 23.1 / 13.8 / 22.1 / 600 (ceiling) |
+
+**Stability:**
+- **State-based:** stable throughout.
+- **One-sided:** stable, but the map memory sits at the 600-month ceiling in all five fits. Stably at the ceiling means "remember everything" for the rest of the map, which is the logged v2 log-time question.
+- **Non-state:** the country memory is unstable (11–196 months). The country weight/memory trade-off seen before is still there.
+
+**Plots** (`maps/kernel/`):
+- **`neighbour_pull.png`.** The pull of one neighbouring cell, relative to the cell itself, by distance: the rings' staircase against the kernel's straight line on a log scale. The kernel passes through the middle of the old steps, then keeps going smoothly instead of dropping to zero after ring 2. (The rings are drawn at their ring number, so their x position is approximate.)
+- **`forecast_maps_*.png`:** the halos are now round and fade smoothly; no square boxes.
+- **`compare_chance_*.png`** (rings | kernel | ratio). The kernel model is red in round bands 3–5 cells out from hot spots, where the rings gave nothing beyond ring 2, and blue in the old square corners.
+  - **Non-state:** the country floors are much lower (median ratio 0.58), because the fit moved weight from the country (2.3 → 0.38) to the neighbourhood (2.8). Egypt goes up (country memory 80 months, so old events count).
+- **Size check:** practically unchanged. One-sided quiet-before, whole group: median 41 (v3: 26; v4: 33). The one-sided map memory at the ceiling makes the world fallback even more war-weighted, which is #137's problem.
+
+**Recommendation: keep the kernel.** Next: re-test the province group on top of it (#136), then #137.
