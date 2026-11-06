@@ -246,3 +246,15 @@ Simon asked for the expected deaths in a cell, given at least one.
 **For the evaluation and for v2:**
 - ADR-024's "size conditioned on the forecast" check should show this.
 - A design question for Simon: should the map doll (and perhaps the country doll) bring only occurrence and not size, or bring size from quiet-before places only?
+
+## 2026-11-06: what the conditional mean means in quiet places (discussion with Simon)
+
+**Simon's point.** Matryoshka's large conditional mean in remote quiet places is not wrong in kind. With nothing local to go on, borrowing from the rest of the map is a defensible answer to "if something happened here, how big?"
+
+**Conflictology has no answer at all.** In a cell with no deaths in its window, all draws are 0, so P(≥1) = 0 and the conditional mean is 0/0, undefined. That is the grey in its panels. It is not saying "small" or "uncertain": the question does not exist for it. A plus for Matryoshka.
+
+**Level, not kind.** The fallback answers "what does violence look like anywhere in the world?" The world pool is dominated by sustained wars, which puts it at about 25. "What does violence look like when a quiet place erupts?" gives an observed mean of about 8 (median 2–3) in months 457–492.
+
+**Caveat.** Most quiet-before cells that erupted were near existing conflict. Remote (Canada-like) eruptions are too rare for this check to speak about them specifically.
+
+**v2 option.** Keep the fallback, but have it draw sizes from quiet-before-then-erupted cases rather than from all non-zero months.
