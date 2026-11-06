@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 N_ROWS, N_COLS = 360, 720
+NO_PROVINCE = -1   # GAUL admin-1 "unassigned"; other negative codes are real (Azores, views-datafactory ADR-043)
 
 
 @dataclass(frozen=True)
@@ -23,10 +24,12 @@ class Geometry:
     ``neighbours[i, j]`` is the index (into ``cells``) of the j-th neighbour of cell i, or -1 if that
     position is not a land cell in the data. Columns 0–7 are ring 1, columns 8–23 ring 2.
     ``country[i]`` is the GAUL ``c_id`` of cell i (≤ 0 means no country).
+    ``province[i]`` is the GAUL admin-1 code of cell i, or NO_PROVINCE. Provinces nest in countries.
     """
 
     cells: np.ndarray        # (N,) priogrid_id, ascending
     country: np.ndarray      # (N,) c_id
+    province: np.ndarray     # (N,) gaul1 code or NO_PROVINCE
     neighbours: np.ndarray   # (N, 24) cell index or -1
 
     RING1 = slice(0, 8)
@@ -47,11 +50,20 @@ def _offsets() -> tuple[np.ndarray, np.ndarray]:
     return both[:, 0], both[:, 1]
 
 
-def build_geometry(cells: np.ndarray, country: np.ndarray) -> Geometry:
-    """Neighbour table for the given cells. ``cells`` must be ascending and unique."""
-    cells = np.asarray(cells)
+def build_geometry(cells: np.ndarray, country: np.ndarray, province: np.ndarray) -> Geometry:
+    """Neighbour table for the given cells. ``cells`` must be ascending and unique.
+
+    A province must lie inside one country, and a cell without a country has no province.
+    """
+    cells, country, province = np.asarray(cells), np.asarray(country), np.asarray(province)
     if np.any(np.diff(cells) <= 0):
         raise ValueError("cells must be strictly ascending priogrid ids.")
+    has_province = province != NO_PROVINCE
+    if np.any(has_province & (country <= 0)):
+        raise ValueError("a cell with a province must have a country.")
+    pairs = np.unique(np.stack([province[has_province], country[has_province]]), axis=1)
+    if np.unique(pairs[0]).size != pairs.shape[1]:
+        raise ValueError("a province spans more than one country.")
     row = (cells - 1) // N_COLS          # 0-based
     col = (cells - 1) % N_COLS
     dr, dc = _offsets()
@@ -63,4 +75,4 @@ def build_geometry(cells: np.ndarray, country: np.ndarray) -> Geometry:
     found = on_grid & (pos < cells.size)
     found[found] = cells[pos[found]] == nid[found]
     neighbours = np.where(found, pos, -1)
-    return Geometry(cells=cells, country=np.asarray(country), neighbours=neighbours)
+    return Geometry(cells=cells, country=country, province=province, neighbours=neighbours)

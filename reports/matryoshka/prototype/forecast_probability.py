@@ -9,7 +9,8 @@ For history end c, forecast month t = c + h and cell i:
 The score is the mean log probability of the size class that actually happened (higher is better).
 This is exactly the distribution the three-step draw samples from, computed in closed form.
 
-The slope (for the knob search) is taken with respect to log ring_weight[1..4] and log memory[0..4].
+The slope (for the knob search) is taken with respect to log ring_weight[1..D-1] and log memory[0..D-1],
+D = len(DOLLS).
 With A_k = ring_weight[k] · exp(−h / memory[k]) for a non-empty shell, p = Σ A_k q_k / Σ A_k, and
 w_s = exp(−a_s / m) / Z the time weight of a month a_s months before c:
 
@@ -24,8 +25,7 @@ so ∂q_k/∂log m_k is the same weighted sum as q_k, with w_s · (a_s − ā) /
 from __future__ import annotations
 
 import numpy as np
-
-from doll_counts import DollCounts
+from doll_counts import CELL, COUNTRY, DOLLS, PROVINCE, RING1, RING2, DollCounts
 from size_classes import N_CLASSES
 
 PROB_FLOOR = 1e-12   # only to keep the log finite; how often it bites is reported
@@ -64,30 +64,33 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int) -> np.ndarray:
     """(R, N, K): Σ_s W[r, s] · (share of doll ``doll``'s cells in each class in month s).
 
     ``W`` holds one row of month weights per output row: `time_weights` gives q_doll, and
-    `time_weight_slopes` its slope; stacking both reads the counts once.
+    `time_weight_slopes` its slope; stacking both reads the counts once. Shell arithmetic as in
+    doll_counts.py.
     """
     R, N = W.shape[0], dc.own.shape[2]
     q = np.zeros((R, N, N_CLASSES), np.float32)
-    has_country = dc.country_index >= 0
-    ci = np.maximum(dc.country_index, 0)
+    has_country, has_province = dc.country_index >= 0, dc.province_index >= 0
+    ci, pi = np.maximum(dc.country_index, 0), np.maximum(dc.province_index, 0)
     for k in range(N_CLASSES):
-        own = W @ dc.own[k]                                                  # (R, N)
-        if doll == 0:
-            q[..., k] = own
-            continue
-        r1, r2 = W @ dc.ring1[k], W @ dc.ring2[k]
-        if doll == 1:
-            q[..., k] = r1
-        elif doll == 2:
-            q[..., k] = r2
+        if doll == CELL:
+            q[..., k] = W @ dc.own[k]
+        elif doll == RING1:
+            q[..., k] = W @ dc.ring1[k]
+        elif doll == RING2:
+            q[..., k] = W @ dc.ring2[k]
         else:
-            same = W @ dc.inner_same[k]
-            ctry = np.where(has_country, (W @ dc.country_tot[k])[:, ci] - same, 0.0)
-            if doll == 3:
-                q[..., k] = ctry
+            province_rest = np.where(
+                has_province, (W @ dc.province_tot[k])[:, pi] - W @ dc.inner_same_province[k], 0.0)
+            if doll == PROVINCE:
+                q[..., k] = province_rest
+                continue
+            country_outside_inner = np.where(
+                has_country, (W @ dc.country_tot[k])[:, ci] - W @ dc.inner_same_country[k], 0.0)
+            if doll == COUNTRY:
+                q[..., k] = country_outside_inner - province_rest
             else:
-                glob = (W @ dc.global_tot[k])[:, None]
-                q[..., k] = glob - (own + r1 + r2) - ctry
+                inner = W @ dc.own[k] + W @ dc.ring1[k] + W @ dc.ring2[k]
+                q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_outside_inner
     size = dc.sizes[doll].astype(np.float32)
     with np.errstate(invalid="ignore", divide="ignore"):
         q = np.where(size[None, :, None] > 0, q / size[None, :, None], 0.0)
@@ -102,9 +105,9 @@ def outcome_classes(classes: np.ndarray, months: np.ndarray, cutoffs: np.ndarray
 
 
 def _doll_mix(sizes, H, ring_weight, memory):
-    """(5, H, N) A_k: the unnormalised P(doll k | h) per cell, zero for empty shells."""
+    """(D, H, N) A_k: the unnormalised P(doll k | h) per cell, zero for empty shells."""
     h = np.arange(1, H + 1, dtype=np.float64)
-    a = ring_weight[:, None] * np.exp(-h[None, :] / memory[:, None])         # (5, H)
+    a = ring_weight[:, None] * np.exp(-h[None, :] / memory[:, None])         # (D, H)
     return a[:, :, None] * (sizes > 0)[:, None, :], h
 
 
@@ -118,34 +121,35 @@ def log_score(q: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray, ring_weigh
               memory: np.ndarray) -> tuple[float, int]:
     """Mean log P(observed class), and how many probabilities hit the floor.
 
-    q: (5, n_cut, N, K) doll shares; sizes: (5, N); outcomes: (n_cut, H, N);
-    ring_weight, memory: (5,) per doll.
+    q: (D, n_cut, N, K) doll shares, D = len(DOLLS); sizes: (D, N); outcomes: (n_cut, H, N);
+    ring_weight, memory: (D,) per doll.
     """
     A, _ = _doll_mix(sizes, outcomes.shape[1], ring_weight, memory)
-    num = sum(A[k][None] * _observed(q[k], outcomes) for k in range(5) if ring_weight[k] > 0)
+    num = sum(A[k][None] * _observed(q[k], outcomes) for k in range(len(DOLLS)) if ring_weight[k] > 0)
     p = num / A.sum(axis=0)[None]
     return float(np.log(np.maximum(p, PROB_FLOOR)).mean()), int((p < PROB_FLOOR).sum())
 
 
 def log_score_slope(q: np.ndarray, dq: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray,
                     ring_weight: np.ndarray, memory: np.ndarray) -> tuple[float, int, np.ndarray]:
-    """As `log_score`, plus the slope over (log ring_weight[1..4], log memory[0..4]): shape (9,).
+    """As `log_score`, plus the slope over (log ring_weight[1..D-1], log memory[0..D-1]): (2D − 1,).
 
-    dq: (5, n_cut, N, K), each doll's shares differentiated by its log memory. Floored probabilities
+    dq: (D, n_cut, N, K), each doll's shares differentiated by its log memory. Floored probabilities
     contribute no slope (the floor is flat).
     """
     A, h = _doll_mix(sizes, outcomes.shape[1], ring_weight, memory)
-    P = [_observed(q[k], outcomes) for k in range(5)]
-    num = sum(A[k][None] * P[k] for k in range(5))
+    D = len(DOLLS)
+    P = [_observed(q[k], outcomes) for k in range(D)]
+    num = sum(A[k][None] * P[k] for k in range(D))
     den = A.sum(axis=0)[None]
     p = num / den
     ok = p >= PROB_FLOOR
     safe_num = np.where(ok, num, 1.0)
-    slope = np.zeros(9)
-    for k in range(5):
+    slope = np.zeros(2 * D - 1)
+    for k in range(D):
         T = np.where(ok, A[k][None] * P[k] / safe_num - A[k][None] / den, 0.0)
         if k > 0:
             slope[k - 1] = T.mean()
         via_memory = np.where(ok, A[k][None] * _observed(dq[k], outcomes) / safe_num, 0.0)
-        slope[4 + k] = (T * (h / memory[k])[None, :, None] + via_memory).mean()
+        slope[D - 1 + k] = (T * (h / memory[k])[None, :, None] + via_memory).mean()
     return float(np.log(np.maximum(p, PROB_FLOOR)).mean()), int((~ok).sum()), slope

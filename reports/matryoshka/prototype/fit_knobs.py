@@ -1,13 +1,13 @@
 """Fit Matryoshka's knobs on real data by backtest (ADR-024, prototype for #127).
 
 Data in:   the calibration input pull (parquet, index month_id × priogrid_id; lr_*_best, c_id),
-           restricted to months ≤ TRAIN_END, the last training month.
+           restricted to months ≤ TRAIN_END, the last training month; GAUL admin-1 per cell.
 Transform: size classes → per-month doll counts → for each knob setting, class probabilities at every
            backtest cutoff and horizon → mean log score and its exact slope (for L-BFGS-B).
 Config:    the constants below (cutoffs, horizon, bounds, starting values), all from ADR-024 / the plan.
-Out:       one JSON per violence type in ../results/ (fitted knobs, references, stability, timings).
+Out:       one JSON per violence type in ../results/v4_province/ (knobs, references, stability, timings).
 
-Run: python fit_knobs.py <input.parquet> [--stability]
+Run: python fit_knobs.py <input.parquet> <gaul1_code.parquet> [--stability]
 """
 
 from __future__ import annotations
@@ -20,12 +20,17 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
-
 from doll_counts import DOLLS, build_doll_counts
-from forecast_probability import (doll_shares, log_score, log_score_slope, outcome_classes,
-                                  time_weight_slopes, time_weights)
-from grid_geometry import build_geometry
+from forecast_probability import (
+    doll_shares,
+    log_score,
+    log_score_slope,
+    outcome_classes,
+    time_weight_slopes,
+    time_weights,
+)
+from grid_geometry import NO_PROVINCE, build_geometry
+from scipy.optimize import minimize
 from size_classes import LABELS, classify
 
 TARGETS = ["lr_sb_best", "lr_ns_best", "lr_os_best"]
@@ -37,15 +42,20 @@ HORIZON = 36
 # thresholds (ftol 2.2e-9 relative, gtol 1e-5) are tightened; LOG.md 2026-11-06.
 MEMORY_BOUNDS = (1.0, 600.0)      # months; a fit at 600 means "longer than we can see"
 WEIGHT_BOUNDS = (1e-6, 1e3)
-START_MEMORY = np.array([4.0, 12.0, 24.0, 60.0, 122.0])        # Currents of Conflict as a guide
-START_WEIGHT = np.array([1.0, 0.4, 0.16, 0.1, 0.01])            # cell fixed at 1; rho ~ 0.4
-RESULTS = Path(__file__).resolve().parent.parent / "results"
+# In DOLLS order: cell, ring1, ring2, province, country, map. Currents of Conflict as a guide; the
+# province sits between ring 2 and the country (#136).
+START_MEMORY = np.array([4.0, 12.0, 24.0, 36.0, 60.0, 122.0])
+START_WEIGHT = np.array([1.0, 0.4, 0.16, 0.12, 0.1, 0.01])      # cell fixed at 1; rho ~ 0.4
+RESULTS = Path(__file__).resolve().parent.parent / "results" / "v4_province"
 
 
-def load(path: str, last_month: int = TRAIN_END):
-    """Classes-ready panel: months, sorted cells, their country, and per-target (M, N) values.
+def load(path: str, province_path: str, last_month: int = TRAIN_END):
+    """Classes-ready panel: months, sorted cells, their country and province, per-target (M, N) values.
 
     Only months HISTORY_START..last_month are read; the fit uses last_month = TRAIN_END.
+    ``province_path`` is the GAUL admin-1 file (views-datafactory data/raw/gaul_admin/gaul1_code.parquet,
+    columns gid = priogrid_id and value = gaul1 code). A cell has a province iff its code is not
+    NO_PROVINCE and it has a country.
     """
     df = pd.read_parquet(path, columns=TARGETS + ["c_id"]).reset_index()
     df = df[(df.month_id >= HISTORY_START) & (df.month_id <= last_month)]
@@ -55,12 +65,21 @@ def load(path: str, last_month: int = TRAIN_END):
         raise ValueError(f"panel is not complete: {len(df)} rows for {months.size} × {cells.size}")
     df = df.sort_values(["month_id", "priogrid_id"])
     country = df[df.month_id == months[0]].c_id.to_numpy().astype(int)
+    gaul1 = pd.read_parquet(province_path).set_index("gid")["value"]
+    missing = np.setdiff1d(cells, gaul1.index.to_numpy())
+    if missing.size:
+        raise ValueError(f"{missing.size} cells have no row in {province_path}")
+    province = gaul1.reindex(cells).to_numpy().astype(int)
+    province = np.where(country > 0, province, NO_PROVINCE)
+    print(f"cells without a province: {(province == NO_PROVINCE).sum()} "
+          f"(of which without a country: {(country <= 0).sum()}); "
+          f"negative real province codes in use: {sorted(set(province[province < -1]))}", flush=True)
     values = {t: df[t].to_numpy().reshape(months.size, cells.size) for t in TARGETS}
-    return months, cells, country, values
+    return months, cells, country, province, values
 
 
 class Objective:
-    """Mean log score and its exact slope as a function of the 9 knobs.
+    """Mean log score and its exact slope as a function of the 2·len(DOLLS) − 1 knobs.
 
     Caches each doll's shares (and their slope) per memory value: a weight-only change rescores
     without touching the counts.
@@ -85,19 +104,20 @@ class Objective:
 
     @staticmethod
     def unpack(theta: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        weight = np.concatenate([[1.0], np.exp(theta[:4])])
-        memory = np.exp(theta[4:])
+        n_weights = len(DOLLS) - 1
+        weight = np.concatenate([[1.0], np.exp(theta[:n_weights])])
+        memory = np.exp(theta[n_weights:])
         return weight, memory
 
     def score(self, weight: np.ndarray, memory: np.ndarray) -> tuple[float, int]:
-        q = np.stack([self.shares(k, memory[k])[0] for k in range(5)])
+        q = np.stack([self.shares(k, memory[k])[0] for k in range(len(DOLLS))])
         return log_score(q, self.dc.sizes, self.outcomes, weight, memory)
 
     def __call__(self, theta: np.ndarray) -> tuple[float, np.ndarray]:
         """Minus the score and minus its slope (the search minimises)."""
         self.evaluations += 1
         weight, memory = self.unpack(theta)
-        pairs = [self.shares(k, memory[k]) for k in range(5)]
+        pairs = [self.shares(k, memory[k]) for k in range(len(DOLLS))]
         q, dq = np.stack([a for a, _ in pairs]), np.stack([b for _, b in pairs])
         score, _, slope = log_score_slope(q, dq, self.dc.sizes, self.outcomes, weight, memory)
         return -score, -slope
@@ -106,7 +126,8 @@ class Objective:
 def fit(dc, cutoffs, outcomes) -> dict:
     obj = Objective(dc, cutoffs, outcomes)
     theta0 = np.concatenate([np.log(START_WEIGHT[1:]), np.log(START_MEMORY)])
-    bounds = [tuple(np.log(WEIGHT_BOUNDS))] * 4 + [tuple(np.log(MEMORY_BOUNDS))] * 5
+    bounds = ([tuple(np.log(WEIGHT_BOUNDS))] * (len(DOLLS) - 1)
+              + [tuple(np.log(MEMORY_BOUNDS))] * len(DOLLS))
     t0 = time.time()
     res = minimize(obj, theta0, jac=True, method="L-BFGS-B", bounds=bounds,
                    options={"maxiter": 200, "ftol": 1e-13, "gtol": 1e-9})
@@ -123,18 +144,18 @@ def reference_scores(dc, cutoffs, outcomes) -> dict:
     out = {}
     for name, window in (("conflictology_36m", 36), ("cell_all_history", None)):
         q0 = doll_shares(dc, time_weights(dc.months, cutoffs, np.inf, window), 0)
-        q = np.stack([q0] + [np.zeros_like(q0)] * 4)
-        w = np.array([1.0, 0, 0, 0, 0])
+        q = np.stack([q0] + [np.zeros_like(q0)] * (len(DOLLS) - 1))
+        w = np.eye(len(DOLLS))[0]
         out[name] = dict(zip(("score", "floored"),
-                             log_score(q, dc.sizes, outcomes, w, np.full(5, np.inf))))
+                             log_score(q, dc.sizes, outcomes, w, np.full(len(DOLLS), np.inf))))
     return out
 
 
-def run(path: str, stability: bool) -> None:
-    RESULTS.mkdir(exist_ok=True)
+def run(path: str, province_path: str, stability: bool) -> None:
+    RESULTS.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    months, cells, country, values = load(path)
-    geo = build_geometry(cells, country)
+    months, cells, country, province, values = load(path, province_path)
+    geo = build_geometry(cells, country, province)
     load_s = time.time() - t0
     for target in TARGETS:
         t1 = time.time()
@@ -177,6 +198,8 @@ def run(path: str, stability: bool) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("input")
+    ap.add_argument("provinces", help="GAUL admin-1 file: views-datafactory "
+                                      "data/raw/gaul_admin/gaul1_code.parquet")
     ap.add_argument("--stability", action="store_true")
     args = ap.parse_args()
-    run(args.input, args.stability)
+    run(args.input, args.provinces, args.stability)

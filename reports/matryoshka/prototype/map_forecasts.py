@@ -1,13 +1,13 @@
 """Maps: what happened vs what conflictology and Matryoshka forecast, per violence type.
 
-Data in:   the calibration input pull; the fitted knobs in ../results/{target}.json.
+Data in:   the calibration input pull; GAUL admin-1 per cell; fitted knobs in <knobs_dir>/{target}.json.
 Transform: history up to CUTOFF = TRAIN_END (456), the last month the fit could see; forecast months
            457–492 were never used in fitting (out of sample); for each cell the chance of at least one death, averaged over the
            36 forecast months (Matryoshka: the closed-form mix of dolls; conflictology: the cell's own
            last 36 months, equal weights). Observed: share of those 36 months with at least one death.
-Out:       ../maps/forecast_maps_world.png and ../maps/forecast_maps_africa_middle_east.png.
+Out:       <out_dir>/forecast_maps_world.png and <out_dir>/forecast_maps_africa_middle_east.png.
 
-Run: python map_forecasts.py <input.parquet>
+Run: python map_forecasts.py <input.parquet> <gaul1_code.parquet> <knobs_dir> <out_dir>
 """
 
 from __future__ import annotations
@@ -20,14 +20,13 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt                                    # noqa: E402
-from matplotlib.colors import LogNorm                              # noqa: E402
-
-from doll_counts import build_doll_counts                          # noqa: E402
-from fit_knobs import TARGETS, TRAIN_END, load                                # noqa: E402
-from forecast_probability import doll_shares, time_weights         # noqa: E402
-from grid_geometry import N_COLS, N_ROWS, build_geometry           # noqa: E402
-from size_classes import classify                                  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+from doll_counts import DOLLS, build_doll_counts  # noqa: E402
+from fit_knobs import TARGETS, TRAIN_END, load  # noqa: E402
+from forecast_probability import doll_shares, time_weights  # noqa: E402
+from grid_geometry import N_COLS, N_ROWS, build_geometry  # noqa: E402
+from matplotlib.colors import LogNorm  # noqa: E402
+from size_classes import classify  # noqa: E402
 
 CUTOFF = TRAIN_END
 HORIZON = 36
@@ -41,10 +40,10 @@ def matryoshka_any_death(dc, knobs: dict) -> np.ndarray:
     weight, memory = np.array(knobs["weight"]), np.array(knobs["memory"])
     cut = np.array([CUTOFF])
     not_zero = np.stack([1.0 - doll_shares(dc, time_weights(dc.months, cut, memory[k]), k)[0, :, 0]
-                         for k in range(5)])                                     # (5, N)
+                         for k in range(len(DOLLS))])                            # (D, N)
     h = np.arange(1, HORIZON + 1)
     A = (weight[:, None] * np.exp(-h[None, :] / memory[:, None]))[:, :, None] \
-        * (dc.sizes > 0)[:, None, :]                                             # (5, H, N)
+        * (dc.sizes > 0)[:, None, :]                                             # (D, H, N)
     return ((A * not_zero[:, None, :]).sum(0) / A.sum(0)).mean(0)
 
 
@@ -59,24 +58,23 @@ def to_grid(cells: np.ndarray, values: np.ndarray) -> np.ndarray:
     return grid
 
 
-def main(path: str) -> None:
-    months, cells, country, values = load(path, last_month=CUTOFF + HORIZON)
-    geo = build_geometry(cells, country)
+def main(path: str, province_path: str, knobs_dir: Path, out: Path) -> None:
+    months, cells, country, province, values = load(path, province_path, last_month=CUTOFF + HORIZON)
+    geo = build_geometry(cells, country, province)
     land = to_grid(cells, np.zeros(cells.size))
     after = (months > CUTOFF) & (months <= CUTOFF + HORIZON)
     panels = {}
     for target in TARGETS:
         classes = classify(values[target])
         dc = build_doll_counts(classes, months, geo)
-        knobs = json.loads((HERE.parent / "results" / f"{target}.json").read_text())["fit"]
+        knobs = json.loads((knobs_dir / f"{target}.json").read_text())["fit"]
         panels[target] = [
             ("what happened (share of months with ≥1 death)", (classes[after] > 0).mean(0)),
             ("conflictology: chance of ≥1 death", conflictology_any_death(dc)),
             ("Matryoshka: chance of ≥1 death", matryoshka_any_death(dc, knobs)),
         ]
         del dc
-    out = HERE.parent / "maps"
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     for name, window in (("world", None), ("africa_middle_east", AFRICA_ME)):
         fig, axes = plt.subplots(3, 3, figsize=(18, 11) if window is None else (15, 14),
                                  constrained_layout=True)
@@ -98,11 +96,11 @@ def main(path: str) -> None:
         fig.colorbar(im, ax=axes, shrink=0.6,
                      label="probability / share (log scale; grey = below 0.0001)")
         fig.suptitle(f"History up to month {CUTOFF}; forecast months {CUTOFF + 1}–{CUTOFF + HORIZON}"
-                     f" (out of sample; knobs from results/*.json, fitted on months ≤ {TRAIN_END})", fontsize=12)
+                     f" (out of sample; knobs from {knobs_dir.name}, fitted on months ≤ {TRAIN_END})", fontsize=12)
         fig.savefig(out / f"forecast_maps_{name}.png", dpi=110)
         plt.close(fig)
         print("wrote", out / f"forecast_maps_{name}.png")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]))

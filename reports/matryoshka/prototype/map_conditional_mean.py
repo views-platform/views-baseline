@@ -1,15 +1,15 @@
 """Maps of the conditional mean: expected fatalities in a cell-month, given at least one.
 
-Data in:   the calibration input pull; fitted knobs in ../results/v3_strict_stopping/{target}.json.
+Data in:   the calibration input pull; GAUL admin-1 per cell; fitted knobs in <knobs_dir>/{target}.json.
 Transform: history up to CUTOFF = TRAIN_END (456); forecast months 457–492 (out of sample). Pooled over
            the 36 forecast months:
              Matryoshka     Σ_h E[value | h] / Σ_h P(value > 0 | h), both exact from the doll mix
              conflictology  sum of the cell's values over its last 36 months / number of non-zero months
              what happened  sum over months 457–492 / number of non-zero months
            Cells where the quantity is undefined (never any deaths) are grey.
-Out:       ../maps/conditional_mean_{world,africa_middle_east}.png
+Out:       <out_dir>/conditional_mean_{world,africa_middle_east}.png
 
-Run: python map_conditional_mean.py <input.parquet>
+Run: python map_conditional_mean.py <input.parquet> <gaul1_code.parquet> <knobs_dir> <out_dir>
 """
 
 from __future__ import annotations
@@ -22,20 +22,18 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt                                    # noqa: E402
-from matplotlib.colors import LogNorm                              # noqa: E402
-
-from doll_counts import build_doll_counts                          # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+from doll_counts import DOLLS, build_doll_counts  # noqa: E402
 from doll_value_sums import build_doll_value_sums, doll_mean_values  # noqa: E402
-from fit_knobs import TARGETS, TRAIN_END, load                     # noqa: E402
-from forecast_probability import doll_shares, time_weights         # noqa: E402
-from grid_geometry import N_COLS, N_ROWS, build_geometry           # noqa: E402
-from size_classes import classify                                  # noqa: E402
+from fit_knobs import TARGETS, TRAIN_END, load  # noqa: E402
+from forecast_probability import doll_shares, time_weights  # noqa: E402
+from grid_geometry import N_COLS, N_ROWS, build_geometry  # noqa: E402
+from matplotlib.colors import LogNorm  # noqa: E402
+from size_classes import classify  # noqa: E402
 
 CUTOFF = TRAIN_END
 HORIZON = 36
 HERE = Path(__file__).resolve().parent
-KNOBS = HERE.parent / "results" / "v3_strict_stopping"
 LABEL = {"lr_sb_best": "state-based", "lr_ns_best": "non-state", "lr_os_best": "one-sided"}
 AFRICA_ME = {"rows": (120, 260), "cols": (320, 480)}   # roughly 20°W–60°E, 40°S–40°N
 
@@ -44,14 +42,14 @@ def matryoshka_conditional_mean(dc, dv, knobs: dict) -> np.ndarray:
     weight, memory = np.array(knobs["weight"]), np.array(knobs["memory"])
     cut = np.array([CUTOFF])
     nonzero, mean = [], []
-    for k in range(5):
+    for k in range(len(DOLLS)):
         W = time_weights(dc.months, cut, memory[k])
         nonzero.append(1.0 - doll_shares(dc, W, k)[0, :, 0])
         mean.append(doll_mean_values(dv, W, k)[0])
-    nonzero, mean = np.stack(nonzero), np.stack(mean)                            # (5, N)
+    nonzero, mean = np.stack(nonzero), np.stack(mean)                            # (D, N)
     h = np.arange(1, HORIZON + 1)
     A = (weight[:, None] * np.exp(-h[None, :] / memory[:, None]))[:, :, None] \
-        * (dc.sizes > 0)[:, None, :]                                             # (5, H, N)
+        * (dc.sizes > 0)[:, None, :]                                             # (D, H, N)
     pi = A / A.sum(0)
     expected = (pi * mean[:, None, :]).sum(0).sum(0)
     p_nonzero = (pi * nonzero[:, None, :]).sum(0).sum(0)
@@ -72,9 +70,9 @@ def to_grid(cells: np.ndarray, values: np.ndarray) -> np.ndarray:
     return grid
 
 
-def main(path: str) -> None:
-    months, cells, country, values = load(path, last_month=CUTOFF + HORIZON)
-    geo = build_geometry(cells, country)
+def main(path: str, province_path: str, knobs_dir: Path, out: Path) -> None:
+    months, cells, country, province, values = load(path, province_path, last_month=CUTOFF + HORIZON)
+    geo = build_geometry(cells, country, province)
     land = to_grid(cells, np.zeros(cells.size))
     last36 = (months > CUTOFF - 36) & (months <= CUTOFF)
     after = (months > CUTOFF) & (months <= CUTOFF + HORIZON)
@@ -83,15 +81,14 @@ def main(path: str) -> None:
         v = values[target]
         dc = build_doll_counts(classify(v), months, geo)
         dv = build_doll_value_sums(v, months, geo, dc.sizes)
-        knobs = json.loads((KNOBS / f"{target}.json").read_text())["fit"]
+        knobs = json.loads((knobs_dir / f"{target}.json").read_text())["fit"]
         panels[target] = [
             ("what happened", pooled_conditional_mean(v[after])),
             ("conflictology", pooled_conditional_mean(v[last36])),
             ("Matryoshka", matryoshka_conditional_mean(dc, dv, knobs)),
         ]
         del dc, dv
-    out = HERE.parent / "maps"
-    out.mkdir(exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
     for name, window in (("world", None), ("africa_middle_east", AFRICA_ME)):
         fig, axes = plt.subplots(3, 3, figsize=(18, 11) if window is None else (15, 14),
                                  constrained_layout=True)
@@ -121,4 +118,4 @@ def main(path: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4]))

@@ -307,3 +307,105 @@ Simon agreed the order: province first, then occurrence vs size, then neighbouri
   - The settings that wander are those whose group gets little weight (non-state ring 2 when it is switched off; the one-sided map), plus one weight–memory trade-off (non-state country).
   - In both cases, the fit hardly cares.
   - For the package: either accept it (the frozen knobs are still a good fit) or pin such memories. That is a decision for Simon.
+
+## 2026-11-06: #136 province group, implementation and checks
+
+Plan approved by Simon: "investigate and plan first, then execute".
+
+**Data facts:**
+- **Codes.** `c_id` equals GAUL0 for every land cell. GAUL admin-1 comes from views-datafactory `data/raw/gaul_admin/gaul1_code.parquet`, passed as an explicit argument.
+- **"No province".**
+  - `-1` means unassigned. `-3727`…`-3730` are the synthetic Azores island provinces (views-datafactory ADR-043), and they count as real provinces.
+  - Rule: a cell has a province iff its code ≠ −1 and it has a country.
+  - `build_geometry` raises if a province would span two countries, or if a cell has a province but no country.
+- **Sizes.** Per province the median is 6 cells, but 80% of cells (52,116) are in provinces larger than the 5×5 ring box.
+
+**Model.** Six groups: cell, ring 1, ring 2, rest of province, rest of country, rest of map. Province ⊂ country, so:
+- province rest = province total − inner cells in the same province;
+- country rest = country total − inner cells in the same country − province rest;
+- the map is unchanged.
+
+That gives 11 settings. The starting values put the province between ring 2 and the country (weight 0.12, memory 36).
+
+**Not a strict extension of v3.** With province weight 0, the province's cells drop out of every group, so it is not the 5-group model. Comparison with v3 is model against model.
+
+**Code.** One list (`DOLLS`) drives the number of groups. The touched files are `grid_geometry.py`, `doll_counts.py`, `doll_value_sums.py`, `forecast_probability.py`, `fit_knobs.py` (results now go to `results/v4_province/`), the map scripts (knobs and output folders are now arguments), `write_report.py` (reads the group names from the JSON) and `check_conditional_mean_by_group.py` (tidied into a proper script).
+
+**Checks, all passed:**
+- **`check_against_sampling.py`, rebuilt.** On a synthetic grid with two countries, three provinces, a cell without a province and a cell without a country:
+  1. the six shells, built independently from distance, province and country, are disjoint and cover every cell, for every cell;
+  2. the shell sizes equal `DollCounts.sizes`;
+  3. every group's shares equal a direct average over its cells, for every cell;
+  4. the three-step draw matches the exact formula for a cell with a province shell (39 cells) and for one without.
+- **The check can fail.** Three deliberate breaks were each caught, applied to a scratch copy:
+  - the country rest without subtracting the province: caught ("country shares disagree");
+  - the province rest without subtracting the inner cells: caught;
+  - the country shell size without subtracting the province: caught ("sizes disagree").
+- **`check_slope_float64.py` (new).** It runs `check_slope.py` on a float64 copy with rtol 1e-6, closing the weak-check note from earlier today.
+  - The largest relative gap over the 11 slopes is 6.2e-9.
+  - Dropping the memory-through-month-weights term in a scratch copy is caught (gap 1.8).
+- **`check_value_sums.py`** passes with provinces.
+
+**Egypt check** (input pull, one-sided violence, Egypt `c_id` 120, months 400–456):
+- 21 non-zero cell-months and 517 deaths in total.
+- 311 of them (60%) are a single cell-month: North Sinai, month 455 (November 2017, the Sinai mosque attack).
+- Next largest: Kalyoubia 54 (month 403), Beni Suef 29, Behera 29.
+- **Guess confirmed.** One event dominates Egypt's one-sided history right before the history ends.
+
+**Running:** the 6-group fit plus stability for all three violence types (`fit_province.log`).
+
+## 2026-11-06: #136 result, the province group adds almost nothing (`results/v4_province/`, `maps/province/`)
+
+**Fit.** All three types converged. The loader confirms: 76 cells without a province (all of them also without a country), and the four Azores codes in use.
+
+| | state-based | non-state | one-sided |
+|---|---|---|---|
+| score v4 (6 groups) | −0.0151838 | −0.0054606 | −0.0067095 |
+| score v3 (5 groups) | −0.0151878 | −0.0054628 | −0.0067079 |
+| difference | +4.0e-6 | +2.3e-6 | **−1.6e-6** (worse) |
+| near-zero misses | 0 | 0 | 0 |
+| fit time | 417 s | 173 s | 335 s |
+| peak memory | 5.4 GB | 7.2 GB | 7.2 GB |
+
+The differences are at the level of the noise between stopping rules seen earlier (about 6e-6). One-sided is slightly worse. That is possible because v4 does not contain v3 as a special case.
+
+**Fitted province weight and memory:**
+
+| Type | Province weight | Province memory | Country weight (v4) | Country weight (v3) |
+|---|---|---|---|---|
+| state-based | 0.063 | 12.6 months | 0.235 | 0.274 |
+| non-state | 0.33 | 10.1 months | 2.02 | 2.32 |
+| one-sided | 0.049 | 72 months | 0.587 | 0.66 |
+
+The rings and cell are unchanged from v3.
+
+**Per-cell pull** (`prototype/check_province_pull.py`): (province weight / province shell size) ÷ (country weight / country shell size), over the 59,971 cells with both shells.
+- Median: 2.3 for state-based, 1.4 for non-state, 0.7 for one-sided.
+- Median shell sizes: province 162 cells, country 2,829 cells.
+- So a province cell counts at most about twice as much as any other cell of the country. The fit treats being in the same province as worth little beyond the rings and the country.
+
+**Stability:** similar to v3.
+- One-sided province memory is unstable: 18–114 months, and the map memory hits the 600 ceiling once.
+- The non-state country weight/memory trade-off reappears when 408 or 420 is left out (memory 98 and 67).
+
+**Maps and size check:**
+- The maps are visually almost unchanged from v3.
+- **Egypt is still nearly one block in the one-sided size map:** North Sinai median 54 against 43 for the rest of Egypt.
+- The quiet-before / active-before size table is practically unchanged (one-sided quiet-before, whole group: median 32.7, against 26.3 in v3).
+
+**Reading:**
+- **The fitting score sees no value in the province level.** The score is about how likely each size class is, and it is dominated by cells near conflict, where the cell and rings decide. The province shell (median 162 cells) mostly repeats what the rings and the country already say.
+- **The Egypt artefact is a size problem.** One huge event inflates the sizes drawn from Egypt. The province split does not touch it because the fit does not reward it, and the occurrence-focused score barely sees it. That is #137's territory (size separate from occurrence), not #136's.
+- **Caveat:** the fitting score is not the judge. The evaluation ruler (ADR-024) could still show a difference, but nothing here suggests it will.
+
+**Recommendation to Simon: drop the province group for v1.** Revert the model change, but keep the commit for the record. Reasons:
+- no measurable gain;
+- one-sided slightly worse;
+- two more settings, one of which is unstable;
+- a new cross-repo data dependency (`gaul1_code` in the views-models input pull).
+
+**Keep:**
+- the stronger checks from this step: the rebuilt `check_against_sampling.py` and `check_slope_float64.py`;
+- the parametrised map scripts and report.
+
+**Revisit provinces** only if #137's size pools turn out to need a sub-country level.
