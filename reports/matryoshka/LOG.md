@@ -258,3 +258,14 @@ Simon asked for the expected deaths in a cell, given at least one.
 **Caveat.** Most quiet-before cells that erupted were near existing conflict. Remote (Canada-like) eruptions are too rare for this check to speak about them specifically.
 
 **v2 option.** Keep the fallback, but have it draw sizes from quiet-before-then-erupted cases rather than from all non-zero months.
+
+## 2026-11-06: the way ahead agreed (epic #135)
+
+Simon agreed the order: province first, then occurrence vs size, then neighbouring countries. His point on step 2: occurrence and magnitude are two different processes.
+
+- **#136: province (admin-1) group** between the rings and the country.
+  - Data: GAUL admin-1 in views-datafactory `data/raw/gaul_admin/gaul1_code.parquet`.
+  - On our land cells: 2,433 provinces, none crossing a `c_id` border, median 6 cells per province.
+- **#137: separate whether violence happens from how big it is** in the outer groups. Sizes would come from quiet-places-that-erupted.
+- **#138: neighbouring-countries group** between the country and the rest of the map.
+- **Method for each step:** test in the prototype first, compare with the previous version, log, then keep or drop.
