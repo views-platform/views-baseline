@@ -55,12 +55,110 @@
     "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
     "evaluations": 44,
     "steps": 29,
-    "seconds": 306.0
+    "seconds": 303.5
   },
   "timing_seconds": {
-    "load_all_targets": 6.7,
-    "doll_counts": 22.1,
-    "first_score_evaluation": 5.5
+    "load_all_targets": 6.2,
+    "doll_counts": 24.3,
+    "first_score_evaluation": 7.1
   },
+  "leave_one_cutoff_out": [
+    {
+      "left_out": 384,
+      "weight": [
+        1.0,
+        1.4670405381116582,
+        0.5363416699140086,
+        2.6441103043843346,
+        0.25771819880474245
+      ],
+      "memory": [
+        15.03545343656749,
+        10.576708317331954,
+        12.359283792436125,
+        11.457942683968016,
+        23.91002711190283
+      ],
+      "score": -0.005651586284355532,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 54,
+      "steps": 23,
+      "seconds": 182.3
+    },
+    {
+      "left_out": 396,
+      "weight": [
+        1.0,
+        1.1643973521629856,
+        0.10209168341373709,
+        2.1266411222987904,
+        0.21415965934891248
+      ],
+      "memory": [
+        13.739056233533447,
+        10.50571691278362,
+        84.99100902001547,
+        10.936591806678173,
+        29.37344987651153
+      ],
+      "score": -0.005407920515691065,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 71,
+      "steps": 33,
+      "seconds": 231.9
+    },
+    {
+      "left_out": 408,
+      "weight": [
+        1.0,
+        0.9494180524980647,
+        0.5293043390664897,
+        0.5444107074115139,
+        0.24532231961343554
+      ],
+      "memory": [
+        15.843149842909916,
+        12.869492839825885,
+        14.924320724949775,
+        86.54604742921393,
+        31.238907268525693
+      ],
+      "score": -0.005462133411126031,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 46,
+      "steps": 19,
+      "seconds": 147.9
+    },
+    {
+      "left_out": 420,
+      "weight": [
+        1.0,
+        1.5188044166635488,
+        0.5404353213221155,
+        2.923744520532513,
+        0.5373941541954281
+      ],
+      "memory": [
+        14.836794440232497,
+        9.822776277529263,
+        13.78993377671721,
+        11.024456595807282,
+        23.41495605291183
+      ],
+      "score": -0.0053193940765437885,
+      "floored": 0,
+      "converged": false,
+      "message": "ABNORMAL: ",
+      "evaluations": 67,
+      "steps": 30,
+      "seconds": 254.4
+    }
+  ],
   "peak_rss_gib": 5.86
 }

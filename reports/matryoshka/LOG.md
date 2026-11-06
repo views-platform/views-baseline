@@ -269,3 +269,41 @@ Simon agreed the order: province first, then occurrence vs size, then neighbouri
 - **#137: separate whether violence happens from how big it is** in the outer groups. Sizes would come from quiet-places-that-erupted.
 - **#138: neighbouring-countries group** between the country and the rest of the map.
 - **Method for each step:** test in the prototype first, compare with the previous version, log, then keep or drop.
+
+## 2026-11-06: stability check (`results/*.json`, `PROTOTYPE.md`)
+
+**Method.** For each violence type, the knobs were refitted four times, each time leaving one backtest period out, with strict stopping. Each refit took 2.5–4 minutes.
+
+**Deterministic.** The main fit repeated `v3_strict_stopping` exactly.
+
+**State-based: stable.**
+
+| Setting | Range across the four refits |
+|---|---|
+| memory: cell, rings, country | 11–17 months |
+| memory: map | 21–40 months |
+| weight: ring 1 | 0.46–0.65 |
+| weight: ring 2 | 0.20–0.29 |
+| weight: country | 0.16–0.35 |
+| weight: map | 0.026–0.070 |
+
+**Non-state: mostly stable, with two trade-offs.**
+- **Stable:**
+  - memory: cell 14–16, ring 1 10–13, map 23–31 months;
+  - weight: ring 1 0.95–1.52.
+- **Leaving out 396:** ring 2 is almost switched off (weight 0.10), and its memory runs to 85 months. With so little weight, its memory hardly matters.
+- **Leaving out 408:** the country swaps "short memory, high weight" (11 months, 2.3) for "long memory, low weight" (87 months, 0.54). Two near-equivalent ways to explain the same data.
+- **Leaving out 420:** the search ended "ABNORMAL" (the line search could not improve further at the precision limit). The score (−0.005319) is in line with the others.
+
+**One-sided: stable except the map memory.**
+- **Stable:**
+  - memory: cell 18–30, rings 12–17, country 17–23 months;
+  - weight: ring 1 0.95–1.11, ring 2 0.40–0.62, country 0.58–0.74, map 0.025–0.043.
+- **Not stable: map memory,** 164, 426, and twice the 600-month ceiling. With a map weight of about 0.03, the data barely constrains it. This is the "very long memory" question logged for v2 (log-time kernel), appearing for one-sided violence only.
+
+**Reading against the plan's gate** ("≲ 10 minutes per run and the knobs are stable"):
+- **Time: passed.** About 5–7 minutes for a full fit.
+- **Stability: passed for every setting that carries real weight.**
+  - The settings that wander are those whose group gets little weight (non-state ring 2 when it is switched off; the one-sided map), plus one weight–memory trade-off (non-state country).
+  - In both cases, the fit hardly cares.
+  - For the package: either accept it (the frozen knobs are still a good fit) or pin such memories. That is a decision for Simon.
