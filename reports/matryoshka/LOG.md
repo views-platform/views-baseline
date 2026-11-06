@@ -519,3 +519,14 @@ The rings and cell are unchanged from v3.
 - **Size check:** practically unchanged. One-sided quiet-before, whole group: median 41 (v3: 26; v4: 33). The one-sided map memory at the ceiling makes the world fallback even more war-weighted, which is #137's problem.
 
 **Recommendation: keep the kernel.** Next: re-test the province group on top of it (#136), then #137.
+
+## 2026-11-06: everything locked; follow-ups filed as issues
+
+Simon: "set up new issues before you do new stuff… we do not want to lose the ball."
+
+- **Branch `feat/127-matryoshka-prototype` is pushed** at `eef6cf6`. All results, maps, reports and the code are committed.
+- **Filed under epic #135:**
+  - **#140:** settings the data barely pins down (one-sided map memory at the ceiling; non-state country weight/memory trade-off). Decide after #137.
+  - **#141:** latitude-correct distances in the kernel. Low priority.
+  - **#142:** amend ADR-024 and #127's build plan to the prototype's final design. Blocks the package build.
+- **Epic #135 updated:** #139 done and kept; #136 is next (re-test on top of the kernel). #127 has a pointer to #142.
