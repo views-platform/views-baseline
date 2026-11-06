@@ -211,3 +211,38 @@ The ring and map settings are the ones that wander.
 - **Things to look at:**
   - **The country floor is uniform across a country,** however far a cell is from the fighting. This shows clearly in large countries (DR Congo, Sudan, Brazil). It is by design in v1.
   - **The square halos** are visible around single isolated events.
+
+## 2026-11-06: conditional-mean maps (`maps/conditional_mean_*.png`)
+
+Simon asked for the expected deaths in a cell, given at least one.
+
+**Method.**
+- **Matryoshka:** exact, from the doll mix. Σ_h E[value] / Σ_h P(value > 0), pooled over forecast months 457–492, with knobs from `v3_strict_stopping`.
+- **New code:**
+  - `prototype/doll_value_sums.py`: the value counterpart of the doll counts;
+  - `prototype/check_value_sums.py`: with value = 1(class = j), the doll mean equals the class-j share for every doll and class. Passed.
+- **Conflictology:** the mean over the non-zero months of the cell's last 36 months.
+- **What happened:** the mean over the non-zero months of 457–492.
+
+**What the maps show: in remote quiet places Matryoshka's conditional mean is higher, about 20–30 deaths, than in active places, about 3–10.**
+- **Cause.** In a cell with no recent deaths, almost all non-zero draws come from the rest-of-map doll. Those draws carry the size of events in the world's war zones.
+
+**Check** (`prototype/check_conditional_mean_by_group.py`, months 457–492). "Quiet before" means no deaths in months 421–456.
+
+| Type | Group | Cells with deaths after | Observed mean given > 0 (median) | Matryoshka median in those cells | Matryoshka median over the whole group |
+|---|---|---|---|---|---|
+| state-based | quiet before | 527 | 8.6 (3) | 8.8 | 24.8 |
+| state-based | active before | 947 | 17.7 (6) | 11.1 | 9.2 |
+| non-state | quiet before | 519 | 7.8 (3) | 12.2 | 21.8 |
+| non-state | active before | 322 | 15.1 (4) | 10.3 | 10.4 |
+| one-sided | quiet before | 658 | 7.8 (2) | 6.5 | 26.3 |
+| one-sided | active before | 480 | 5.6 (2) | 4.3 | 4.5 |
+
+**Reading:**
+- **Where new violence actually broke out, Matryoshka's size forecast is about right.** Those cells were mostly near existing conflict, where the rings and country dominate.
+- **Across the whole quiet group it says about 22–26 deaths.** That is about 3× what new outbreaks actually bring (mean about 8, median 2–3). The cells concerned get a tiny chance of any deaths, so it barely moves the scores, but the shape is wrong: "if anything happens in Canada, expect a war-zone-sized month".
+- **For cells that were active before, sb and ns,** the observed mean (15–18) is above Matryoshka's median forecast (10–11). This compares a pooled mean with a median across cells, so it is only a hint, not a measurement.
+
+**For the evaluation and for v2:**
+- ADR-024's "size conditioned on the forecast" check should show this.
+- A design question for Simon: should the map doll (and perhaps the country doll) bring only occurrence and not size, or bring size from quiet-before places only?
