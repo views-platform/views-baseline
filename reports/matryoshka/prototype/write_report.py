@@ -26,11 +26,12 @@ def _stability(r: dict) -> list[str]:
         return ["Not run (`--stability` not set)."]
     dolls = r["dolls"]
     rows = ["| cutoff left out | " + " | ".join(f"memory {d}" for d in dolls) + " | "
-            + " | ".join(f"weight {d}" for d in dolls[1:]) + " |",
-            "|---" * (2 * len(dolls)) + "|"]
+            + " | ".join(f"weight {d}" for d in dolls[1:]) + " | length scale |",
+            "|---" * (2 * len(dolls) + 1) + "|"]
     for s in r["leave_one_cutoff_out"]:
         rows.append(f"| {s['left_out']} | " + " | ".join(f"{m:.1f}" for m in s["memory"])
-                    + " | " + " | ".join(f"{w:.3g}" for w in s["weight"][1:]) + " |")
+                    + " | " + " | ".join(f"{w:.3g}" for w in s["weight"][1:])
+                    + f" | {s.get('length_scale', float('nan')):.2f} |")
     return rows
 
 
@@ -61,8 +62,12 @@ def main(results: Path, report: Path) -> None:
                 f"is dominated by these, so its gap to Matryoshka depends on the floor; the counts "
                 f"are the robust comparison.", "",
                 *_knob_table(f, r["dolls"]), "",
-                f"Ring ratios: ring 1 / cell = {w[1] / w[0]:.3g}, ring 2 / ring 1 = "
-                f"{w[2] / w[1]:.3g} (Currents of Conflict suggests about 0.4 per ring).", "",
+                *([f"Neighbourhood length scale: {f['length_scale']:.2f} cells "
+                   f"({f['length_scale'] * 0.5:.2f}°; Currents of Conflict: 0.72°).", ""]
+                  if "length_scale" in f else []),
+                *([f"Ring ratios: ring 1 / cell = {w[1] / w[0]:.3g}, ring 2 / ring 1 = "
+                   f"{w[2] / w[1]:.3g} (Currents of Conflict suggests about 0.4 per ring).", ""]
+                  if r["dolls"][1:3] == ["ring1", "ring2"] else []),
                 f"Fit: {f['evaluations']} score evaluations, {f['seconds']} s, converged: "
                 f"{f['converged']} ({f['message']}).", "",
                 "Size classes seen in the history (cell-months): "

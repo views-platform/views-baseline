@@ -1,10 +1,14 @@
-"""Where each cell's dolls are: its two neighbour rings and its country (ADR-024).
+"""Where each cell's dolls are: its neighbourhood (within NEAR_RADIUS), its country and province.
 
 PRIO-GRID cells are 0.5° squares on a 360 × 720 grid, identified by
-``priogrid_id = (row − 1) × 720 + col`` (verified on all 64,818 `land` cells). Ring 1 is the 8 cells
-touching a cell (including diagonally), ring 2 the 16 cells around those: the queen-contiguity rings at
-Chebyshev distance 1 and 2. Only land cells present in the data count; columns wrap around the
-date line, rows do not.
+``priogrid_id = (row − 1) × 720 + col`` (verified on all 64,818 `land` cells). The neighbourhood of a
+cell is every land cell whose centre lies at straight-line grid distance 0 < d ≤ NEAR_RADIUS (in
+cells; no latitude correction, #139). Neighbours are grouped into distance bands (all offsets with
+the same d), so that a smooth distance kernel can be applied band by band. Only land cells present
+in the data count; columns wrap around the date line, rows do not.
+
+The province is carried for the parked admin-1 group (#136), validated here, and not used by the
+current dolls.
 """
 
 from __future__ import annotations
@@ -14,40 +18,39 @@ from dataclasses import dataclass
 import numpy as np
 
 N_ROWS, N_COLS = 360, 720
+NEAR_RADIUS = 5    # cells (≈ 2.5°); #139
 NO_PROVINCE = -1   # GAUL admin-1 "unassigned"; other negative codes are real (Azores, views-datafactory ADR-043)
+
+
+def _offsets(radius: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(drow, dcol, distance) of every offset with 0 < distance ≤ radius, sorted by distance."""
+    dr, dc = np.meshgrid(np.arange(-radius, radius + 1), np.arange(-radius, radius + 1),
+                         indexing="ij")
+    dr, dc = dr.ravel(), dc.ravel()
+    d = np.sqrt(dr ** 2 + dc ** 2)
+    keep = (d > 0) & (d <= radius)
+    order = np.lexsort((dc[keep], dr[keep], d[keep]))
+    return dr[keep][order], dc[keep][order], d[keep][order]
+
+
+OFFSET_DROW, OFFSET_DCOL, OFFSET_DISTANCE = _offsets(NEAR_RADIUS)
+BAND_DISTANCE, OFFSET_BAND = np.unique(np.round(OFFSET_DISTANCE, 9), return_inverse=True)
 
 
 @dataclass(frozen=True)
 class Geometry:
-    """The cells (ascending ``priogrid_id``) and, per cell, its ring neighbours and country.
+    """The cells (ascending ``priogrid_id``) and, per cell, its neighbours, country and province.
 
-    ``neighbours[i, j]`` is the index (into ``cells``) of the j-th neighbour of cell i, or -1 if that
-    position is not a land cell in the data. Columns 0–7 are ring 1, columns 8–23 ring 2.
-    ``country[i]`` is the GAUL ``c_id`` of cell i (≤ 0 means no country).
-    ``province[i]`` is the GAUL admin-1 code of cell i, or NO_PROVINCE. Provinces nest in countries.
+    ``neighbours[i, o]`` is the index (into ``cells``) of the cell at offset o (OFFSET_DROW/DCOL,
+    distance OFFSET_DISTANCE, band OFFSET_BAND) from cell i, or -1 if that is not a land cell in the
+    data. ``country[i]`` is the GAUL ``c_id`` (≤ 0 means no country); ``province[i]`` the GAUL
+    admin-1 code or NO_PROVINCE.
     """
 
     cells: np.ndarray        # (N,) priogrid_id, ascending
     country: np.ndarray      # (N,) c_id
     province: np.ndarray     # (N,) gaul1 code or NO_PROVINCE
-    neighbours: np.ndarray   # (N, 24) cell index or -1
-
-    RING1 = slice(0, 8)
-    RING2 = slice(8, 24)
-
-
-def _offsets() -> tuple[np.ndarray, np.ndarray]:
-    """(drow, dcol) for ring 1 then ring 2, in a fixed order."""
-    ring1, ring2 = [], []
-    for dr in range(-2, 3):
-        for dc in range(-2, 3):
-            d = max(abs(dr), abs(dc))
-            if d == 1:
-                ring1.append((dr, dc))
-            elif d == 2:
-                ring2.append((dr, dc))
-    both = np.array(ring1 + ring2)
-    return both[:, 0], both[:, 1]
+    neighbours: np.ndarray   # (N, n_offsets) cell index or -1
 
 
 def build_geometry(cells: np.ndarray, country: np.ndarray, province: np.ndarray) -> Geometry:
@@ -66,9 +69,8 @@ def build_geometry(cells: np.ndarray, country: np.ndarray, province: np.ndarray)
         raise ValueError("a province spans more than one country.")
     row = (cells - 1) // N_COLS          # 0-based
     col = (cells - 1) % N_COLS
-    dr, dc = _offsets()
-    nr = row[:, None] + dr[None, :]
-    nc = (col[:, None] + dc[None, :]) % N_COLS
+    nr = row[:, None] + OFFSET_DROW[None, :]
+    nc = (col[:, None] + OFFSET_DCOL[None, :]) % N_COLS
     on_grid = (nr >= 0) & (nr < N_ROWS)
     nid = nr * N_COLS + nc + 1
     pos = np.searchsorted(cells, nid)

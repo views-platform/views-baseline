@@ -9,6 +9,12 @@ For history end c, forecast month t = c + h and cell i:
 The score is the mean log probability of the size class that actually happened (higher is better).
 This is exactly the distribution the three-step draw samples from, computed in closed form.
 
+The neighbourhood doll (#139) draws neighbour j with probability ∝ exp(−d_ij / ℓ) instead of uniformly.
+Neighbours are grouped in distance bands b (distance d_b, n_b(i) land cells), so with a_b = exp(−d_b/ℓ)
+and X_b the band's class counts:
+
+  q_near(i, class) = Σ_b a_b · (time-weighted X_b)(i, class) / Σ_b a_b · n_b(i)
+
 The slope (for the knob search) is taken with respect to log ring_weight[1..D-1] and log memory[0..D-1],
 D = len(DOLLS).
 With A_k = ring_weight[k] · exp(−h / memory[k]) for a non-empty shell, p = Σ A_k q_k / Σ A_k, and
@@ -18,14 +24,20 @@ w_s = exp(−a_s / m) / Z the time weight of a month a_s months before c:
   ∂ log p / ∂ log memory[k]      = T_k · h / m_k  +  A_k · ∂q_k/∂log m_k / num
   ∂ w_s / ∂ log m                = w_s · (a_s − ā) / m,    ā = Σ_s w_s a_s
 
-so ∂q_k/∂log m_k is the same weighted sum as q_k, with w_s · (a_s − ā) / m in place of w_s.
-`check_slope.py` compares this with small nudges.
+so ∂q_k/∂log m_k is the same weighted sum as q_k, with w_s · (a_s − ā) / m in place of w_s. For the
+length scale, with a'_b = ∂a_b/∂log ℓ = a_b · d_b / ℓ:
+
+  ∂q_near/∂log ℓ = Σ_b a'_b X_b / Σ_b a_b n_b − q_near · Σ_b a'_b n_b / Σ_b a_b n_b
+  ∂ log p / ∂ log ℓ = A_near · ∂q_near/∂log ℓ / num
+
+`check_slope.py` (and `check_slope_float64.py`) compare this with small nudges.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from doll_counts import CELL, COUNTRY, DOLLS, PROVINCE, RING1, RING2, DollCounts
+from doll_counts import CELL, COUNTRY, DOLLS, NEAR, DollCounts
+from grid_geometry import BAND_DISTANCE
 from size_classes import N_CLASSES
 
 PROB_FLOOR = 1e-12   # only to keep the log finite; how often it bites is reported
@@ -47,7 +59,7 @@ def time_weights(months: np.ndarray, cutoffs: np.ndarray, memory: float,
     if window is not None:
         keep &= age < window
     w = np.where(keep, 1.0 if np.isinf(memory) else np.exp(-np.maximum(age, 0) / memory), 0.0)
-    return (w / w.sum(axis=1, keepdims=True)).astype(np.float32)
+    return w / w.sum(axis=1, keepdims=True)
 
 
 def time_weight_slopes(months: np.ndarray, cutoffs: np.ndarray, memory: float) -> np.ndarray:
@@ -57,44 +69,70 @@ def time_weight_slopes(months: np.ndarray, cutoffs: np.ndarray, memory: float) -
     w = np.where(keep, np.exp(-np.maximum(age, 0) / memory), 0.0)
     w /= w.sum(axis=1, keepdims=True)
     mean_age = (w * np.where(keep, age, 0.0)).sum(axis=1, keepdims=True)
-    return np.where(keep, w * (age - mean_age) / memory, 0.0).astype(np.float32)
+    return np.where(keep, w * (age - mean_age) / memory, 0.0)
 
 
-def doll_shares(dc: DollCounts, W: np.ndarray, doll: int) -> np.ndarray:
+def _weigh(X, W: np.ndarray) -> np.ndarray:
+    """Σ_s W[r, s] · X[i, s] for a sparse (N, M) X: (R, N)."""
+    return np.asarray(X @ W.T).T
+
+
+def _kernel(length: float) -> tuple[np.ndarray, np.ndarray]:
+    """Band weights a_b = exp(−d_b / ℓ) and their slope a_b · d_b / ℓ (per log ℓ)."""
+    a = np.exp(-BAND_DISTANCE / length)
+    return a, a * BAND_DISTANCE / length
+
+
+def doll_shares(dc: DollCounts, W: np.ndarray, doll: int, length: float | None = None) -> np.ndarray:
     """(R, N, K): Σ_s W[r, s] · (share of doll ``doll``'s cells in each class in month s).
 
     ``W`` holds one row of month weights per output row: `time_weights` gives q_doll, and
-    `time_weight_slopes` its slope; stacking both reads the counts once. Shell arithmetic as in
-    doll_counts.py.
+    `time_weight_slopes` its slope; stacking both reads the counts once. ``length`` is the
+    neighbourhood length scale ℓ (cells), needed for doll NEAR only. Shell arithmetic as in
+    doll_counts.py; class 0 is the rest (each row of shares sums to the row sum of W).
     """
-    R, N = W.shape[0], dc.own.shape[2]
-    q = np.zeros((R, N, N_CLASSES), np.float32)
-    has_country, has_province = dc.country_index >= 0, dc.province_index >= 0
-    ci, pi = np.maximum(dc.country_index, 0), np.maximum(dc.province_index, 0)
-    for k in range(N_CLASSES):
+    W = np.asarray(W, dtype=np.float64)
+    R, N = W.shape[0], dc.sizes.shape[1]
+    q = np.zeros((R, N, N_CLASSES))
+    size = dc.sizes[doll].astype(np.float64)
+    has_country, ci = dc.country_index >= 0, np.maximum(dc.country_index, 0)
+    if doll == NEAR:
+        a, _ = _kernel(length)
+        z = a @ dc.band_sizes                                                    # (N,)
+    for k in range(1, N_CLASSES):
         if doll == CELL:
-            q[..., k] = W @ dc.own[k]
-        elif doll == RING1:
-            q[..., k] = W @ dc.ring1[k]
-        elif doll == RING2:
-            q[..., k] = W @ dc.ring2[k]
+            q[..., k] = _weigh(dc.own[k], W)
+        elif doll == NEAR:
+            num = sum(a[b] * _weigh(dc.band[k][b], W) for b in range(a.size))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                q[..., k] = np.where(z > 0, num / z, 0.0)
         else:
-            province_rest = np.where(
-                has_province, (W @ dc.province_tot[k])[:, pi] - W @ dc.inner_same_province[k], 0.0)
-            if doll == PROVINCE:
-                q[..., k] = province_rest
-                continue
-            country_outside_inner = np.where(
-                has_country, (W @ dc.country_tot[k])[:, ci] - W @ dc.inner_same_country[k], 0.0)
+            country_rest = np.where(has_country, (W @ dc.country_tot[k])[:, ci]
+                                    - _weigh(dc.inner_same_country[k], W), 0.0)
             if doll == COUNTRY:
-                q[..., k] = country_outside_inner - province_rest
+                q[..., k] = country_rest
             else:
-                inner = W @ dc.own[k] + W @ dc.ring1[k] + W @ dc.ring2[k]
-                q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_outside_inner
-    size = dc.sizes[doll].astype(np.float32)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        q = np.where(size[None, :, None] > 0, q / size[None, :, None], 0.0)
+                inner = _weigh(dc.own[k], W) + sum(_weigh(x, W) for x in dc.band[k])
+                q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_rest
+            with np.errstate(invalid="ignore", divide="ignore"):
+                q[..., k] = np.where(size > 0, q[..., k] / size, 0.0)
+    q[..., 0] = np.where(size > 0, W.sum(axis=1)[:, None] - q[..., 1:].sum(axis=2), 0.0)
     return q
+
+
+def near_length_slope(dc: DollCounts, W: np.ndarray, length: float) -> np.ndarray:
+    """(R, N, K): ∂ doll_shares(NEAR) / ∂ log ℓ, for time-weight rows W."""
+    W = np.asarray(W, dtype=np.float64)
+    a, da = _kernel(length)
+    z, dz = a @ dc.band_sizes, da @ dc.band_sizes
+    q = doll_shares(dc, W, NEAR, length)
+    out = np.zeros_like(q)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for k in range(1, N_CLASSES):
+            dnum = sum(da[b] * _weigh(dc.band[k][b], W) for b in range(a.size))
+            out[..., k] = np.where(z > 0, dnum / z - q[..., k] * dz / z, 0.0)
+    out[..., 0] = -out[..., 1:].sum(axis=2)
+    return out
 
 
 def outcome_classes(classes: np.ndarray, months: np.ndarray, cutoffs: np.ndarray,
@@ -130,12 +168,14 @@ def log_score(q: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray, ring_weigh
     return float(np.log(np.maximum(p, PROB_FLOOR)).mean()), int((p < PROB_FLOOR).sum())
 
 
-def log_score_slope(q: np.ndarray, dq: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray,
-                    ring_weight: np.ndarray, memory: np.ndarray) -> tuple[float, int, np.ndarray]:
-    """As `log_score`, plus the slope over (log ring_weight[1..D-1], log memory[0..D-1]): (2D − 1,).
+def log_score_slope(q: np.ndarray, dq: np.ndarray, dq_length: np.ndarray, sizes: np.ndarray,
+                    outcomes: np.ndarray, ring_weight: np.ndarray,
+                    memory: np.ndarray) -> tuple[float, int, np.ndarray]:
+    """As `log_score`, plus the slope over (log ring_weight[1..D-1], log memory[0..D-1], log ℓ): (2D,).
 
-    dq: (D, n_cut, N, K), each doll's shares differentiated by its log memory. Floored probabilities
-    contribute no slope (the floor is flat).
+    dq: (D, n_cut, N, K), each doll's shares differentiated by its log memory; dq_length: (n_cut, N, K),
+    the neighbourhood's shares differentiated by log ℓ. Floored probabilities contribute no slope
+    (the floor is flat).
     """
     A, h = _doll_mix(sizes, outcomes.shape[1], ring_weight, memory)
     D = len(DOLLS)
@@ -145,11 +185,13 @@ def log_score_slope(q: np.ndarray, dq: np.ndarray, sizes: np.ndarray, outcomes: 
     p = num / den
     ok = p >= PROB_FLOOR
     safe_num = np.where(ok, num, 1.0)
-    slope = np.zeros(2 * D - 1)
+    slope = np.zeros(2 * D)
     for k in range(D):
         T = np.where(ok, A[k][None] * P[k] / safe_num - A[k][None] / den, 0.0)
         if k > 0:
             slope[k - 1] = T.mean()
         via_memory = np.where(ok, A[k][None] * _observed(dq[k], outcomes) / safe_num, 0.0)
         slope[D - 1 + k] = (T * (h / memory[k])[None, :, None] + via_memory).mean()
+    slope[2 * D - 1] = np.where(ok, A[NEAR][None] * _observed(dq_length, outcomes) / safe_num,
+                                0.0).mean()
     return float(np.log(np.maximum(p, PROB_FLOOR)).mean()), int((~ok).sum()), slope

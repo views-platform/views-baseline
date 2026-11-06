@@ -41,7 +41,8 @@ def matryoshka_any_death(dc, knobs: dict) -> np.ndarray:
     """(N,) chance of ≥ 1 death, averaged over forecast months 1..HORIZON after CUTOFF."""
     weight, memory = np.array(knobs["weight"]), np.array(knobs["memory"])
     cut = np.array([CUTOFF])
-    not_zero = np.stack([1.0 - doll_shares(dc, time_weights(dc.months, cut, memory[k]), k)[0, :, 0]
+    not_zero = np.stack([1.0 - doll_shares(dc, time_weights(dc.months, cut, memory[k]), k,
+                                           knobs["length_scale"])[0, :, 0]
                          for k in range(len(DOLLS))])                            # (D, N)
     h = np.arange(1, HORIZON + 1)
     A = (weight[:, None] * np.exp(-h[None, :] / memory[:, None]))[:, :, None] \

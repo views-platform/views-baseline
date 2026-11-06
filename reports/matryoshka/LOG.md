@@ -435,3 +435,47 @@ The rings and cell are unchanged from v3.
 
 - **The chance maps change by whole provinces.** The ratio maps show provinces lighting up or dimming as blocks: for example a northern Niger province up, a northern Chad province down. Those changes do not improve the fitting score.
 - **The one-sided size shift is broad, not local.** It comes from the refit (the map memory moved from 174 to 268 months, and the weights shifted), not from provinces as such.
+
+## 2026-11-06: #139 smooth distance kernel, implementation and checks
+
+**Simon's call.** The square halos are an artefact of the two hard-edged rings. Agreed plan:
+- replace the rings with one smooth distance kernel;
+- park the province group (#136) and re-test it on top of the kernel model;
+- step 0 of epic #135.
+
+**Model.** Four groups: cell, neighbourhood, rest of country, rest of map.
+- **Neighbourhood:** every land cell at grid distance 0 < d ≤ 5 cells. A neighbour is drawn with probability ∝ exp(−d / ℓ).
+- **Settings: 8,** down from 9:
+  - weights: near, country, map;
+  - memories: cell, near, country, map;
+  - the length scale ℓ.
+- **Starting values:** near weight 0.6 (about the two rings' sum); ℓ = 1.44 cells (Currents of Conflict, 0.72°), bounded to 0.25–10 cells.
+- **Distance:** straight-line distance on the grid, with no latitude correction (stated in #139).
+
+**Code** (`grid_geometry.py`, `doll_counts.py`, `forecast_probability.py`, `doll_value_sums.py`, `fit_knobs.py`, map scripts, report):
+- Neighbours are grouped in 13 distance bands (1, √2, 2, …, 5); the kernel recombines the bands at each scoring.
+- **Only non-zero cell-months are stored,** as sparse matrices. Class 0 is "1 − the rest".
+- Everything is now float64. The province is still loaded and validated, but no group uses it (parked).
+- **Speed:**
+  - counts: 20 s → 1 s;
+  - one scoring with all slopes: 1.8 s (the first, uncached);
+  - peak memory: 4 GB.
+- Results go to `results/v5_kernel/`.
+
+**Checks, all passed and all shown to fail when broken:**
+- **`check_against_sampling.py`, rebuilt for the kernel.** It runs on a 16 × 22 grid with sea holes and a cell without a country. Shells and kernel weights are built by brute force from pairwise distances, independently of the offset table. It confirms, for every cell:
+  - the shells are disjoint and cover every cell;
+  - the shell sizes match;
+  - every group's shares equal the direct kernel-weighted averages (to 1e-10);
+  - the three-step draw (neighbour ∝ exp(−d/ℓ)) matches the exact formula, for a cell with a full neighbourhood (80 cells) and a corner cell (22).
+- **Deliberate breaks, each caught:**
+  - uniform instead of kernel weights;
+  - the country rest without subtracting the inner cells;
+  - the country size without subtracting the neighbourhood;
+  - scrambled neighbour bands.
+- **`check_slope.py`.** Strict by default now (rtol 1e-6, float64 throughout), which replaces `check_slope_float64.py`.
+  - Largest gap over the 8 slopes, including the length scale: 8.9e-9.
+  - Dropping the −q·dZ/Z term of the length slope is caught (gap 1.7).
+- **`check_value_sums.py`** passes for the kernel model.
+
+**Running:** the main fit plus stability for all three types (`fit_kernel.log`).

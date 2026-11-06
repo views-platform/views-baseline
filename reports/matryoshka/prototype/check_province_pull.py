@@ -4,15 +4,20 @@ Run: python check_province_pull.py <input.parquet> <gaul1_code.parquet>  (knobs 
 """
 # Per-cell pull of the province vs the country group: (w_province / n_province) / (w_country / n_country),
 # for cells where both shells are non-empty; plus Egypt one-sided conditional mean, North Sinai vs elsewhere.
-import json, sys, numpy as np
+import json
+import sys
+
+import numpy as np
+
 sys.path.insert(0, ".")
+
+from doll_counts import COUNTRY, PROVINCE, build_doll_counts
+from doll_value_sums import build_doll_value_sums
 from fit_knobs import TARGETS, load
 from grid_geometry import build_geometry
-from doll_counts import build_doll_counts, PROVINCE, COUNTRY
-from doll_value_sums import build_doll_value_sums
-from size_classes import classify
 from map_conditional_mean import CUTOFF, HORIZON, matryoshka_conditional_mean
-from pathlib import Path
+from size_classes import classify
+
 months, cells, country, province, values = load(sys.argv[1], sys.argv[2], last_month=CUTOFF + HORIZON)
 geo = build_geometry(cells, country, province)
 for t in TARGETS:

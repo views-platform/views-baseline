@@ -44,8 +44,8 @@ def matryoshka_conditional_mean(dc, dv, knobs: dict) -> np.ndarray:
     nonzero, mean = [], []
     for k in range(len(DOLLS)):
         W = time_weights(dc.months, cut, memory[k])
-        nonzero.append(1.0 - doll_shares(dc, W, k)[0, :, 0])
-        mean.append(doll_mean_values(dv, W, k)[0])
+        nonzero.append(1.0 - doll_shares(dc, W, k, knobs["length_scale"])[0, :, 0])
+        mean.append(doll_mean_values(dv, W, k, knobs["length_scale"])[0])
     nonzero, mean = np.stack(nonzero), np.stack(mean)                            # (D, N)
     h = np.arange(1, HORIZON + 1)
     A = (weight[:, None] * np.exp(-h[None, :] / memory[:, None]))[:, :, None] \
@@ -80,7 +80,7 @@ def main(path: str, province_path: str, knobs_dir: Path, out: Path) -> None:
     for target in TARGETS:
         v = values[target]
         dc = build_doll_counts(classify(v), months, geo)
-        dv = build_doll_value_sums(v, months, geo, dc.sizes)
+        dv = build_doll_value_sums(v, months, geo, dc.band_sizes, dc.sizes)
         knobs = json.loads((knobs_dir / f"{target}.json").read_text())["fit"]
         panels[target] = [
             ("what happened", pooled_conditional_mean(v[after])),

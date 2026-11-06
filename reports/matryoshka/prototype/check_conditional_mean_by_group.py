@@ -33,7 +33,7 @@ def main(path: str, province_path: str, knobs_dir: Path) -> None:
     for target in TARGETS:
         v = values[target]
         dc = build_doll_counts(classify(v), months, geo)
-        dv = build_doll_value_sums(v, months, geo, dc.sizes)
+        dv = build_doll_value_sums(v, months, geo, dc.band_sizes, dc.sizes)
         knobs = json.loads((knobs_dir / f"{target}.json").read_text())["fit"]
         forecast = matryoshka_conditional_mean(dc, dv, knobs)
         quiet = (v[last36] == 0).all(0)
