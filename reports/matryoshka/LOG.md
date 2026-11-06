@@ -530,3 +530,23 @@ Simon: "set up new issues before you do new stuff… we do not want to lose the 
   - **#141:** latitude-correct distances in the kernel. Low priority.
   - **#142:** amend ADR-024 and #127's build plan to the prototype's final design. Blocks the package build.
 - **Epic #135 updated:** #139 done and kept; #136 is next (re-test on top of the kernel). #127 has a pointer to #142.
+
+## 2026-11-06: #136 province re-test on top of the kernel, implementation
+
+**Model.** Five groups: cell, neighbourhood (kernel), rest of province, rest of country, rest of map. Province ⊂ country, with the same arithmetic as the first province test, now with "inner" = cell + kernel neighbourhood. That gives 10 settings:
+- weights for near, province, country and map;
+- 5 memories;
+- the length scale.
+
+The province starts with weight 0.05 and memory 36 months. Results go to `results/v6_kernel_province/`.
+
+**Checks:** all three pass with provinces in the synthetic grids (three provinces, a cell without a province, a cell without a country):
+- shells disjoint and complete, sizes and shares direct, sampling;
+- slope gap 8.8e-9;
+- value sums.
+
+**Deliberate breaks, each caught:**
+- the country rest without subtracting the province;
+- the province rest without subtracting the inner cells.
+
+**Running:** the main fit plus stability (`fit_kernel_province.log`).

@@ -26,9 +26,12 @@ rng = np.random.default_rng(1)
 rows, cols = np.meshgrid(np.arange(100, 114), np.arange(200, 220), indexing="ij")
 cells = np.sort((rows * N_COLS + cols + 1).ravel())
 c = (cells - 1) % N_COLS
+r = (cells - 1) // N_COLS
 country = np.where(c < 209, 7, 9)
-country[3] = 0
-geo = build_geometry(cells, country, np.full(cells.size, NO_PROVINCE))
+province = np.where(country == 7, np.where(r < 107, 71, 72), 91)
+province[5] = NO_PROVINCE
+country[3], province[3] = 0, NO_PROVINCE
+geo = build_geometry(cells, country, province)
 months = np.arange(100, 190)
 values = rng.choice([0, 0, 0, 0, 1, 3, 12, 40, 300, 2000], size=(months.size, cells.size))
 classes = classify(values)
@@ -36,7 +39,7 @@ dc = build_doll_counts(classes, months, geo)
 cutoffs = np.array([150, 162])
 obj = Objective(dc, cutoffs, outcome_classes(classes, months, cutoffs, 24))
 
-theta = np.log([0.8, 0.5, 0.2, 3.0, 8.0, 40.0, 200.0, 1.7])
+theta = np.log([0.8, 0.3, 0.5, 0.2, 3.0, 8.0, 20.0, 40.0, 200.0, 1.7])
 assert theta.size == len(KNOBS)
 exact = -obj(theta)[1]
 numeric = np.empty(theta.size)

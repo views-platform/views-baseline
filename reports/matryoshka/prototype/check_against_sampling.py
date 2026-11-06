@@ -1,10 +1,11 @@
 """Check the shells and the closed-form class probabilities against an independent construction.
 
-Synthetic grid (16 × 22 cells, two countries, one cell without a country, a few sea holes so that
+Synthetic grid (16 × 22 cells, two countries, three provinces, one cell without a province, one
+without a country, a few sea holes so that
 neighbourhoods are incomplete). Shell membership and the neighbourhood kernel are built here directly
 from pairwise distances (brute force over all cell pairs), independently of grid_geometry's offset
 table and doll_counts' bands. Checks:
-  1. the four shells are disjoint and together cover every cell, for every cell;
+  1. the five shells are disjoint and together cover every cell, for every cell;
   2. their sizes equal DollCounts.sizes;
   3. every doll's class shares equal a direct (kernel-weighted for NEAR) average over that doll's
      cells, for every cell;
@@ -28,8 +29,10 @@ holes = np.isin(cells, cells[[40, 41, 63, 150, 151, 200]])               # sea: 
 cells = np.sort(cells[~holes])
 r, c = (cells - 1) // N_COLS, (cells - 1) % N_COLS
 country = np.where(c < 211, 7, 9)
-country[3] = 0                                                          # a cell without a country
-geo = build_geometry(cells, country, np.full(cells.size, NO_PROVINCE))
+province = np.where(country == 7, np.where(r < 108, 71, 72), 91)       # two provinces in 7, one in 9
+province[5] = NO_PROVINCE                                               # a cell without a province
+country[3], province[3] = 0, NO_PROVINCE                                # a cell without a country
+geo = build_geometry(cells, country, province)
 months = np.arange(100, 160)
 values = rng.choice([0, 0, 0, 0, 1, 3, 12, 40, 300, 2000], size=(months.size, cells.size))
 classes = classify(values)
@@ -40,17 +43,20 @@ length = 1.7
 dist = np.hypot(r[:, None] - r[None, :], c[:, None] - c[None, :])
 near = (dist > 0) & (dist <= NEAR_RADIUS)
 same_c = (country[:, None] == country[None, :]) & (country[:, None] > 0)
+same_p = (province[:, None] == province[None, :]) & (province[:, None] != NO_PROVINCE)
 inner = (dist == 0) | near
-shells = np.stack([dist == 0, near, same_c & ~inner, ~same_c & ~inner])      # (4, N, N)
+shells = np.stack([dist == 0, near, same_p & ~inner, same_c & ~same_p & ~inner,
+                   ~same_c & ~inner])                                     # (5, N, N)
 assert len(shells) == len(DOLLS)
 assert (shells.sum(axis=0) == 1).all(), "shells must be disjoint and cover every cell"
 assert (shells.sum(axis=2) == dc.sizes).all(), "shell sizes disagree with DollCounts.sizes"
-pick = np.stack([shells[0], np.where(near, np.exp(-dist / length), 0.0), shells[2], shells[3]])
+assert (dc.sizes[2] > 0).any() and (dc.sizes[2] == 0).any(), "grid must exercise the province shell"
+pick = np.stack([shells[0], np.where(near, np.exp(-dist / length), 0.0), *shells[2:]]).astype(float)
 pick = pick / np.maximum(pick.sum(axis=2, keepdims=True), 1e-300)      # P(cell j | doll, cell i)
 
 # 3. shares equal direct (kernel-)weighted averages over each shell
 cutoffs = np.array([150])
-memory = np.array([3.0, 8.0, 40.0, 200.0])
+memory = np.array([3.0, 8.0, 20.0, 40.0, 200.0])
 W = np.stack([time_weights(months, cutoffs, memory[k]) for k in range(len(DOLLS))])   # (4, 1, M)
 q = np.stack([doll_shares(dc, W[k], k, length) for k in range(len(DOLLS))])          # (4, 1, N, K)
 onehot = (classes[..., None] == np.arange(N_CLASSES)).astype(float)                   # (M, N, K)
@@ -60,7 +66,7 @@ for k in range(len(DOLLS)):
 assert np.allclose(q.sum(axis=3)[:, 0][dc.sizes > 0], 1.0, atol=1e-10), "shares must sum to 1"
 
 # 4. sampling
-ring_weight = np.array([1.0, 0.8, 0.4, 0.2])
+ring_weight = np.array([1.0, 0.8, 0.3, 0.4, 0.2])
 h, S = 5, 200_000
 hist = months[months <= cutoffs[0]]
 for i in (int(np.argmax(dc.sizes[NEAR])), int(np.argmin(dc.sizes[NEAR]))):   # full, and corner
