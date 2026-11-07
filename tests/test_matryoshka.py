@@ -527,7 +527,8 @@ def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid
     s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
     S = 40_000
     no_country = int(np.nonzero(country == 0)[0][0])
-    for i in {int(np.argmax(shells[NEAR].sum(1))), 0, no_country}:
+    second_country = int(np.nonzero(country == 9)[0][-1])     # its block does not start at 0
+    for i in {int(np.argmax(shells[NEAR].sum(1))), 0, no_country, second_country}:
         if not shells[doll][i].any():
             continue
         got = s.draw(np.array([i]), np.array([1]), np.random.default_rng(i).random(
@@ -686,9 +687,19 @@ def test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells():
 
 
 def test_geometry_wraps_columns_at_the_date_line():
-    cells = np.array([100 * N_COLS + 1, 100 * N_COLS + N_COLS])      # cols 0 and 719, same row
+    """Col 719 is col 0's neighbour at offset (0, −1), and col 0 is col 719's at (0, +1).
+    Checked by offset: without the wrap, col 0's offset (+1, −1) aliases onto the col-719 id."""
+    from views_baseline.model.models.distributional.matryoshka.geometry import (
+        OFFSET_DCOL,
+        OFFSET_DROW,
+    )
+
+    cells = np.array([100 * N_COLS + 1, 100 * N_COLS + N_COLS])      # cols 0 and 719, row 100
     geo = build_geometry(cells, np.array([1, 1]))
-    assert (geo.neighbours[0] == 1).sum() == 1 and (geo.neighbours[1] == 0).sum() == 1
+    left = np.nonzero((OFFSET_DROW == 0) & (OFFSET_DCOL == -1))[0][0]
+    right = np.nonzero((OFFSET_DROW == 0) & (OFFSET_DCOL == 1))[0][0]
+    assert geo.neighbours[0, left] == 1 and geo.neighbours[1, right] == 0
+    assert (geo.neighbours >= 0).sum() == 2
 
 
 def test_geometry_rejects_unsorted_cells():
@@ -749,3 +760,41 @@ def test_predict_fails_loud_on_same_count_but_different_cells(planted, fitted):
         [df.index.get_level_values("month_id"), ids], names=df.index.names)
     with pytest.raises(ValueError, match="cells it was fitted on"):
         fitted.predict(moved.sort_index(), 0, 3)
+
+
+def test_near_last_is_each_cells_farthest_present_neighbour(grid):
+    cells, country, geo, months, values = grid
+    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+             "length_scale": 1.7}
+    s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+                      build_shell_tables(geo))
+    present = geo.neighbours >= 0
+    expected = np.array([np.nonzero(r)[0][-1] if r.any() else 0 for r in present])
+    np.testing.assert_array_equal(s.near_last, expected)
+
+
+def test_predict_rejects_a_negative_value_in_its_history(planted, fitted):
+    *_, df = planted
+    bad = df.copy()
+    row = np.nonzero(bad.index.get_level_values("month_id") == TRAIN_END + 1)[0][0]
+    bad.iloc[row, 0] = -5.0
+    with pytest.raises(ValueError, match="negative value in target 'y'"):
+        fitted.predict(bad, 2, 3)
+
+
+def test_start_score_is_the_score_at_the_starting_values(planted, fitted):
+    from views_baseline.model.models.distributional.matryoshka.knob_fit import (
+        START_LENGTH,
+        START_MEMORY,
+        START_WEIGHT,
+    )
+
+    cells, country, months, values, _ = planted
+    hist = months <= TRAIN_END
+    classes = classify(values[hist])
+    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country))
+    cutoffs = backtest_cutoffs(TRAIN_END, 2, 6)
+    obj = Objective(dc, cutoffs, outcome_classes(classes, months[hist], cutoffs, 6))
+    expected = obj.score(START_WEIGHT, START_MEMORY, START_LENGTH)[0]
+    assert fitted.knobs["y"]["start_score"] == pytest.approx(expected, rel=1e-12)
+    assert fitted.knobs["y"]["start_score"] < fitted.knobs["y"]["score"]

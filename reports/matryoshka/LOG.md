@@ -723,3 +723,20 @@ The full suite: 565 passed, 1 xfailed.
 - **Not done:** the duplicate NEAR work in `near_length_slope`. It is efficiency only, and keeping it leaves the code equal to the checked prototype.
 
 **Suite:** 592 passed, 1 xfailed. **Real data, rerun after the fixes:** the knobs still equal the prototype's v5 exactly for all three types. Fit 616 s, peak 4.3 GiB. Predict for one type at S = 64 took 41 s.
+
+## 2026-11-07: #127 stage 3, guard re-audit of aefe448 and the last gaps
+
+**The same independent auditor** re-applied the survivors and ran 13 fresh mutations:
+- 20 of the earlier survivors are now caught.
+- Equivalent mutants, which cannot change behaviour:
+  - DC2/DC3 and N9: the country-less arithmetic is masked by `np.where(has_country, …)`; the output is bit-identical;
+  - G3: a row above the grid always gives an id ≤ 0, which can never match a cell;
+  - D9/D10: probably equivalent, since the overflow cap covers them.
+- **Real gaps that remained, each closed by a new test, with every mutation re-applied and caught:**
+  - **D7:** the country draw without `block_start`. The tested cell sat in the block starting at 0; now a cell in the second country is checked too.
+  - **N2:** `near_last` one offset early; now checked directly per cell.
+  - **N5/N7:** predict's own negative check. With it lost, predict returned negative draws silently; now tested.
+  - **N12:** `start_score` was not checked; now compared with `Objective.score` at the starting values.
+  - **G1:** the date-line wrap. The old test only counted neighbours, and without the wrap, col 0's offset (+1, −1) aliases onto the col-719 id. It is now checked by offset.
+
+**Suite:** 595 passed, 1 xfailed.
