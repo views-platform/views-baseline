@@ -646,3 +646,34 @@ Training data only (≤ 456). An *onset* is a violent cell-month whose cell had 
   - the configuration keys;
   - the prototype checks to port as tests. The value-sum check is not ported: the package draws samples and does not compute expected values in closed form.
   - `scipy` must be declared in `pyproject.toml`; it is not declared today.
+
+## 2026-11-07: #127 stages 1–2, the package build
+
+**Code.** The new `views_baseline/model/models/distributional/matryoshka/` sub-package is ported module by module from the prototype:
+- `geometry`, `size_classes`, `doll_counts`, `forecast_probability` and `knob_fit`;
+- `draw` (new): the three-step sampler;
+- `model` (new).
+
+It is wired into the catalog and the gate. The genome is `n_samples`, `seed`, `country_column`, `backtest_cutoffs`, `backtest_horizon` and `stability_refits`. `scipy` is now declared in `pyproject.toml`. The docs are written: the CIC, the README, the CIC index, and the ADR-001 and ADR-004 entries.
+
+**Departures from #127's plan, decided while building:**
+- **No `history_months` key.** The history is all the data passed, as in the prototype. Fit fails loud with fewer than 120 months before the earliest cutoff.
+- **A required `country_column` key** (`c_id` in views-models), instead of a hard-coded column name.
+- **Predict draws a block of 256 cells at once.** One call per (cell, month, target) took about 90 µs, or about 10 minutes per origin. The block draw consumes the same random stream in the same entity → time → target order (ADR-011), so the block size cannot change the output (tested).
+- **Shell draws are exact, with no rejection sampling.** Cells are put in country-major order, and the j-th cell of a shell is found by skipping its excluded stretches.
+
+**Tests** (`tests/test_matryoshka.py`, 27):
+- the four prototype checks, ported: brute-force shells, direct shares, the independent three-step draw, and the strict slope check;
+- the sampler's shells against brute force, exhaustively;
+- the sampler against the exact probabilities, at h = 1 and h = 12;
+- the conflictology special case, a planted neighbour effect, and no draws after the origin;
+- loud failures, the seed, the block size, and both input types;
+- the shared lists updated.
+
+The full suite: 565 passed, 1 xfailed.
+
+**Real data** (`package_check.py` → `results/package_check.json`):
+- **The package's knobs equal the prototype's v5 exactly** (relative gap 0, score gap 0) for all three types, all converged. The values are integers, so the FeatureFrame's float32 storage is exact here.
+- **Fit:** 621 s for the three types, peak 5.4 GiB. The prototype's search alone took 50–70 s per type. This run also builds the counts, scores the starting values, and ran beside other sessions. The difference is not investigated.
+- **Predict, one origin:** 35 s for one type at S = 64. Scaled to 3 types × S = 256, that is about 7 minutes per origin.
+- **The first attempt was stopped** by Claude Code for low system memory: it had predicted all 3 types × S = 256 at once, about 7 GB of output. The rerun used the smaller predict.

@@ -41,6 +41,10 @@ def _catalog(seed):
         "lambda_mix": 0.5,
         "bandwidth": 1.0,
         "alpha": 0.5,
+        "country_column": "c_id",
+        "backtest_cutoffs": 1,
+        "backtest_horizon": 6,
+        "stability_refits": False,
         "seed": seed,
     }
     return BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
@@ -50,6 +54,9 @@ def _catalog(seed):
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
+        # Matryoshka: its seed-changes-output test is in test_matryoshka.py (needs
+        # 120 months of history and a country column, which _df() does not have).
+        "MatryoshkaConflictology",
     ]
 )
 def test_catalog_forwards_seed(algo):
@@ -86,6 +93,9 @@ def test_different_seed_produces_different_output(algo):
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
+        # Matryoshka: its seed-changes-output test is in test_matryoshka.py (needs
+        # 120 months of history and a country column, which _df() does not have).
+        "MatryoshkaConflictology",
     ]
 )
 def test_catalog_requires_seed(algo):
@@ -94,6 +104,8 @@ def test_catalog_requires_seed(algo):
         "regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5,
         "bandwidth": 1.0,
         "alpha": 0.5,
+        "country_column": "c_id", "backtest_cutoffs": 1, "backtest_horizon": 6,
+        "stability_refits": False,
     }
     cat = BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
     with pytest.raises(ValueError, match="seed"):
