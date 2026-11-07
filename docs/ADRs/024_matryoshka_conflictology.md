@@ -569,6 +569,13 @@ and fitted on real data before any package code. Every result and decision is in
 2026-11-06 (LOG.md, commit `187ce44`). **The package build (#127) follows this amendment where it differs
 from the text above.**
 
+**The pictures** are in the notebook `notebooks/matryoshka_conflictology.ipynb`. It explains what the model
+does and how, with the package code, and draws every plot when it is run: the dolls of a cell, the
+neighbourhood kernel, how the mix of dolls changes with distance, the fit, the sampler against the exact
+probabilities, the out-of-sample maps against conflictology, and the size of a possible outbreak in quiet
+places. No graphics are committed (#144). The prototype's own map scripts are in
+`reports/matryoshka/prototype/` (`map_forecasts.py`, `map_conditional_mean.py`, `compare_maps.py`).
+
 ### What changed, and why
 
 - **The two square rings became one smooth neighbourhood (#139, kept).**
@@ -653,6 +660,7 @@ The log scores are fitting scores and do not judge the model. Judging is the eva
 - Issues in this repo: #82 (fixed vs moving window), #109 (Phase-1 results and corrections), #111
   (temporal weighting), #112 (spatial pooling), #122 (scoring), #126 (moving-window control), #127
   (building Matryoshka); epic #135 and its steps #136–#142 (the prototype decisions).
+- `notebooks/matryoshka_conflictology.ipynb`: the explainer, with every plot drawn when it is run (#144).
 - `reports/matryoshka/LOG.md` (the running log of the prototype) and `reports/matryoshka/PROTOTYPE_v5_kernel.md`
   (the final fit), branch `feat/127-matryoshka-prototype`.
 - ADR-021 (no hidden defaults), ADR-023 (smoothed climatology baselines; report-only evaluation).

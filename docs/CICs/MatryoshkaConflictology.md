@@ -148,6 +148,8 @@ up to `train_end + k` for every cell, as for `RollingConflictology`.
 - **Instantiated by:** `BaselineModelCatalog._get_matryoshka()`.
 - **Genome:** `["n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
   "stability_refits"]`.
+- **Explained** in `notebooks/matryoshka_conflictology.ipynb` (synthetic part runs in seconds; real-data
+  part optional), which draws every plot when it is run.
 - **Ported from** the prototype in `reports/matryoshka/prototype/` (branch
   `feat/127-matryoshka-prototype`). `reports/matryoshka/package_check.py` checks on real data that the
   package's knobs equal the prototype's.

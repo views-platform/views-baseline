@@ -131,6 +131,8 @@ The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length sca
 MatryoshkaConflictology(targets, partition_dict, loa, n_samples, country_column, backtest_cutoffs, backtest_horizon, stability_refits, seed=42)
 ```
 
+The notebook [`notebooks/matryoshka_conflictology.ipynb`](notebooks/matryoshka_conflictology.ipynb) explains what it does and how, and draws the plots when it is run (Jupyter; the synthetic part runs in seconds, the real-data part needs the calibration input pull).
+
 #### InterpolatedQuantileConflictology — smoothed climatology B
 
 `ConflictologyModel` with the positive part smoothed (ADR-023). The zero rate is the window's, exactly as in `ConflictologyModel`. A positive draw comes from the **linearly interpolated quantile function** of the window's positive values, rounded to a whole count. So it can draw the counts between the observed ones, but never beyond the smallest or largest. Cells with fewer than two distinct positive values are drawn as `ConflictologyModel` draws them, and counted in one warning.

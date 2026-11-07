@@ -740,3 +740,25 @@ The full suite: 565 passed, 1 xfailed.
   - **G1:** the date-line wrap. The old test only counted neighbours, and without the wrap, col 0's offset (+1, −1) aliases onto the col-719 id. It is now checked by offset.
 
 **Suite:** 595 passed, 1 xfailed.
+
+## 2026-11-07: no committed graphics; an explainer notebook instead (#144)
+
+**Simon:** graphics are not committed. Instead, there is a notebook that explains the model and draws the plots when it is run.
+
+- **`notebooks/matryoshka_conflictology.ipynb`** (a new top-level folder) uses the package code throughout, and is committed with its outputs cleared.
+  - **Part 1, synthetic, runs in seconds:**
+    - the dolls of a cell;
+    - the neighbourhood kernel;
+    - the doll mix by forecast distance;
+    - the month weights;
+    - the fit;
+    - the sampler against the exact probabilities;
+    - the out-of-sample maps against conflictology;
+    - the conflictology special case.
+  - **Part 2, real data, optional:** the fitted knobs, the out-of-sample P(any) maps against conflictology, and P(> 25 deaths | any).
+- **Run 2026-11-07, both parts, state-based for Part 2, as a script in `views_pipeline`:**
+  - the knobs equal ADR-024's table;
+  - months 457–492: 1,120 cell-months with deaths that conflictology gave exactly 0%, against 0 observed classes that Matryoshka gave < 1e-12.
+- **Correction found while writing it.** "The forecast opens outward" holds for state-based and non-state violence. For one-sided violence, the neighbourhood forgets faster (14 months) than the cell (23), so the cell's own share *grows* with distance. The notebook says so.
+- **The PR moves to a clean branch from development, without the PNG maps, `.npz` dumps and stray `.pyc` files** (25 + 4 + 8 files, about 20 MB). The prototype branch stays on the remote, so the commit hashes cited here still resolve. The map files named in older entries of this log exist only there.
+- **`.gitignore`:** the `**/notebooks/` rule is removed, so `notebooks/` is tracked as in views-datafactory (Simon, 2026-11-07, after comparing views-hydranet, which has the rule and no notebooks, with views-datafactory, which has a tracked `notebooks/` that its ADR-053 cites). Unlike datafactory, outputs are cleared: no graphics. `.pyc` was already ignored; it got in through `git add -f`.
