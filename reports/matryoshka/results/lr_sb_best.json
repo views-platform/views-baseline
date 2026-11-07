@@ -1,0 +1,164 @@
+{
+  "target": "lr_sb_best",
+  "dolls": [
+    "cell",
+    "ring1",
+    "ring2",
+    "country",
+    "map"
+  ],
+  "cutoffs": [
+    384,
+    396,
+    408,
+    420
+  ],
+  "horizon": 36,
+  "class_counts_in_history": {
+    "0": 21733236,
+    "1": 9351,
+    "2-5": 16300,
+    "6-25": 13600,
+    "26-100": 4638,
+    "101-1000": 1649,
+    ">1000": 74
+  },
+  "references": {
+    "conflictology_36m": {
+      "score": -0.04067120191473074,
+      "floored": 11456
+    },
+    "cell_all_history": {
+      "score": -0.03454622255087357,
+      "floored": 8017
+    }
+  },
+  "start_score": -0.016156938158922586,
+  "fit": {
+    "weight": [
+      1.0,
+      0.5819585842352005,
+      0.24865172966774474,
+      0.2743347879683185,
+      0.04888820155650981
+    ],
+    "memory": [
+      13.961565796203015,
+      13.709312488235991,
+      13.952977982384999,
+      12.258246383660838,
+      25.941066169577457
+    ],
+    "score": -0.015187763690775982,
+    "floored": 0,
+    "converged": true,
+    "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+    "evaluations": 61,
+    "steps": 29,
+    "seconds": 443.1
+  },
+  "timing_seconds": {
+    "load_all_targets": 6.2,
+    "doll_counts": 23.3,
+    "first_score_evaluation": 7.9
+  },
+  "leave_one_cutoff_out": [
+    {
+      "left_out": 384,
+      "weight": [
+        1.0,
+        0.46413502181374894,
+        0.19798681399034065,
+        0.15588095452398062,
+        0.056606459299203014
+      ],
+      "memory": [
+        15.369538111659088,
+        16.910634005727143,
+        16.49675373052838,
+        15.567884845056167,
+        24.37240752534602
+      ],
+      "score": -0.015304127374632775,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 48,
+      "steps": 27,
+      "seconds": 225.2
+    },
+    {
+      "left_out": 396,
+      "weight": [
+        1.0,
+        0.6507609955547701,
+        0.29214495003556734,
+        0.2986266479047661,
+        0.0458958375584849
+      ],
+      "memory": [
+        14.786019519110386,
+        13.566510496686005,
+        12.879172701131775,
+        12.46265728903422,
+        26.77455680527629
+      ],
+      "score": -0.015185108530870205,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 42,
+      "steps": 26,
+      "seconds": 179.1
+    },
+    {
+      "left_out": 408,
+      "weight": [
+        1.0,
+        0.6244716061471738,
+        0.25308419673709254,
+        0.32313592887738424,
+        0.02563918872810308
+      ],
+      "memory": [
+        12.552280514984233,
+        12.156515972679596,
+        13.143456918815689,
+        11.427997908621176,
+        39.62013671724295
+      ],
+      "score": -0.0149395171587757,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 58,
+      "steps": 32,
+      "seconds": 152.3
+    },
+    {
+      "left_out": 420,
+      "weight": [
+        1.0,
+        0.6131810390188165,
+        0.26104045612428933,
+        0.34540989432141805,
+        0.06969783259129178
+      ],
+      "memory": [
+        12.786533228039717,
+        12.568415180835045,
+        13.280805913168935,
+        10.594142827045271,
+        20.69214924424038
+      ],
+      "score": -0.015282580834193732,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+      "evaluations": 59,
+      "steps": 31,
+      "seconds": 187.1
+    }
+  ],
+  "peak_rss_gib": 4.73
+}

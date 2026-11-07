@@ -64,6 +64,13 @@ class ReproducibilityGate:
             "EmpiricalKDEMixtureConflictology": [
                 "window_months", "n_samples", "seed", "alpha", "bandwidth",
             ],
+            # ADR-024: no window; the history is all the data passed (at least 120 months
+            # before the earliest backtest cutoff). The dolls, radius, size classes, knob limits
+            # and search settings are fixed by the ADR, not configured.
+            "MatryoshkaConflictology": [
+                "n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
+                "stability_refits",
+            ],
         }
 
         @staticmethod

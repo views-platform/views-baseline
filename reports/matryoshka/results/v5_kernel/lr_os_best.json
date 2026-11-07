@@ -1,0 +1,158 @@
+{
+  "target": "lr_os_best",
+  "dolls": [
+    "cell",
+    "near",
+    "country",
+    "map"
+  ],
+  "cutoffs": [
+    384,
+    396,
+    408,
+    420
+  ],
+  "horizon": 36,
+  "class_counts_in_history": {
+    "0": 21757849,
+    "1": 7410,
+    "2-5": 7612,
+    "6-25": 4203,
+    "26-100": 1311,
+    "101-1000": 405,
+    ">1000": 58
+  },
+  "references": {
+    "conflictology_36m": {
+      "score": -0.01954778803264964,
+      "floored": 5861
+    },
+    "cell_all_history": {
+      "score": -0.016337109410093656,
+      "floored": 4233
+    }
+  },
+  "start_score": -0.00701231924776143,
+  "fit": {
+    "weight": [
+      1.0,
+      1.7216131266510337,
+      0.4725564539808461,
+      0.027901350877146684
+    ],
+    "memory": [
+      23.09343509472459,
+      13.774791577651019,
+      22.053099610371273,
+      600.0
+    ],
+    "length_scale": 0.978763817827132,
+    "score": -0.006677228667216775,
+    "floored": 0,
+    "converged": true,
+    "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+    "evaluations": 35,
+    "steps": 32,
+    "seconds": 69.0
+  },
+  "timing_seconds": {
+    "load_all_targets": 5.4,
+    "doll_counts": 0.6,
+    "first_score_evaluation": 1.9
+  },
+  "leave_one_cutoff_out": [
+    {
+      "left_out": 384,
+      "weight": [
+        1.0,
+        1.809721180304433,
+        0.43597506422421883,
+        0.0342791953268608
+      ],
+      "memory": [
+        28.30944140983183,
+        14.65224876889867,
+        23.11994941876973,
+        600.0
+      ],
+      "length_scale": 0.9925124601401831,
+      "score": -0.0068204210473724524,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+      "evaluations": 34,
+      "steps": 32,
+      "seconds": 95.1
+    },
+    {
+      "left_out": 396,
+      "weight": [
+        1.0,
+        1.6830404535971688,
+        0.418554789794434,
+        0.03221167835820498
+      ],
+      "memory": [
+        25.685154476955514,
+        13.963722123256215,
+        25.16476297542019,
+        600.0
+      ],
+      "length_scale": 0.954401452081507,
+      "score": -0.006670207988119233,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+      "evaluations": 32,
+      "steps": 29,
+      "seconds": 60.8
+    },
+    {
+      "left_out": 408,
+      "weight": [
+        1.0,
+        1.4898900961456407,
+        0.46191272643062303,
+        0.025665172826556507
+      ],
+      "memory": [
+        21.574233285021876,
+        14.33620669550811,
+        22.91669921117344,
+        600.0
+      ],
+      "length_scale": 0.9839474677408638,
+      "score": -0.00662568082399543,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+      "evaluations": 35,
+      "steps": 32,
+      "seconds": 56.8
+    },
+    {
+      "left_out": 420,
+      "weight": [
+        1.0,
+        1.7583696044440202,
+        0.5336842663159463,
+        0.018113685233500043
+      ],
+      "memory": [
+        16.979780340586096,
+        12.184201791146927,
+        17.556261321251576,
+        600.0
+      ],
+      "length_scale": 0.984935765133354,
+      "score": -0.006572132923549988,
+      "floored": 0,
+      "converged": true,
+      "message": "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL",
+      "evaluations": 31,
+      "steps": 28,
+      "seconds": 48.1
+    }
+  ],
+  "peak_rss_gib": 4.04
+}
