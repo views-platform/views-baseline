@@ -5,6 +5,7 @@ from views_baseline.model.models.distributional import (
     EmpiricalKDEMixtureConflictology,
     InterpolatedQuantileConflictology,
     KDEConflictology,
+    MatryoshkaConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -35,6 +36,11 @@ _DISTRIBUTIONAL_MODELS = [
     ),
     (InterpolatedQuantileConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
     (RollingConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
+    (
+        MatryoshkaConflictology,
+        {**_BASE, "n_samples": 10, "country_column": "c_id", "backtest_cutoffs": 1,
+         "backtest_horizon": 6, "stability_refits": False},
+    ),
     (KDEConflictology, {**_BASE, "window_months": 3, "n_samples": 10, "bandwidth": "sj"}),
     (
         EmpiricalKDEMixtureConflictology,

@@ -6,6 +6,7 @@ from views_baseline.model.models.distributional import (
     EmpiricalKDEMixtureConflictology,
     InterpolatedQuantileConflictology,
     KDEConflictology,
+    MatryoshkaConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -243,6 +244,7 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
         ("RollingConflictology", RollingConflictology),
         ("KDEConflictology", KDEConflictology),
         ("EmpiricalKDEMixtureConflictology", EmpiricalKDEMixtureConflictology),
+        ("MatryoshkaConflictology", MatryoshkaConflictology),
     ],
 )
 def test_catalog_forwards_all_config_params(algo, cls):
@@ -257,6 +259,10 @@ def test_catalog_forwards_all_config_params(algo, cls):
         "seed": 99,
         "bandwidth": 2.5,
         "alpha": 0.35,
+        "country_column": "country_code",
+        "backtest_cutoffs": 3,
+        "backtest_horizon": 24,
+        "stability_refits": True,
     }
     partition_dict = {"test": (445, 492)}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
