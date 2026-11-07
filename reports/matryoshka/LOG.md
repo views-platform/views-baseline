@@ -764,3 +764,9 @@ The full suite: 565 passed, 1 xfailed.
 - **`.gitignore`:** the `**/notebooks/` rule is removed, so `notebooks/` is tracked as in views-datafactory (Simon, 2026-11-07, after comparing views-hydranet, which has the rule and no notebooks, with views-datafactory, which has a tracked `notebooks/` that its ADR-053 cites). Unlike datafactory, outputs are cleared: no graphics. `.pyc` was already ignored; it got in through `git add -f`.
 - **Clean branch `feat/127-matryoshka`,** from `origin/development`, with every changed file of the prototype branch except the binaries. It was checked identical file by file; only the 37 binary files differ. 72 files, 676 KB, against about 20 MB.
 - **The notebook is now linted.** `notebooks/` is no longer ignored, so ruff checks it. It was formatted with `ruff format`, and three long lines were shortened by hand. Part 1 was re-run after that.
+
+## 2026-11-07: release prepared; stage 4 filed
+
+- **PR #145** (the model, the notebook, no graphics) goes to development; CI is green. #143 is closed.
+- **PR #146** (`release/1.3.0`, the bump 1.2.0 → 1.3.0) is to be merged after #145. Goldens pass (5), and the full suite: 595 passed, 1 xfailed.
+- **views-models#717** is the stage-4 evaluation model next to `plain_burlap` and `rolling_burlap`. The config drops `window_months` and adds `country_column: c_id`, `backtest_cutoffs: 4`, `backtest_horizon: 36` and `stability_refits: True`. It is not to start before 1.3.0 is on PyPI.
