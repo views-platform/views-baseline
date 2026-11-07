@@ -57,11 +57,12 @@ cell has weight, nothing fades, and the history is the last 36 months.
   - with `stability_refits`, repeats the search with each cutoff left out in turn;
   - stores the result in `self.knobs[target]`: `weight`, `memory`, `length_scale`, `score`,
     `start_score`, `floored`, `converged`, `message`, `steps`, `evaluations`, `seconds`, and
-    `leave_one_cutoff_out` (with stability refits). It also stores `self.entity_ids` (ascending
-    priogrid ids) and `self.country`.
+    `leave_one_cutoff_out` (with stability refits). `seconds` is wall-clock time, the one field
+    that differs between identical fits. It also stores `self.entity_ids` (ascending priogrid
+    ids), `self.country` and `self.history_start`.
 - `predict(df, sequence_number, output_length)`:
   - reads the targets for months ≤ `c = train_end + sequence_number`. The panel must be complete up
-    to `c`, and over the same cells as at fit;
+    to `c`, over the same cells as at fit, and must start in the same month as the fit history;
   - forecast month `t = test_start + sequence_number + j` is drawn with `h = t − c = j + 1`;
   - **never draws a month after `c`**, and never a forecast month;
   - returns `dict[str, PredictionFrame]`, one per target. Each has shape
@@ -72,8 +73,11 @@ cell has weight, nothing fades, and the history is the last 36 months.
   - one fresh `default_rng(seed)` per `predict` call;
   - the seed does not depend on `sequence_number`;
   - three uniforms per sample, consumed in entity → time → target order. Cells are drawn in blocks
-    of `BLOCK_CELLS`, which consumes the same stream in the same order, so the block size changes
-    memory and speed only (tested).
+    of about `BLOCK_UNIFORMS` uniforms (128 MiB), which consume the same stream in the same order,
+    so the block size changes memory and speed only (tested).
+- **No zero-probability pick.** Row lookups are capped at the row's last positive entry, so floating
+  rounding of the row shift cannot reach a sea neighbour or a month past `c` (code review of
+  `702f17d`).
 
 ---
 
@@ -117,6 +121,8 @@ up to `train_end + k` for every cell, as for `RollingConflictology`.
 |---|---|---|
 | A missing or duplicated cell-month, or non-consecutive months, up to `train_end` (fit) or `c` (predict) | `ValueError` with counts | The shells and their sizes assume a complete panel. |
 | NaN in a target or the country column | `ValueError` naming the column, a cell and a month | |
+| A negative target value | `ValueError` naming the cell and month (and `classify` refuses negatives) | A negative value would otherwise index the largest size class and silently bias the fit. |
+| Predict data starting at a different month from the fit history | `ValueError` naming both months | The history is all the data passed, so a different start would draw from a different distribution than the one fitted. |
 | A cell's country changes over time, or is not an integer | `ValueError` | |
 | Fewer than 120 months before the earliest cutoff | `ValueError` with the months available | ADR-024: at least 10 years. |
 | `stability_refits` with a single cutoff | `ValueError` | |
@@ -176,7 +182,7 @@ m.fit(df.drop(df.index[0]))                                 # ValueError (comple
 
 ## Test Alignment
 
-All in `tests/test_matryoshka.py`.
+All in `tests/test_matryoshka.py`. The fixture has three cells without a country, apart, and holes.
 
 | Test | What it verifies |
 |---|---|
@@ -187,12 +193,19 @@ All in `tests/test_matryoshka.py`.
 | `test_kept_positions_skip_excluded_stretches`, `test_sampler_shells_are_exactly_the_brute_force_shells` | The sampler's uniform shell picks reach exactly the brute-force country and map shells, each cell once. |
 | `test_sampler_matches_the_exact_probabilities` (h = 1, 12) | What predict draws equals what the fit scores. |
 | `test_forecast_opens_outward_with_distance` | The cell's share shrinks and the map's grows with `h`. |
+| `test_row_lookup_never_overflows_onto_a_zero_probability_entry` | The largest uniform `rng.random` returns, in the last row of a 256-row block, stops at the last positive entry. |
+| `test_a_panel_where_no_cell_has_a_country_still_works` | Counts, shares and draws with no country at all. |
 | `test_special_case_is_conflictology_with_a_moving_window` | Cell only, no fading, 36 months: draws are uniform over the cell's last 36 values. |
 | `test_fit_beats_the_cell_only_special_case_on_a_planted_neighbour_effect` | On data with spreading hotspots, the fit converges, beats the cell-only case, and gives the neighbourhood weight. |
 | `test_backtest_cutoffs_are_spaced_and_end_a_horizon_before_train_end` | 456, 4, 36 gives 384, 396, 408, 420 (the prototype's design). |
 | `test_predict_never_draws_a_month_after_the_history_end` | Marked future values never appear. |
 | `test_predict_output_grid_and_shape`, `test_same_seed_same_output_and_seed_matters`, `test_block_size_changes_nothing`, `test_dataframe_and_featureframe_inputs_give_identical_output`, `test_stability_refits_leave_each_cutoff_out` | Output grid, reproducibility, ADR-011 order, both input types, stability refits. |
-| `test_fails_loud_*`, `test_predict_fails_loud`, `test_stability_refits_need_two_cutoffs`, `test_country_column_must_not_be_a_target` | The failure table above. |
+| `test_fails_loud_*` (incl. a negative value), `test_classify_rejects_negative_values`, `test_predict_fails_loud`, `test_predict_fails_loud_when_the_history_starts_elsewhere`, `test_stability_refits_need_two_cutoffs`, `test_country_column_must_not_be_a_target` | The failure table above. |
+| `test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights` (each doll), `test_a_cell_without_a_country_never_picks_the_country_doll`, `test_cdf_ends_exactly_at_one_from_the_last_positive_entry` | With values that encode their cell, every draw lands in its doll's brute-force shell in the right proportions (a full cell, a corner and a no-country cell). |
+| `test_predict_uses_history_end_c_and_months_ahead_h` | With values that encode month and cell, the share drawn from the cell follows `P(cell \| h = j + 1)` per step, and its months follow `exp(−(c − s)/m)` up to and including `c`. |
+| `test_rng_order_is_entity_then_time_then_target` | With two targets, predict equals one sampler call per (cell, month, target) in that order (ADR-011). |
+| `test_the_120_month_history_boundary`, `test_stability_refits_are_searches_without_the_left_out_cutoff`, `test_outcomes_are_the_months_after_each_cutoff`, `test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells` | The history boundary exactly, the refits, the scored months, and that fit and sampler use the same doll mix with empty shells. |
+| `test_geometry_wraps_columns_at_the_date_line`, `test_geometry_rejects_unsorted_cells`, `test_fails_loud_on_duplicate_cell_months`, `test_fails_loud_on_non_consecutive_months`, `test_fails_loud_on_a_non_integer_country_code`, `test_fails_loud_when_the_data_ends_before_train_end`, `test_nan_in_the_predict_history_is_named`, `test_fit_names_nan_before_classifying`, `test_predict_fails_loud_on_same_count_but_different_cells` | Geometry edges and every fail-loud check, each by its own message. |
 | Shared lists in `test_protocol.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_matryoshka_genome_is_exact`), `test_baseline.py`, `test_config_conformance.py` | Protocol, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. The shared dual-input and seed-output lists use a 60-month panel without a country column, so those two checks are in `test_matryoshka.py`. |
 
 ---

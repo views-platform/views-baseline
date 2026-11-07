@@ -677,3 +677,49 @@ The full suite: 565 passed, 1 xfailed.
 - **Fit:** 621 s for the three types, peak 5.4 GiB. The prototype's search alone took 50–70 s per type. This run also builds the counts, scores the starting values, and ran beside other sessions. The difference is not investigated.
 - **Predict, one origin:** 35 s for one type at S = 64. Scaled to 3 types × S = 256, that is about 7 minutes per origin.
 - **The first attempt was stopped** by Claude Code for low system memory: it had predicted all 3 types × S = 256 at once, about 7 GB of output. The rerun used the smaller predict.
+
+## 2026-11-07: #127 stage 3, the three reviews of 702f17d and the fixes
+
+**review-diff:**
+- no bugs in the core logic;
+- 2 warnings: negative target values are not rejected, and leftover "ring" naming with an inconsistent `> 0` filter between the score and its slope;
+- 8 suggestions.
+
+**code-review (high):**
+1. **Float rounding in the row lookup, silent but rare.** Rows are shifted apart by 2·row, so for the largest uniform `rng.random` returns (u ≈ 1 − 2⁻⁵³), `u + shift` can round onto the row's final 1.0. A neighbourhood draw could then land on a zero-weight sea offset. This happens in about 1 of 2⁴⁵ draws, roughly 1e-4 times per origin.
+2. **Negative values:** a value below 0 scores as the largest class.
+3. **A panel where no cell has a country** crashes.
+4. **Predict's history start is not checked against the fit's.**
+5. Efficiency points, including a cache that holds up to 41 entries of dead arrays.
+
+**falsify guard audit** (independent, in a worktree):
+- 59 mutations: 37 caught, 22 survived, 2 of them equivalent.
+- **Strong:** the exact maths, the slopes, and the catalog and genome wiring.
+- **Weak:**
+  - which cell the sampler picks, because the fixture's values are i.i.d. across cells;
+  - c and h, which were only guarded in one direction;
+  - the RNG order with only one target;
+  - the 120-month boundary;
+  - the stability refits;
+  - half the fail-loud checks, two of which passed only because an unrelated message matched.
+
+**Fixes:**
+- **Row lookups are capped at the row's last positive entry.** The new test fails without the cap, checked by mutation.
+- **Negative values are rejected** in `classify` and in fit and predict.
+- **No-country panels work.** An extra zero column handles the cells without a country.
+- **Predict requires the fit's history start** (`history_start`).
+- **The cache keeps one entry per doll.** Peak memory went from 5.4 to 4.3 GiB.
+- **The starting score comes from the search's first evaluation.**
+- **Smaller fixes:** "ring" renamed to weight everywhere, the `> 0` filter dropped, the unused `window` parameter removed, a cheaper completeness check (`bincount`), a block size that scales with S (`BLOCK_UNIFORMS`), the redundant `require_entities` dropped, and the seed-wiring comment moved.
+- **22 new tests aimed at the survivors:**
+  - encoded values (month × N + cell) show exactly which doll, cell and month each draw came from;
+  - an exact ADR-011 stream check with two targets;
+  - the 120/119-month boundary;
+  - refits equal direct searches;
+  - the score's mix equals the sampler's on a grid with empty shells;
+  - the date-line wrap;
+  - one test per fail-loud check, matched on its own message;
+  - the fixture now has three cells without a country.
+- **Not done:** the duplicate NEAR work in `near_length_slope`. It is efficiency only, and keeping it leaves the code equal to the checked prototype.
+
+**Suite:** 592 passed, 1 xfailed. **Real data, rerun after the fixes:** the knobs still equal the prototype's v5 exactly for all three types. Fit 616 s, peak 4.3 GiB. Predict for one type at S = 64 took 41 s.

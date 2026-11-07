@@ -63,28 +63,29 @@ class Objective:
     """Minus the mean log score and minus its exact slope, as a function of the knobs.
 
     theta = (log weight[1..D−1], log memory[0..D−1], log length scale), D = len(DOLLS): 2D values.
-    Caches each doll's shares (and their slopes) per memory (and, for NEAR, length scale), so a
-    weight-only change rescores without touching the counts.
+    Keeps each doll's latest shares (and their slopes), keyed by its memory (and, for NEAR, the
+    length scale), so a weight-only change, or a doll whose knobs did not move, reuses them. One
+    entry per doll bounds the memory: each is 3 arrays of n_cutoffs × N × 7 float64.
+    ``first_score`` is the score at the first evaluation (the starting values).
     """
 
     def __init__(self, dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray):
         self.dc, self.cutoffs, self.outcomes = dc, cutoffs, outcomes
-        self._cache: dict[tuple, tuple[np.ndarray, np.ndarray, np.ndarray | None]] = {}
+        self._latest: dict[int, tuple[tuple, tuple]] = {}
         self.evaluations = 0
+        self.first_score: float | None = None
 
     def shares(self, doll: int, memory: float, length: float):
         """(q, ∂q/∂log memory, ∂q/∂log ℓ or None), each (n_cut, N, K)."""
-        key = (doll, round(float(memory), 9), round(float(length), 9) if doll == NEAR else None)
-        if key not in self._cache:
-            if len(self._cache) > 40:
-                self._cache.clear()
+        key = (round(float(memory), 9), round(float(length), 9) if doll == NEAR else None)
+        if doll not in self._latest or self._latest[doll][0] != key:
             n = self.cutoffs.size
             Wt = time_weights(self.dc.months, self.cutoffs, memory)
             W = np.vstack([Wt, time_weight_slopes(self.dc.months, self.cutoffs, memory)])
             both = doll_shares(self.dc, W, doll, length)
             dlen = near_length_slope(self.dc, Wt, length) if doll == NEAR else None
-            self._cache[key] = (both[:n], both[n:], dlen)
-        return self._cache[key]
+            self._latest[doll] = (key, (both[:n], both[n:], dlen))
+        return self._latest[doll][1]
 
     @staticmethod
     def unpack(theta: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
@@ -104,6 +105,8 @@ class Objective:
         q, dq = np.stack([a for a, _, _ in parts]), np.stack([b for _, b, _ in parts])
         score, _, slope = log_score_slope(q, dq, parts[NEAR][2], self.dc.sizes, self.outcomes,
                                           weight, memory)
+        if self.first_score is None:
+            self.first_score = score
         return -score, -slope
 
 
@@ -113,7 +116,10 @@ def start_theta() -> np.ndarray:
 
 
 def search(dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray) -> dict:
-    """One L-BFGS-B search from the fixed starting values. Plain-Python result."""
+    """One L-BFGS-B search from the fixed starting values. Plain-Python result.
+
+    ``seconds`` is wall-clock time: the one field that differs between identical fits.
+    """
     obj = Objective(dc, cutoffs, outcomes)
     bounds = ([tuple(np.log(WEIGHT_BOUNDS))] * (len(DOLLS) - 1)
               + [tuple(np.log(MEMORY_BOUNDS))] * len(DOLLS) + [tuple(np.log(LENGTH_BOUNDS))])
@@ -123,7 +129,8 @@ def search(dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray) -> dict:
     weight, memory, length = Objective.unpack(res.x)
     score, floored = obj.score(weight, memory, length)
     return {"weight": weight.tolist(), "memory": memory.tolist(), "length_scale": length,
-            "score": score, "floored": floored, "converged": bool(res.success),
+            "score": score, "start_score": obj.first_score, "floored": floored,
+            "converged": bool(res.success),
             "message": str(res.message), "evaluations": obj.evaluations, "steps": int(res.nit),
             "seconds": round(time.time() - t0, 1)}
 
@@ -147,7 +154,6 @@ def fit_knobs(values: np.ndarray, months: np.ndarray, geo: Geometry, cutoffs: np
     dc = build_doll_counts(classes, months, geo)
     outcomes = outcome_classes(classes, months, cutoffs, horizon)
     result = search(dc, cutoffs, outcomes)
-    result["start_score"] = -Objective(dc, cutoffs, outcomes)(start_theta())[0]
     if stability_refits:
         result["leave_one_cutoff_out"] = [
             {"left_out": int(c), **search(dc, cutoffs[cutoffs != c], outcomes[cutoffs != c])}

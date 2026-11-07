@@ -52,14 +52,15 @@ VALUES = [0, 0, 0, 0, 1, 3, 12, 40, 300, 2000]
 
 
 def synthetic_grid(seed=0, n_rows=16, n_cols=22, holes=(40, 41, 63, 150, 151, 200)):
-    """Cells with sea holes, two countries split by column, and one cell without a country."""
+    """Cells with sea holes, two countries split by column, and three cells without a country
+    (apart, so that a bug treating them as one country shows)."""
     rows, cols = np.meshgrid(np.arange(100, 100 + n_rows), np.arange(200, 200 + n_cols),
                              indexing="ij")
     cells = (rows * N_COLS + cols + 1).ravel()
     cells = np.sort(cells[~np.isin(cells, cells[list(holes)])])
     c = (cells - 1) % N_COLS
     country = np.where(c < 200 + n_cols // 2, 7, 9)
-    country[3] = 0
+    country[[3, cells.size // 2, cells.size - 4]] = 0     # three cells without a country, apart
     return cells, country
 
 
@@ -218,6 +219,43 @@ def test_sampler_matches_the_exact_probabilities(grid, h):
         np.testing.assert_allclose(freq, p_doll @ q[:, i, :], atol=4 / np.sqrt(S))
 
 
+def test_row_lookup_never_overflows_onto_a_zero_probability_entry():
+    """Code review of 702f17d: with rows shifted apart by 2·row, u + shift can round up onto a
+    row's final 1.0 for the largest u that rng.random returns. The last offset here has weight
+    0, so the search must stop at index 3, in every row of a 256-row block."""
+    from views_baseline.model.models.distributional.matryoshka.draw import (
+        _cdf,
+        _row_searchsorted,
+    )
+
+    table = _cdf(np.tile([1.0, 1.0, 1.0, 1.0, 0.0], (256, 1)))
+    u = np.full((256, 1), np.nextafter(1.0, 0.0))
+    got = _row_searchsorted(table, np.arange(256), u, 2.0, np.full(256, 3))
+    np.testing.assert_array_equal(got, 3)
+
+
+def test_a_panel_where_no_cell_has_a_country_still_works():
+    cells, _ = synthetic_grid(n_rows=6, n_cols=6, holes=())
+    country = np.zeros(cells.size, dtype=int)
+    geo = build_geometry(cells, country)
+    months = np.arange(100, 130)
+    values = np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size))
+    _, sizes = shell_sizes(geo)
+    assert (sizes[COUNTRY] == 0).all()
+    dc = build_doll_counts(classify(values), months, geo)
+    q = doll_shares(dc, time_weights(months, np.array([120]), 10.0), MAP)
+    # On a 6 × 6 grid the central cells have every other cell within 5 cells: empty map shell.
+    np.testing.assert_allclose(q.sum(axis=2)[0], (sizes[MAP] > 0).astype(float))
+    assert (sizes[MAP] > 0).any()
+    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+             "length_scale": 1.7}
+    s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+                      build_shell_tables(geo))
+    draws = s.draw(np.arange(cells.size), np.array([1, 5]),
+                   np.random.default_rng(5).random((cells.size, 2, 3, 50)))
+    assert set(np.unique(draws)) <= set(VALUES)
+
+
 def test_forecast_opens_outward_with_distance(grid):
     _, _, geo, months, values = grid
     knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
@@ -302,6 +340,7 @@ def test_special_case_is_conflictology_with_a_moving_window(planted):
     m.knobs = {"y": {"weight": [1.0, 0.0, 0.0, 0.0], "memory": [np.inf] * 4,
                      "length_scale": 1.0}}
     m.entity_ids, m.country = cells, country
+    m.history_start = TRAIN_END + 4 - 35            # the 36-month history passed below
     m.n_samples = 3600
     k = 4
     last = TRAIN_END + k
@@ -352,7 +391,7 @@ def test_block_size_changes_nothing(planted, fitted, monkeypatch):
 
     *_, df = planted
     blocked = fitted.predict(df, 1, 3)["y"].values
-    monkeypatch.setattr(model_module, "BLOCK_CELLS", 1)
+    monkeypatch.setattr(model_module, "BLOCK_UNIFORMS", 1)           # one cell per block
     np.testing.assert_array_equal(fitted.predict(df, 1, 3)["y"].values, blocked)
 
 
@@ -396,6 +435,26 @@ def test_fails_loud_on_nan(planted):
     bad.iloc[7, 0] = np.nan
     with pytest.raises(ValueError, match="NaN"):
         _model().fit(bad)
+
+
+def test_fails_loud_on_a_negative_value(planted):
+    *_, df = planted
+    bad = df.copy()
+    bad.iloc[9, 0] = -1.0
+    with pytest.raises(ValueError, match="negative"):
+        _model().fit(bad)
+
+
+def test_classify_rejects_negative_values():
+    with pytest.raises(ValueError, match="negative"):
+        classify(np.array([0.0, -0.5]))
+
+
+def test_predict_fails_loud_when_the_history_starts_elsewhere(planted, fitted):
+    *_, df = planted
+    later = df[df.index.get_level_values("month_id") > 310]
+    with pytest.raises(ValueError, match="starts at month 311"):
+        fitted.predict(later, 0, 3)
 
 
 def test_fails_loud_when_a_cell_changes_country(planted):
@@ -442,3 +501,251 @@ def test_country_column_must_not_be_a_target():
     with pytest.raises(ValueError, match="must not be a target"):
         MatryoshkaConflictology(targets=["c_id"], partition_dict=PARTITION, loa="pgm",
                                 **CONFIG)
+
+
+# ── guard-audit follow-ups (falsify guard audit of 702f17d) ─────────────────────────────
+
+
+def _encoded(months, n_cells):
+    """Values that say where they came from: month index × n_cells + cell index (float32-exact)."""
+    return (np.arange(months.size)[:, None] * n_cells + np.arange(n_cells)[None, :]).astype(
+        np.float32)
+
+
+@pytest.mark.parametrize("doll", range(len(DOLLS)))
+def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid, doll):
+    """With all weight on one doll and values that encode their cell, every draw comes from
+    that doll's brute-force shell, in the right proportions (kernel for the neighbourhood,
+    uniform for country and map). Checked for a full cell, a corner and a no-country cell."""
+    cells, country, geo, months, _ = grid
+    length = 1.7
+    shells, pick = brute_force_shells(cells, country, length)
+    weight = np.full(len(DOLLS), 1e-300)
+    weight[doll] = 1.0
+    knobs = {"weight": weight, "memory": [10.0] * 4, "length_scale": length}
+    values = _encoded(months, cells.size)
+    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
+    S = 40_000
+    no_country = int(np.nonzero(country == 0)[0][0])
+    for i in {int(np.argmax(shells[NEAR].sum(1))), 0, no_country}:
+        if not shells[doll][i].any():
+            continue
+        got = s.draw(np.array([i]), np.array([1]), np.random.default_rng(i).random(
+            (1, 1, 3, S)))[0, 0].astype(np.int64) % cells.size
+        assert shells[doll][i][got].all(), f"{DOLLS[doll]}: a draw outside the shell (cell {i})"
+        freq = np.bincount(got, minlength=cells.size) / S
+        np.testing.assert_allclose(freq, pick[doll][i], atol=5 / np.sqrt(S))
+
+
+def test_a_cell_without_a_country_never_picks_the_country_doll(grid):
+    cells, country, geo, months, values = grid
+    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+             "length_scale": 1.7}
+    s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+                      build_shell_tables(geo))
+    for i in np.nonzero(country == 0)[0]:
+        p = np.diff(np.r_[0.0, s.doll_cdf(np.array([i]), np.array([1]))[0, 0]])
+        assert p[COUNTRY] == 0.0
+
+
+def test_cdf_ends_exactly_at_one_from_the_last_positive_entry():
+    from views_baseline.model.models.distributional.matryoshka.draw import _cdf
+
+    c = _cdf(np.array([[0.1, 0.2, 0.3, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]]))
+    np.testing.assert_array_equal(c[0, 2:], 1.0)
+    np.testing.assert_allclose(c[0, :2], [1 / 6, 0.5])
+    np.testing.assert_array_equal(c[1], 0.0)
+
+
+def test_predict_uses_history_end_c_and_months_ahead_h(planted):
+    """Values encode month and cell. Per forecast step j: the share of draws from the cell
+    itself equals P(cell | h = j + 1), and the cell doll's months follow exp(−(c − s)/m) up to
+    and including c = train_end + k."""
+    cells, country, months, _, _ = planted
+    k, steps = 5, 3
+    last = TRAIN_END + k
+    hist = months <= last
+    values = np.zeros((months.size, cells.size), dtype=np.float32)
+    values[hist] = _encoded(months[hist], cells.size)
+    df = to_df(cells, country, months, values)
+    m = _model(n_samples=20_000)
+    memory = [4.0, 30.0, 30.0, 30.0]
+    m.knobs = {"y": {"weight": [1.0, 2.0, 0.0, 0.0], "memory": memory, "length_scale": 1.0}}
+    m.entity_ids, m.country, m.history_start = cells, country, int(months[0])
+    out = m.predict(df, k, steps)["y"].values.reshape(cells.size, steps, -1).astype(np.int64)
+    i = 40
+    month_of, cell_of = out[i] // cells.size, out[i] % cells.size
+    for j in range(steps):
+        h = j + 1
+        a = np.array([1.0, 2.0]) * np.exp(-h / np.array(memory[:2]))
+        own = cell_of[j] == i
+        np.testing.assert_allclose(own.mean(), a[0] / a.sum(), atol=0.015)
+        age = np.arange(hist.sum())[::-1]                       # c − s for s = first..c
+        w = np.exp(-age / memory[0])
+        expected = w / w.sum()
+        freq = np.bincount(month_of[j][own], minlength=hist.sum()) / own.sum()
+        np.testing.assert_allclose(freq, expected, atol=0.02)
+        assert month_of[j].max() == hist.sum() - 1              # month c itself is drawn
+
+
+def test_rng_order_is_entity_then_time_then_target(planted):
+    """predict equals one sampler call per (cell, month, target), in that order, each taking
+    3 × n_samples uniforms from one fresh generator (ADR-011)."""
+    cells, country, months, values, _ = planted
+    df = to_df(cells, country, months, values, targets=("y", "z"))
+    df["z"] = df["z"] * 2 + 1
+    m = _model(n_samples=8)
+    m.targets = ["y", "z"]
+    m.knobs = {t: {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+                   "length_scale": 1.7} for t in m.targets}
+    m.entity_ids, m.country, m.history_start = cells, country, int(months[0])
+    k, steps = 2, 3
+    out = m.predict(df, k, steps)
+    last = TRAIN_END + k
+    hist = months <= last
+    geo = build_geometry(cells, country)
+    tables = build_shell_tables(geo)
+    panel = {"y": values[hist], "z": values[hist] * 2 + 1}
+    samplers = {t: build_sampler(panel[t].astype(np.float32), months[hist], last, m.knobs[t],
+                                 geo, tables) for t in m.targets}
+    rng = np.random.default_rng(m.seed)
+    for i in range(cells.size):
+        for j in range(steps):
+            for t in m.targets:
+                expected = samplers[t].draw(np.array([i]), np.array([j + 1]),
+                                            rng.random((1, 1, 3, 8)))[0, 0]
+                np.testing.assert_array_equal(out[t].values[i * steps + j], expected)
+
+
+@pytest.mark.parametrize("start, ok", [(355, True), (356, False)])
+def test_the_120_month_history_boundary(planted, start, ok):
+    """Cutoffs 474 and 486: history from 355 is exactly 120 months before 474."""
+    *_, df = planted
+    part = df[df.index.get_level_values("month_id") >= start]
+    if ok:
+        assert _model().fit(part).knobs["y"]["converged"] is not None
+    else:
+        with pytest.raises(ValueError, match="at least 120 months"):
+            _model().fit(part)
+
+
+def test_stability_refits_are_searches_without_the_left_out_cutoff(planted):
+    from views_baseline.model.models.distributional.matryoshka.knob_fit import search
+
+    cells, country, months, values, df = planted
+    m = _model(stability_refits=True).fit(df)
+    hist = months <= TRAIN_END
+    classes = classify(values[hist])
+    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country))
+    cutoffs = backtest_cutoffs(TRAIN_END, 2, 6)
+    outcomes = outcome_classes(classes, months[hist], cutoffs, 6)
+    for refit, c in zip(m.knobs["y"]["leave_one_cutoff_out"], cutoffs):
+        keep = cutoffs != c
+        direct = search(dc, cutoffs[keep], outcomes[keep])
+        np.testing.assert_allclose(refit["weight"], direct["weight"])
+        assert refit["score"] == pytest.approx(direct["score"])
+        assert refit["score"] != pytest.approx(m.knobs["y"]["score"])
+
+
+def test_outcomes_are_the_months_after_each_cutoff():
+    months = np.arange(10, 30)
+    classes = np.repeat(months[:, None], 2, axis=1)          # class array encodes the month
+    out = outcome_classes(classes, months, np.array([15, 20]), 3)
+    np.testing.assert_array_equal(out[:, :, 0], [[16, 17, 18], [21, 22, 23]])
+
+
+def test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells():
+    """The fitting score uses exactly the doll probabilities the sampler draws with, including
+    excluded empty shells (a 6 × 6 grid: central cells have no map shell)."""
+    from views_baseline.model.models.distributional.matryoshka.forecast_probability import (
+        log_score,
+    )
+
+    cells, country = synthetic_grid(n_rows=6, n_cols=6, holes=())
+    geo = build_geometry(cells, country)
+    months = np.arange(100, 140)
+    values = np.random.default_rng(6).choice(VALUES, size=(months.size, cells.size))
+    classes = classify(values)
+    dc = build_doll_counts(classes, months, geo)
+    assert (dc.sizes[MAP] == 0).any() and (dc.sizes[MAP] > 0).any()
+    weight, memory, length = np.array([1.0, 0.8, 0.4, 0.2]), np.array([3., 8., 40., 200.]), 1.7
+    cutoff, H = 130, 4
+    q = np.stack([doll_shares(dc, time_weights(months, np.array([cutoff]), memory[k]), k,
+                              length) for k in range(len(DOLLS))])           # (4, 1, N, K)
+    obs = outcome_classes(classes, months, np.array([cutoff]), H)
+    score, _ = log_score(q, dc.sizes, obs, weight, memory)
+    s = build_sampler(values[months <= cutoff].astype(np.float32), months[months <= cutoff],
+                      cutoff, {"weight": weight, "memory": memory, "length_scale": length},
+                      geo, build_shell_tables(geo))
+    p_doll = np.diff(np.concatenate(
+        [np.zeros((cells.size, H, 1)), s.doll_cdf(np.arange(cells.size), np.arange(1, H + 1))],
+        axis=2), axis=2)                                                     # (N, H, 4)
+    p = np.array([[p_doll[n, h] @ q[:, 0, n, obs[0, h, n]] for h in range(H)]
+                  for n in range(cells.size)])
+    assert score == pytest.approx(np.log(p).mean(), rel=1e-12)
+
+
+def test_geometry_wraps_columns_at_the_date_line():
+    cells = np.array([100 * N_COLS + 1, 100 * N_COLS + N_COLS])      # cols 0 and 719, same row
+    geo = build_geometry(cells, np.array([1, 1]))
+    assert (geo.neighbours[0] == 1).sum() == 1 and (geo.neighbours[1] == 0).sum() == 1
+
+
+def test_geometry_rejects_unsorted_cells():
+    with pytest.raises(ValueError, match="ascending"):
+        build_geometry(np.array([5, 3]), np.array([1, 1]))
+
+
+def test_fails_loud_on_duplicate_cell_months(planted):
+    *_, df = planted
+    with pytest.raises(ValueError, match="1 duplicated"):
+        _model().fit(pd.concat([df, df.iloc[[0]]]))
+
+
+def test_fails_loud_on_non_consecutive_months(planted):
+    *_, df = planted
+    gap = df[df.index.get_level_values("month_id") != 400]
+    with pytest.raises(ValueError, match="not consecutive"):
+        _model().fit(gap)
+
+
+def test_fails_loud_on_a_non_integer_country_code(planted):
+    *_, df = planted
+    bad = df.copy()
+    bad["c_id"] = bad["c_id"] + 0.5
+    with pytest.raises(ValueError, match="integer country codes"):
+        _model().fit(bad)
+
+
+def test_fails_loud_when_the_data_ends_before_train_end(planted):
+    *_, df = planted
+    with pytest.raises(ValueError, match="before train_end"):
+        _model().fit(df[df.index.get_level_values("month_id") <= TRAIN_END - 1])
+
+
+def test_nan_in_the_predict_history_is_named(planted, fitted):
+    *_, df = planted
+    bad = df.copy()
+    row = np.nonzero(bad.index.get_level_values("month_id") == TRAIN_END + 1)[0][0]
+    bad.iloc[row, 0] = np.nan
+    with pytest.raises(ValueError, match="NaN in 'y'"):
+        fitted.predict(bad, 2, 3)
+
+
+def test_fit_names_nan_before_classifying(planted):
+    *_, df = planted
+    bad = df.copy()
+    bad.iloc[7, 0] = np.nan
+    with pytest.raises(ValueError, match="NaN in 'y'"):
+        _model().fit(bad)
+
+
+def test_predict_fails_loud_on_same_count_but_different_cells(planted, fitted):
+    cells, *_, df = planted
+    ids = df.index.get_level_values("priogrid_id").to_numpy().copy()
+    ids[ids == cells[-1]] = cells[-1] + 1                 # a cell not in the fit, same count
+    moved = df.copy()
+    moved.index = pd.MultiIndex.from_arrays(
+        [df.index.get_level_values("month_id"), ids], names=df.index.names)
+    with pytest.raises(ValueError, match="cells it was fitted on"):
+        fitted.predict(moved.sort_index(), 0, 3)

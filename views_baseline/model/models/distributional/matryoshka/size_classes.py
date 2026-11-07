@@ -18,4 +18,7 @@ def classify(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values)
     if np.isnan(values).any():
         raise ValueError("classify: NaN in values.")
+    if (values < 0).any():
+        raise ValueError("classify: negative values; the size classes are fatality counts "
+                         "(a negative value would silently score as the largest class).")
     return (np.searchsorted(LOWER_EDGES, values, side="right") - 1).astype(np.int8)

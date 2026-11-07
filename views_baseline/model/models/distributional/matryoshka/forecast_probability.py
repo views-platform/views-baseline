@@ -4,7 +4,7 @@ No sampling: everything here is exact.
 
 For history end c, forecast month t = c + h and cell i:
 
-  P(doll k | h)       ∝ ring_weight[k] · exp(−h / memory[k])            (empty shells excluded)
+  P(doll k | h)       ∝ weight[k] · exp(−h / memory[k])                 (empty shells excluded)
   q_k(i, class)       = Σ_s exp(−(c − s)/memory[k]) / Z_k · share of doll k's cells in that class
   P(class | i, h)     = Σ_k P(doll k | h) · q_k(i, class)
 
@@ -17,12 +17,12 @@ a_b = exp(−d_b/ℓ) and X_b the band's class counts:
 
   q_near(i, class) = Σ_b a_b · (time-weighted X_b)(i, class) / Σ_b a_b · n_b(i)
 
-The slope (for the knob search) is taken with respect to log ring_weight[1..D-1] and
+The slope (for the knob search) is taken with respect to log weight[1..D-1] and
 log memory[0..D-1], D = len(DOLLS).
-With A_k = ring_weight[k] · exp(−h / memory[k]) for a non-empty shell, p = Σ A_k q_k / Σ A_k, and
+With A_k = weight[k] · exp(−h / memory[k]) for a non-empty shell, p = Σ A_k q_k / Σ A_k, and
 w_s = exp(−a_s / m) / Z the time weight of a month a_s months before c:
 
-  ∂ log p / ∂ log ring_weight[k] = A_k q_k / num − A_k / den                      (call it T_k)
+  ∂ log p / ∂ log weight[k] = A_k q_k / num − A_k / den                           (call it T_k)
   ∂ log p / ∂ log memory[k]      = T_k · h / m_k  +  A_k · ∂q_k/∂log m_k / num
   ∂ w_s / ∂ log m                = w_s · (a_s − ā) / m,    ā = Σ_s w_s a_s
 
@@ -56,17 +56,13 @@ def _ages(months: np.ndarray, cutoffs: np.ndarray) -> np.ndarray:
     return (cutoffs[:, None] - months[None, :]).astype(np.float64)
 
 
-def time_weights(months: np.ndarray, cutoffs: np.ndarray, memory: float,
-                 window: int | None = None) -> np.ndarray:
+def time_weights(months: np.ndarray, cutoffs: np.ndarray, memory: float) -> np.ndarray:
     """(n_cutoffs, M) weights over history months, each row summing to 1 over months ≤ cutoff.
 
-    ``memory = inf`` gives equal weights. ``window`` keeps only the last ``window`` months (used
-    for the conflictology reference).
+    ``memory = inf`` gives equal weights.
     """
     age = _ages(months, cutoffs)
     keep = age >= 0
-    if window is not None:
-        keep &= age < window
     w = np.where(keep, 1.0 if np.isinf(memory) else np.exp(-np.maximum(age, 0) / memory), 0.0)
     return w / w.sum(axis=1, keepdims=True)
 
@@ -105,7 +101,10 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
     R, N = W.shape[0], dc.sizes.shape[1]
     q = np.zeros((R, N, N_CLASSES))
     size = dc.sizes[doll].astype(np.float64)
-    has_country, ci = dc.country_index >= 0, np.maximum(dc.country_index, 0)
+    has_country = dc.country_index >= 0
+    # Cells without a country index a zero column appended after the countries, so this also
+    # works when no cell has a country (code review of 702f17d).
+    ci = np.where(has_country, dc.country_index, dc.country_tot.shape[2])
     if doll == NEAR:
         a, _ = _kernel(length)
         z = a @ dc.band_sizes                                                    # (N,)
@@ -117,7 +116,8 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(z > 0, num / z, 0.0)
         else:
-            country_rest = np.where(has_country, (W @ dc.country_tot[k])[:, ci]
+            totals = np.concatenate([W @ dc.country_tot[k], np.zeros((R, 1))], axis=1)
+            country_rest = np.where(has_country, totals[:, ci]
                                     - _weigh(dc.inner_same_country[k], W), 0.0)
             if doll == COUNTRY:
                 q[..., k] = country_rest
@@ -152,10 +152,10 @@ def outcome_classes(classes: np.ndarray, months: np.ndarray, cutoffs: np.ndarray
     return classes[pos]
 
 
-def _doll_mix(sizes, H, ring_weight, memory):
+def _doll_mix(sizes, H, weight, memory):
     """(D, H, N) A_k: the unnormalised P(doll k | h) per cell, zero for empty shells."""
     h = np.arange(1, H + 1, dtype=np.float64)
-    a = ring_weight[:, None] * np.exp(-h[None, :] / memory[:, None])         # (D, H)
+    a = weight[:, None] * np.exp(-h[None, :] / memory[:, None])              # (D, H)
     return a[:, :, None] * (sizes > 0)[:, None, :], h
 
 
@@ -165,31 +165,30 @@ def _observed(q_k: np.ndarray, outcomes: np.ndarray) -> np.ndarray:
                               axis=3)[..., 0].astype(np.float64)
 
 
-def log_score(q: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray, ring_weight: np.ndarray,
+def log_score(q: np.ndarray, sizes: np.ndarray, outcomes: np.ndarray, weight: np.ndarray,
               memory: np.ndarray) -> tuple[float, int]:
     """Mean log P(observed class), and how many probabilities hit the floor.
 
     q: (D, n_cut, N, K) doll shares, D = len(DOLLS); sizes: (D, N); outcomes: (n_cut, H, N);
-    ring_weight, memory: (D,) per doll.
+    weight, memory: (D,) per doll.
     """
-    A, _ = _doll_mix(sizes, outcomes.shape[1], ring_weight, memory)
-    num = sum(A[k][None] * _observed(q[k], outcomes)
-              for k in range(len(DOLLS)) if ring_weight[k] > 0)
+    A, _ = _doll_mix(sizes, outcomes.shape[1], weight, memory)
+    num = sum(A[k][None] * _observed(q[k], outcomes) for k in range(len(DOLLS)))
     p = num / A.sum(axis=0)[None]
     return float(np.log(np.maximum(p, PROB_FLOOR)).mean()), int((p < PROB_FLOOR).sum())
 
 
 def log_score_slope(q: np.ndarray, dq: np.ndarray, dq_length: np.ndarray, sizes: np.ndarray,
-                    outcomes: np.ndarray, ring_weight: np.ndarray,
+                    outcomes: np.ndarray, weight: np.ndarray,
                     memory: np.ndarray) -> tuple[float, int, np.ndarray]:
     """As `log_score`, plus the slope (2D,) over
-    (log ring_weight[1..D-1], log memory[0..D-1], log ℓ).
+    (log weight[1..D-1], log memory[0..D-1], log ℓ).
 
     dq: (D, n_cut, N, K), each doll's shares differentiated by its log memory;
     dq_length: (n_cut, N, K), the neighbourhood's shares differentiated by log ℓ. Floored
     probabilities contribute no slope (the floor is flat).
     """
-    A, h = _doll_mix(sizes, outcomes.shape[1], ring_weight, memory)
+    A, h = _doll_mix(sizes, outcomes.shape[1], weight, memory)
     D = len(DOLLS)
     P = [_observed(q[k], outcomes) for k in range(D)]
     num = sum(A[k][None] * P[k] for k in range(D))

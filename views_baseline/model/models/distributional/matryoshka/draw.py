@@ -117,16 +117,22 @@ def build_shell_tables(geo: Geometry) -> ShellTables:
                        map_kept_before=map_kept_before, map_skip=map_skip, sizes=sizes)
 
 
-def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray, span: float):
-    """``searchsorted(table[rows[b]], x[b, ...], side="right")`` for every b at once.
+def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray, span: float,
+                      last: np.ndarray) -> np.ndarray:
+    """``searchsorted(table[rows[b]], x[b, ...], side="right")`` for every b at once, capped at
+    ``last[rows[b]]``.
 
     Each row of ``table`` is ascending with values in [0, span); rows are shifted apart by
-    ``span`` so that one search over the flattened table answers every row.
+    ``span`` so that one search over the flattened table answers every row. For a CDF row, the
+    shift costs precision: ``u + shift`` can round up onto the row's final 1.0 and run past it
+    (code review of 702f17d). ``last`` (the row's last index with positive probability) caps
+    that, so the overflow lands on the entry it should have, never on a zero-probability one.
     """
     width = table.shape[1]
     flat = (table + span * np.arange(table.shape[0])[:, None]).ravel()
-    shift = (span * rows).reshape(rows.shape + (1,) * (x.ndim - rows.ndim))
-    return np.searchsorted(flat, x + shift, side="right") - width * rows.reshape(shift.shape)
+    rows_b = rows.reshape(rows.shape + (1,) * (x.ndim - rows.ndim))
+    i = np.searchsorted(flat, x + span * rows_b, side="right") - width * rows_b
+    return np.minimum(i, last[rows_b])
 
 
 def kept_positions(pick: np.ndarray, rows: np.ndarray, kept_before: np.ndarray,
@@ -137,8 +143,10 @@ def kept_positions(pick: np.ndarray, rows: np.ndarray, kept_before: np.ndarray,
     with r = the number of stretches whose ``kept_before`` ≤ j, that is ``skip[r − 1]``.
     ``pick`` is (B, ...); ``rows`` (B,); ``kept_before``/``skip`` (N, E) as `ShellTables`.
     """
+    # Integers: exact in float64 at these sizes, so no rounding and no cap needed beyond E.
     span = float(kept_before.max()) + 1.0
-    r = _row_searchsorted(kept_before[rows], np.arange(rows.size), pick, span)
+    r = _row_searchsorted(kept_before[rows], np.arange(rows.size), pick, span,
+                          np.full(rows.size, kept_before.shape[1]))
     where = rows.reshape(rows.shape + (1,) * (pick.ndim - 1))
     return pick + np.where(r > 0, skip[where, np.maximum(r - 1, 0)], 0)
 
@@ -170,6 +178,7 @@ class Sampler:
     memory: np.ndarray
     month_cdf: np.ndarray
     near_cdf: np.ndarray
+    near_last: np.ndarray       # (N,) last neighbour offset with positive weight (0 if none)
     neighbours: np.ndarray
     shells: ShellTables
 
@@ -188,10 +197,12 @@ class Sampler:
         B = cells.size
         doll = (u[:, :, 0, :, None] >= self.doll_cdf(cells, h)[:, :, None, :]).sum(axis=-1)
         doll = np.minimum(doll, len(DOLLS) - 1)                    # u < 1 ≤ the last cdf entry
-        month = _row_searchsorted(self.month_cdf, doll, u[:, :, 1, :], 2.0)
+        month = _row_searchsorted(self.month_cdf, doll, u[:, :, 1, :], 2.0,
+                                  np.full(len(DOLLS), self.month_cdf.shape[1] - 1))
         rows = np.broadcast_to(cells[:, None, None], doll.shape)
-        o = _row_searchsorted(self.near_cdf[cells], np.arange(B), u[:, :, 2, :], 2.0)
-        near = self.neighbours[rows, np.minimum(o, self.neighbours.shape[1] - 1)]
+        o = _row_searchsorted(self.near_cdf[cells], np.arange(B), u[:, :, 2, :], 2.0,
+                              self.near_last[cells])
+        near = self.neighbours[rows, o]
 
         def uniform_in(k, kept_before, skip):
             """Position of a uniform pick from shell k, for every sample."""
@@ -220,5 +231,9 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     month_w = np.stack([np.ones_like(age) if np.isinf(m) else np.exp(-age / m) for m in memory])
     near_w = np.where(geo.neighbours >= 0,
                       np.exp(-OFFSET_DISTANCE / float(knobs["length_scale"]))[None, :], 0.0)
+    has_near = near_w > 0
+    near_last = np.where(has_near.any(axis=1),
+                         near_w.shape[1] - 1 - np.argmax(has_near[:, ::-1], axis=1), 0)
     return Sampler(values=values, weight=weight, memory=memory, month_cdf=_cdf(month_w),
-                   near_cdf=_cdf(near_w), neighbours=geo.neighbours, shells=shells)
+                   near_cdf=_cdf(near_w), near_last=near_last, neighbours=geo.neighbours,
+                   shells=shells)

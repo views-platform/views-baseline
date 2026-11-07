@@ -22,7 +22,6 @@ from views_baseline.model.frames.output import to_prediction_frames
 from views_baseline.model.grid import (
     build_identifier_arrays,
     build_time_grid,
-    require_entities,
     train_test_boundary,
 )
 from views_baseline.model.models.distributional.matryoshka.draw import (
@@ -41,13 +40,15 @@ if TYPE_CHECKING:
     from views_frames import FeatureFrame
 
 MODEL_NAME = "MatryoshkaConflictology"
-BLOCK_CELLS = 256      # cells drawn at once in predict; memory/speed only
+BLOCK_UNIFORMS = 2 ** 24   # uniforms per predict block (128 MiB of float64); memory/speed only
 
 
-def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: int):
+def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: int,
+                 non_negative: list[str]):
     """Months ≤ ``last_month`` as a dense (M, N) panel per column. Fails loud unless every
     cell has every month from the first month on, with no NaN (ADR-024: the shells and their
-    sizes assume a complete panel)."""
+    sizes assume a complete panel), and unless the ``non_negative`` columns (the targets:
+    fatality counts) have no negative value."""
     keep = np.asarray(time) <= last_month
     time, unit = np.asarray(time)[keep], np.asarray(unit)[keep]
     if time.size == 0:
@@ -58,8 +59,7 @@ def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: i
         gaps = months[1:][np.diff(months) != 1][:3].tolist()
         raise ValueError(f"{MODEL_NAME}: months are not consecutive (first gaps before "
                          f"{gaps}).")
-    count = np.zeros((months.size, cells.size), dtype=np.int64)
-    np.add.at(count, (m_idx, c_idx), 1)
+    count = np.bincount(m_idx * cells.size + c_idx, minlength=months.size * cells.size)
     if np.any(count != 1):
         missing = int((count == 0).sum())
         duplicate = int((count > 1).sum())
@@ -76,6 +76,11 @@ def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: i
             raise ValueError(f"{MODEL_NAME}: NaN in {name!r} (cell {int(cells[j])}, month "
                              f"{int(months[s])}); {int(np.isnan(x).sum())} cell-months "
                              f"affected.")
+        if name in non_negative and (x < 0).any():
+            s, j = np.argwhere(x < 0)[0]
+            raise ValueError(f"{MODEL_NAME}: negative value in target {name!r} (cell "
+                             f"{int(cells[j])}, month {int(months[s])}); the targets must be "
+                             f"fatality counts.")
         dense[name] = x
     return months, cells, dense
 
@@ -110,6 +115,7 @@ class MatryoshkaConflictology:
             raise ValueError(f"country_column {country_column!r} must not be a target.")
         self.entity_ids = None        # (N,) priogrid ids, ascending
         self.country = None           # (N,) GAUL country code per cell
+        self.history_start = None     # first month of the fit history; predict must match it
         self.knobs = None             # {target: fit result dict}
 
     def _check_level(self) -> None:
@@ -126,7 +132,7 @@ class MatryoshkaConflictology:
         columns = self.targets + [self.country_column]
         ff = to_feature_frame(df, loa=self.loa, targets=columns)
         time, unit, values = panel(ff, columns)
-        months, cells, dense = _dense_panel(time, unit, values, train_end)
+        months, cells, dense = _dense_panel(time, unit, values, train_end, self.targets)
         if months[-1] != train_end:
             raise ValueError(f"{MODEL_NAME}: the data ends at month {int(months[-1])}, before "
                              f"train_end {train_end}.")
@@ -146,6 +152,7 @@ class MatryoshkaConflictology:
         }
         self.entity_ids = cells
         self.country = geo.country
+        self.history_start = int(months[0])
         return self
 
     def predict(
@@ -164,7 +171,13 @@ class MatryoshkaConflictology:
         last = train_end + sequence_number
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
         time, unit, values = panel(ff, self.targets)
-        months, cells, dense = _dense_panel(time, unit, values, last)
+        months, cells, dense = _dense_panel(time, unit, values, last, self.targets)
+        if months[0] != self.history_start:
+            raise ValueError(
+                f"{MODEL_NAME}: the predict data starts at month {int(months[0])}, but the knobs "
+                f"were fitted on history starting at month {self.history_start}. The history is "
+                f"all the data passed, so a different start would draw from a different "
+                f"distribution than the one fitted.")
         if months[-1] != last:
             raise ValueError(f"{MODEL_NAME}: sequence_number {sequence_number} needs data up to "
                              f"month {last}, but it ends at {int(months[-1])}.")
@@ -177,7 +190,6 @@ class MatryoshkaConflictology:
                     for t in self.targets}
 
         time_ids = build_time_grid(test_start, sequence_number, output_length)
-        require_entities(list(cells), MODEL_NAME)
         time_arr, unit_arr = build_identifier_arrays(cells, time_ids)
         rng = np.random.default_rng(self.seed)
         S, T = self.n_samples, len(time_ids)
@@ -185,10 +197,11 @@ class MatryoshkaConflictology:
         y_preds = {t: np.empty((time_arr.size, S), dtype=np.float32) for t in self.targets}
         # Uniforms are generated a block of cells at a time, in C order over
         # (cell, month, target, step, sample): the same stream, in the same entity → time →
-        # target order, as one call per (cell, month, target) (ADR-011). BLOCK_CELLS changes
+        # target order, as one call per (cell, month, target) (ADR-011). The block size changes
         # memory and speed only, never the output (tested).
-        for b0 in range(0, cells.size, BLOCK_CELLS):
-            block = np.arange(b0, min(cells.size, b0 + BLOCK_CELLS))
+        block_cells = max(1, BLOCK_UNIFORMS // (T * len(self.targets) * 3 * S))
+        for b0 in range(0, cells.size, block_cells):
+            block = np.arange(b0, min(cells.size, b0 + block_cells))
             u = rng.random((block.size, T, len(self.targets), 3, S))
             rows = slice(b0 * T, (b0 + block.size) * T)
             for ti, t in enumerate(self.targets):

@@ -132,8 +132,10 @@ def shell_sizes(geo: Geometry) -> tuple[np.ndarray, np.ndarray]:
     n_near = (nbr >= 0).sum(axis=1)
     same_country_nbr = (nbr >= 0) & has_country[:, None] & (
         country_index[np.where(nbr >= 0, nbr, 0)] == country_index[:, None])
-    country_size = np.bincount(country_index[has_country], minlength=n_countries)
-    n_country = np.where(has_country, country_size[np.maximum(country_index, 0)]
+    # One extra zero entry for the cells without a country (also when no cell has one).
+    country_size = np.r_[np.bincount(country_index[has_country], minlength=n_countries), 0]
+    n_country = np.where(has_country,
+                         country_size[np.where(has_country, country_index, n_countries)]
                          - 1 - same_country_nbr.sum(axis=1), 0)
     n_map = N - 1 - n_near - n_country
     return band_sizes, np.stack([np.ones(N, int), n_near, n_country, n_map])
