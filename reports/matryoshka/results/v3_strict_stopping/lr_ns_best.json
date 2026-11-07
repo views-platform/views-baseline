@@ -1,0 +1,66 @@
+{
+  "target": "lr_ns_best",
+  "dolls": [
+    "cell",
+    "ring1",
+    "ring2",
+    "country",
+    "map"
+  ],
+  "cutoffs": [
+    384,
+    396,
+    408,
+    420
+  ],
+  "horizon": 36,
+  "class_counts_in_history": {
+    "0": 21770087,
+    "1": 1783,
+    "2-5": 2934,
+    "6-25": 2557,
+    "26-100": 1170,
+    "101-1000": 307,
+    ">1000": 10
+  },
+  "references": {
+    "conflictology_36m": {
+      "score": -0.016381235048599355,
+      "floored": 5139
+    },
+    "cell_all_history": {
+      "score": -0.014774838680020125,
+      "floored": 4405
+    }
+  },
+  "start_score": -0.00565338207091418,
+  "fit": {
+    "weight": [
+      1.0,
+      1.2519810202923811,
+      0.4392652493032889,
+      2.3167244963573723,
+      0.3392923063815815
+    ],
+    "memory": [
+      14.57696374227683,
+      10.653109040451156,
+      14.215608533497955,
+      11.373105317064732,
+      26.15951583795493
+    ],
+    "score": -0.0054628403087007065,
+    "floored": 0,
+    "converged": true,
+    "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+    "evaluations": 44,
+    "steps": 29,
+    "seconds": 306.0
+  },
+  "timing_seconds": {
+    "load_all_targets": 6.7,
+    "doll_counts": 22.1,
+    "first_score_evaluation": 5.5
+  },
+  "peak_rss_gib": 5.86
+}

@@ -116,6 +116,23 @@ ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_sam
 RollingConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
+#### MatryoshkaConflictology — conflictology that also draws from a cell's surroundings
+
+Conflictology that chooses *which past observations to draw from* (ADR-024). Each draw is a value that was really observed, picked in three steps:
+1. a doll: the cell, its neighbourhood (within 5 cells, closer ones more likely), the rest of its country, or the rest of the map;
+2. a month, recent ones more likely;
+3. a cell in that doll.
+
+Each doll has a weight and a memory. The inner dolls forget faster, so the further ahead a forecast looks, the more it draws from the surroundings. A quiet cell is never forecast as *certainly* quiet unless its neighbourhood, its country and the world give no reason to expect conflict.
+
+The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length scale) are **fitted** by backtest on data up to `train_end`, not configured. The data moves with each rolling origin, as for `RollingConflictology`. It needs a complete grid-month panel with a country column (views-models' pgm input carries `c_id`), at least 120 months before the earliest backtest cutoff, and pgm level.
+
+```python
+MatryoshkaConflictology(targets, partition_dict, loa, n_samples, country_column, backtest_cutoffs, backtest_horizon, stability_refits, seed=42)
+```
+
+The notebook [`notebooks/matryoshka_conflictology.ipynb`](notebooks/matryoshka_conflictology.ipynb) explains what it does and how, and draws the plots when it is run (Jupyter; the synthetic part runs in seconds, the real-data part needs the calibration input pull).
+
 #### InterpolatedQuantileConflictology — smoothed climatology B
 
 `ConflictologyModel` with the positive part smoothed (ADR-023). The zero rate is the window's, exactly as in `ConflictologyModel`. A positive draw comes from the **linearly interpolated quantile function** of the window's positive values, rounded to a whole count. So it can draw the counts between the observed ones, but never beyond the smallest or largest. Cells with fewer than two distinct positive values are drawn as `ConflictologyModel` draws them, and counted in one warning.
@@ -160,7 +177,7 @@ catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
-#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology']
+#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'MatryoshkaConflictology']
 ```
 
 ---

@@ -33,6 +33,9 @@ dependencies = [
     # (tests/test_golden.py) pin numpy's gamma/poisson/choice Generator streams; the <3
     # ceiling matches siblings and those streams are stream-stable (NEP-19), see C-30.
     "numpy>=1.26,<3",
+    # scipy: sparse matrices and L-BFGS-B in MatryoshkaConflictology's knob search (ADR-024),
+    # and the distances in evaluation/closeness.py (used there before this was declared).
+    "scipy>=1.11,<2",
     # views-frames is the canonical home of PredictionFrame / SpatioTemporalIndex /
     # SpatialLevel, constructed at the single seam in model/frames/output.py (ADR-020).
     # Ceiling widened <2 -> <4 (#101): 3.0.0 fixes reconciliation dropping a country's

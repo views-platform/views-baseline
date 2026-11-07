@@ -4,6 +4,7 @@ from views_baseline.model.models.distributional import (
     EmpiricalKDEMixtureConflictology,
     InterpolatedQuantileConflictology,
     KDEConflictology,
+    MatryoshkaConflictology,
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
@@ -49,6 +50,7 @@ class BaselineModelCatalog:
             "KDEConflictology": self._get_kde,
             "EmpiricalKDEMixtureConflictology": self._get_empirical_kde_mixture,
             "RollingConflictology": self._get_rolling_conflictology,
+            "MatryoshkaConflictology": self._get_matryoshka,
         }
 
     @property
@@ -205,5 +207,20 @@ class BaselineModelCatalog:
             n_samples=self.config["n_samples"],
             alpha=self.config["alpha"],
             bandwidth=self.config["bandwidth"],
+            seed=self.config["seed"],
+        )
+
+    def _get_matryoshka(self):
+        # ADR-024; every key is a required, audited genome key (ADR-021). The knobs are fitted,
+        # not configured.
+        return MatryoshkaConflictology(
+            targets=self.targets,
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            country_column=self.config["country_column"],
+            backtest_cutoffs=self.config["backtest_cutoffs"],
+            backtest_horizon=self.config["backtest_horizon"],
+            stability_refits=self.config["stability_refits"],
             seed=self.config["seed"],
         )
