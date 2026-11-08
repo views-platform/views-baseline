@@ -29,6 +29,7 @@ from views_baseline.model.models.distributional.matryoshka.geometry import (
     BAND_DISTANCE,
     OFFSET_BAND,
     Geometry,
+    in_a_country,
 )
 from views_baseline.model.models.distributional.matryoshka.size_classes import N_CLASSES
 
@@ -81,7 +82,7 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
         raise ValueError(f"classes {classes.shape} do not match months × cells "
                          f"({months.size}, {geo.cells.size}).")
     nbr = geo.neighbours
-    has_country = geo.country > 0
+    has_country = in_a_country(geo.country)
     country_index, n_countries = group_index(geo.country, has_country)
 
     s, j = np.nonzero(classes > 0)                       # the non-zero cell-months
@@ -125,7 +126,7 @@ def shell_sizes(geo: Geometry) -> tuple[np.ndarray, np.ndarray]:
     order. The panel is complete, so neither changes over time."""
     nbr = geo.neighbours
     N = nbr.shape[0]
-    has_country = geo.country > 0
+    has_country = in_a_country(geo.country)
     country_index, n_countries = group_index(geo.country, has_country)
     band_sizes = np.stack([((nbr >= 0) & (OFFSET_BAND[None, :] == b)).sum(axis=1)
                            for b in range(BAND_DISTANCE.size)])

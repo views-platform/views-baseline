@@ -60,7 +60,10 @@ def synthetic_grid(seed=0, n_rows=16, n_cols=22, holes=(40, 41, 63, 150, 151, 20
     cells = np.sort(cells[~np.isin(cells, cells[list(holes)])])
     c = (cells - 1) % N_COLS
     country = np.where(c < 200 + n_cols // 2, 7, 9)
-    country[[3, cells.size // 2, cells.size - 4]] = 0     # three cells without a country, apart
+    # Three cells without a country, apart. The real data codes "no country" as -1; 0 is kept
+    # too, since the rule (in_a_country) treats every non-positive code the same.
+    country[[3, cells.size // 2]] = -1
+    country[cells.size - 4] = 0
     return cells, country
 
 
@@ -225,13 +228,49 @@ def test_row_lookup_never_overflows_onto_a_zero_probability_entry():
     0, so the search must stop at index 3, in every row of a 256-row block."""
     from views_baseline.model.models.distributional.matryoshka.draw import (
         _cdf,
+        _cdf_on_grid,
         _row_searchsorted,
+        _uniforms_on_grid,
     )
 
-    table = _cdf(np.tile([1.0, 1.0, 1.0, 1.0, 0.0], (256, 1)))
-    u = np.full((256, 1), np.nextafter(1.0, 0.0))
-    got = _row_searchsorted(table, np.arange(256), u, 2.0, np.full(256, 3))
+    table = _cdf_on_grid(_cdf(np.tile([1.0, 1.0, 1.0, 1.0, 0.0], (256, 1))))
+    u = _uniforms_on_grid(np.full(256, np.nextafter(1.0, 0.0)))
+    got = _row_searchsorted(table, np.arange(256), u, np.full(256, 4))
     np.testing.assert_array_equal(got, 3)
+
+
+def test_row_search_is_exact_and_ignores_where_a_row_sits():
+    """Code review #147, finding 4: the pick for a row must equal a plain per-row search of
+    u ≥ cdf, for uniforms on rng.random's grid, including u exactly on a CDF entry, whatever
+    the row's position and however many rows are searched together."""
+    from views_baseline.model.models.distributional.matryoshka.draw import (
+        UNIFORM_STEPS,
+        _cdf,
+        _cdf_on_grid,
+        _row_searchsorted,
+        _uniforms_on_grid,
+    )
+
+    rng = np.random.default_rng(11)
+    R, W = 70_000, 9
+    cdf = _cdf(rng.random((R, W)) * (rng.random((R, W)) < 0.7))
+    rows = rng.integers(0, R, 50_000)
+    u = rng.random(rows.size)
+    on_entry = rng.random(rows.size) < 0.3       # some u exactly on a CDF entry
+    entry = cdf[rows, rng.integers(0, W, rows.size)]
+    u[on_entry] = np.floor(entry[on_entry] * UNIFORM_STEPS) / UNIFORM_STEPS
+    u = np.minimum(u, np.nextafter(1.0, 0.0))
+    expected = np.array([np.searchsorted(cdf[r], x, side="right") for r, x in zip(rows, u)])
+    last = W - 1 - np.argmax((cdf > 0)[:, ::-1], axis=1)
+    expected = np.minimum(expected, last[rows])
+    table = _cdf_on_grid(cdf)
+    np.testing.assert_array_equal(
+        _row_searchsorted(table, rows, _uniforms_on_grid(u), last), expected)
+    # The same rows moved to the far end of a much larger table give the same answers.
+    big = np.vstack([np.zeros((3 * R, W), dtype=np.int64), table])
+    np.testing.assert_array_equal(
+        _row_searchsorted(big, rows + 3 * R, _uniforms_on_grid(u), np.r_[np.zeros(3 * R, int),
+                                                                         last]), expected)
 
 
 def test_a_panel_where_no_cell_has_a_country_still_works():
@@ -526,7 +565,7 @@ def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid
     values = _encoded(months, cells.size)
     s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
     S = 40_000
-    no_country = int(np.nonzero(country == 0)[0][0])
+    no_country = int(np.nonzero(country <= 0)[0][0])
     second_country = int(np.nonzero(country == 9)[0][-1])     # its block does not start at 0
     for i in {int(np.argmax(shells[NEAR].sum(1))), 0, no_country, second_country}:
         if not shells[doll][i].any():
@@ -544,7 +583,7 @@ def test_a_cell_without_a_country_never_picks_the_country_doll(grid):
              "length_scale": 1.7}
     s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
                       build_shell_tables(geo))
-    for i in np.nonzero(country == 0)[0]:
+    for i in np.nonzero(country <= 0)[0]:
         p = np.diff(np.r_[0.0, s.doll_cdf(np.array([i]), np.array([1]))[0, 0]])
         assert p[COUNTRY] == 0.0
 
@@ -798,3 +837,112 @@ def test_start_score_is_the_score_at_the_starting_values(planted, fitted):
     expected = obj.score(START_WEIGHT, START_MEMORY, START_LENGTH)[0]
     assert fitted.knobs["y"]["start_score"] == pytest.approx(expected, rel=1e-12)
     assert fitted.knobs["y"]["start_score"] < fitted.knobs["y"]["score"]
+
+
+# ── code review #147 ────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("setting, value", [
+    ("n_samples", 0), ("n_samples", True), ("n_samples", 2.0),
+    ("backtest_cutoffs", 0), ("backtest_cutoffs", 2.0), ("backtest_cutoffs", True),
+    ("backtest_horizon", 6.0), ("seed", -1), ("seed", 1.5),
+    ("stability_refits", "False"), ("stability_refits", 0), ("country_column", 3),
+])
+def test_settings_are_type_checked_at_construction(setting, value):
+    with pytest.raises(ValueError, match=setting):
+        _model(**{setting: value})
+
+
+def test_targets_must_not_be_empty():
+    with pytest.raises(ValueError, match="targets must not be empty"):
+        MatryoshkaConflictology(targets=[], partition_dict=PARTITION, loa="pgm", **CONFIG)
+
+
+def test_predict_rejects_an_empty_forecast(planted, fitted):
+    *_, df = planted
+    with pytest.raises(ValueError, match="output_length must be >= 1"):
+        fitted.predict(df, 0, 0)
+
+
+@pytest.mark.parametrize("bad, message", [(1.5, "non-integer value"),
+                                          (np.inf, "infinite value")])
+def test_fails_loud_on_a_target_that_is_not_a_count(planted, bad, message):
+    *_, df = planted
+    broken = df.copy()
+    broken.iloc[7, 0] = bad
+    with pytest.raises(ValueError, match=f"{message} in target 'y'"):
+        _model().fit(broken)
+
+
+@pytest.mark.parametrize("bad, message", [(np.inf, "infinite"), (2.5, "non-integer")])
+def test_classify_rejects_values_that_are_not_counts(bad, message):
+    with pytest.raises(ValueError, match=message):
+        classify(np.array([0.0, 3.0, bad]))
+
+
+def test_fit_logs_the_knobs_and_warns_when_the_search_stops_early(planted, monkeypatch, caplog):
+    import logging
+
+    from views_baseline.model.models.distributional.matryoshka import knob_fit
+
+    *_, df = planted
+    monkeypatch.setitem(knob_fit.SEARCH_OPTIONS, "maxiter", 1)
+    with caplog.at_level(logging.INFO):
+        m = _model().fit(df)
+    assert not m.knobs["y"]["converged"]
+    messages = [(r.levelno, r.getMessage()) for r in caplog.records]
+    assert any(lv == logging.INFO and "MatryoshkaConflictology y: weight" in s
+               for lv, s in messages)
+    assert any(lv == logging.WARNING and "did not converge" in s for lv, s in messages)
+
+
+def test_fit_warns_when_probabilities_hit_the_floor(caplog):
+    import logging
+
+    from views_baseline.model.models.distributional.matryoshka.model import _log_fit
+
+    knobs = {"weight": [1.0] * 4, "memory": [1.0] * 4, "length_scale": 1.0, "score": -1.0,
+             "start_score": -2.0, "steps": 3, "seconds": 1.0, "converged": True,
+             "message": "ok", "floored": 5}
+    with caplog.at_level(logging.INFO):
+        _log_fit("y", knobs)
+    assert any(r.levelno == logging.WARNING and "5 backtest probabilities fell below the floor"
+               in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        _log_fit("y", {**knobs, "floored": 0})
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_each_target_draws_with_its_own_knobs(planted):
+    """Code review #147, finding 7. Target z has cell-only knobs, so its draws for a cell come
+    from that cell's own history; target y puts its weight on the neighbourhood. Values encode
+    their cell, so a draw shows which cell it came from. Using one target's knobs for the other
+    breaks one of the two assertions."""
+    cells, country, months, _, _ = planted
+    hist = months <= TRAIN_END
+    values = _encoded(months, cells.size)
+    df = to_df(cells, country, months, values, targets=("y", "z"))
+    m = MatryoshkaConflictology(targets=["y", "z"], partition_dict=PARTITION, loa="pgm",
+                                **CONFIG)
+    m.knobs = {"y": {"weight": [1e-6, 1.0, 1e-6, 1e-6], "memory": [12.0] * 4,
+                     "length_scale": 2.0},
+               "z": {"weight": [1.0, 0.0, 0.0, 0.0], "memory": [12.0] * 4,
+                     "length_scale": 2.0}}
+    m.entity_ids, m.country, m.history_start = cells, country, int(months[0])
+    out = m.predict(df[df.index.get_level_values("month_id") <= TRAIN_END], 0, 2)
+    source = {t: out[t].values.reshape(cells.size, -1).astype(np.int64) % cells.size
+              for t in ("y", "z")}
+    own = np.arange(cells.size)[:, None]
+    assert (source["z"] == own).all(), "z (cell only) drew from another cell"
+    assert (source["y"] != own).mean() > 0.9, "y (neighbourhood) drew mostly from its own cell"
+    assert hist.any()
+
+
+def test_predict_names_the_cells_that_were_not_fitted(planted, fitted):
+    cells, country, months, values, _ = planted
+    extra = np.r_[cells, cells[-1] + 1]
+    df = to_df(extra, np.r_[country, country[-1]], months,
+               np.hstack([values, np.zeros((months.size, 1))]))
+    with pytest.raises(ValueError, match=rf"Cells not fitted on: \[{extra[-1]}\]"):
+        fitted.predict(df, 0, 2)

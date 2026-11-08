@@ -481,7 +481,9 @@ month ahead as three years ahead.
 
 - The new class goes in `views_baseline/model/models/distributional/`, registered in the model catalog,
   with explicit configuration keys and no hidden defaults (ADR-021).
-- How much history and the backtest design are configuration. The dolls, the 5-cell neighbourhood
+- The backtest design is configuration. The history is not: it is all the data passed, from its first
+  month (recorded at fit as `history_start`, and checked at predict). How much history to use is
+  decided by the input pull, not by a setting. The dolls, the 5-cell neighbourhood
   radius, the size classes and the knob limits are fixed by this ADR, not configured. The fitted knob
   values are stored on the model and reported, not configured.
 - Neighbours are computed from `priogrid_id`. Each doll is a shell that excludes the dolls inside it.

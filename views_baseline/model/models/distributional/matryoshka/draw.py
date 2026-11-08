@@ -28,12 +28,17 @@ from views_baseline.model.models.distributional.matryoshka.doll_counts import (
     COUNTRY,
     DOLLS,
     MAP,
+    NEAR,
     group_index,
     shell_sizes,
+)
+from views_baseline.model.models.distributional.matryoshka.forecast_probability import (
+    time_weights,
 )
 from views_baseline.model.models.distributional.matryoshka.geometry import (
     OFFSET_DISTANCE,
     Geometry,
+    in_a_country,
 )
 
 
@@ -76,7 +81,7 @@ def _stretch_table(starts: np.ndarray, lengths: np.ndarray, pad: int):
 def build_shell_tables(geo: Geometry) -> ShellTables:
     N = geo.cells.size
     nbr = geo.neighbours
-    has_country = geo.country > 0
+    has_country = in_a_country(geo.country)
     country_index, _ = group_index(geo.country, has_country)
     # Country-major order: cells with a country, grouped by country; then the cells without one.
     key = np.where(has_country, country_index, np.iinfo(np.int64).max)
@@ -117,22 +122,48 @@ def build_shell_tables(geo: Geometry) -> ShellTables:
                        map_kept_before=map_kept_before, map_skip=map_skip, sizes=sizes)
 
 
-def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray, span: float,
-                      last: np.ndarray) -> np.ndarray:
-    """``searchsorted(table[rows[b]], x[b, ...], side="right")`` for every b at once, capped at
-    ``last[rows[b]]``.
+# rng.random() returns k / 2**53, so u · 2**53 = k is an exact integer, and for any float c in
+# [0, 1]: c ≤ u exactly when ceil(c · 2**53) ≤ k (scaling by a power of two is exact). The
+# searches below compare these integers, so a draw depends only on its own uniform and its own
+# row: never on rounding, on the block it is drawn in, or on its position there (code review
+# #147, finding 4).
+UNIFORM_STEPS = 2 ** 53
 
-    Each row of ``table`` is ascending with values in [0, span); rows are shifted apart by
-    ``span`` so that one search over the flattened table answers every row. For a CDF row, the
-    shift costs precision: ``u + shift`` can round up onto the row's final 1.0 and run past it
-    (code review of 702f17d). ``last`` (the row's last index with positive probability) caps
-    that, so the overflow lands on the entry it should have, never on a zero-probability one.
+
+def _uniforms_on_grid(u: np.ndarray) -> np.ndarray:
+    """k = u · 2**53 as int64 (exact for rng.random's uniforms; rounded down otherwise)."""
+    return np.floor(np.asarray(u, dtype=np.float64) * UNIFORM_STEPS).astype(np.int64)
+
+
+def _cdf_on_grid(c: np.ndarray) -> np.ndarray:
+    """ceil(c · 2**53) as int64, for CDF entries c in [0, 1]: entry ≤ k exactly when c ≤ u."""
+    return np.ceil(np.asarray(c, dtype=np.float64) * UNIFORM_STEPS).astype(np.int64)
+
+
+def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray,
+                      last: np.ndarray) -> np.ndarray:
+    """``min(searchsorted(table[rows[b]], x[b], side="right"), last[rows[b]])`` for every b.
+
+    ``table`` (R, W): int64, each row ascending and ≥ 0; ``rows``, ``x``: int64, same shape;
+    ``last`` (R,). Each row is shifted into its own integer range, so one search answers every
+    element, exactly. Rows are taken in chunks small enough for the shifted values to stay in
+    int64; the chunking cannot change the answer.
     """
-    width = table.shape[1]
-    flat = (table + span * np.arange(table.shape[0])[:, None]).ravel()
-    rows_b = rows.reshape(rows.shape + (1,) * (x.ndim - rows.ndim))
-    i = np.searchsorted(flat, x + span * rows_b, side="right") - width * rows_b
-    return np.minimum(i, last[rows_b])
+    rows, x = np.asarray(rows, dtype=np.int64), np.asarray(x, dtype=np.int64)
+    out = np.empty(x.shape, dtype=np.int64)
+    if x.size == 0:
+        return out
+    R, W = table.shape
+    span = int(max(table.max(initial=0), x.max())) + 1
+    chunk = max(1, (2 ** 62) // span // 2)
+    for r0 in range(0, R, chunk):
+        sel = (rows >= r0) & (rows < r0 + chunk) if R > chunk else slice(None)
+        local = rows[sel] - r0
+        part = table[r0:r0 + chunk]
+        flat = (part + span * np.arange(part.shape[0], dtype=np.int64)[:, None]).ravel()
+        i = np.searchsorted(flat, x[sel] + span * local, side="right") - W * local
+        out[sel] = np.minimum(i, last[r0:r0 + chunk][local])
+    return out
 
 
 def kept_positions(pick: np.ndarray, rows: np.ndarray, kept_before: np.ndarray,
@@ -141,14 +172,15 @@ def kept_positions(pick: np.ndarray, rows: np.ndarray, kept_before: np.ndarray,
 
     The j-th kept position is j plus the total length of the excluded stretches before it:
     with r = the number of stretches whose ``kept_before`` ≤ j, that is ``skip[r − 1]``.
-    ``pick`` is (B, ...); ``rows`` (B,); ``kept_before``/``skip`` (N, E) as `ShellTables`.
+    ``pick`` is (B, ...); ``rows`` (B, ...) broadcastable to it from the left;
+    ``kept_before``/``skip`` (R, E) as `ShellTables`.
     """
-    # Integers: exact in float64 at these sizes, so no rounding and no cap needed beyond E.
-    span = float(kept_before.max()) + 1.0
-    r = _row_searchsorted(kept_before[rows], np.arange(rows.size), pick, span,
-                          np.full(rows.size, kept_before.shape[1]))
-    where = rows.reshape(rows.shape + (1,) * (pick.ndim - 1))
-    return pick + np.where(r > 0, skip[where, np.maximum(r - 1, 0)], 0)
+    pick = np.asarray(pick, dtype=np.int64)
+    rows = np.asarray(rows, dtype=np.int64)
+    rows = np.broadcast_to(rows.reshape(rows.shape + (1,) * (pick.ndim - rows.ndim)), pick.shape)
+    E = kept_before.shape[1]
+    r = _row_searchsorted(kept_before, rows, pick, np.full(kept_before.shape[0], E))
+    return pick + np.where(r > 0, skip[rows, np.maximum(r - 1, 0)], 0)
 
 
 def _cdf(p: np.ndarray) -> np.ndarray:
@@ -168,16 +200,17 @@ def _cdf(p: np.ndarray) -> np.ndarray:
 class Sampler:
     """Everything one violence type needs to draw, for one history end c.
 
-    ``values`` (M, N): the history panel, months ascending, ending at c. ``month_cdf`` (D, M):
-    step 2 per doll. ``near_cdf`` (N, n_offsets): step 3 for the neighbourhood (zero row for an
-    empty neighbourhood). ``weight``, ``memory`` (D,): step 1.
+    ``values`` (M, N): the history panel, months ascending, ending at c. ``month_grid`` (D, M):
+    step 2's CDF per doll, and ``near_grid`` (N, n_offsets) step 3's for the neighbourhood (zero
+    row for an empty neighbourhood), both as `_cdf_on_grid` integers. ``weight``, ``memory``
+    (D,): step 1.
     """
 
     values: np.ndarray
     weight: np.ndarray
     memory: np.ndarray
-    month_cdf: np.ndarray
-    near_cdf: np.ndarray
+    month_grid: np.ndarray
+    near_grid: np.ndarray
     near_last: np.ndarray       # (N,) last neighbour offset with positive weight (0 if none)
     neighbours: np.ndarray
     shells: ShellTables
@@ -191,32 +224,34 @@ class Sampler:
     def draw(self, cells: np.ndarray, h: np.ndarray, u: np.ndarray) -> np.ndarray:
         """Forecast draws (B, T, S) for cells (B,) at months ahead h (T,), from uniforms
         u (B, T, 3, S): u[..., 0, :] picks the doll, u[..., 1, :] the month, u[..., 2, :] the
-        cell. Every sample uses its own three uniforms, whatever the knobs."""
+        cell. Every sample uses its own three uniforms, whatever the knobs. Each sample's cell is
+        worked out only for the doll it picked."""
         cells = np.asarray(cells, dtype=np.int64)
         sh = self.shells
-        B = cells.size
+        B, T, _, S = u.shape
         doll = (u[:, :, 0, :, None] >= self.doll_cdf(cells, h)[:, :, None, :]).sum(axis=-1)
-        doll = np.minimum(doll, len(DOLLS) - 1)                    # u < 1 ≤ the last cdf entry
-        month = _row_searchsorted(self.month_cdf, doll, u[:, :, 1, :], 2.0,
-                                  np.full(len(DOLLS), self.month_cdf.shape[1] - 1))
-        rows = np.broadcast_to(cells[:, None, None], doll.shape)
-        o = _row_searchsorted(self.near_cdf[cells], np.arange(B), u[:, :, 2, :], 2.0,
+        doll = np.minimum(doll, len(DOLLS) - 1).ravel()           # u < 1 ≤ the last cdf entry
+        u_month = _uniforms_on_grid(u[:, :, 1, :]).ravel()
+        u_cell = u[:, :, 2, :].ravel()
+        month = _row_searchsorted(self.month_grid, doll, u_month,
+                                  np.full(len(DOLLS), self.month_grid.shape[1] - 1))
+        b = np.repeat(np.arange(B), T * S)                 # each sample's cell, in the block
+        cell = cells[b]
+        j = cell.copy()                                            # the cell doll
+        m = doll == NEAR
+        o = _row_searchsorted(self.near_grid[cells], b[m], _uniforms_on_grid(u_cell[m]),
                               self.near_last[cells])
-        near = self.neighbours[rows, o]
-
-        def uniform_in(k, kept_before, skip):
-            """Position of a uniform pick from shell k, for every sample."""
-            size = sh.sizes[k, cells].astype(np.int64)[:, None, None]
-            pick = np.minimum((u[:, :, 2, :] * size).astype(np.int64), np.maximum(size - 1, 0))
-            return kept_positions(pick, cells, kept_before, skip)
-
-        country = sh.order[np.minimum(
-            sh.block_start[cells][:, None, None]
-            + uniform_in(COUNTRY, sh.country_kept_before, sh.country_skip), sh.order.size - 1)]
-        world = sh.order[np.minimum(uniform_in(MAP, sh.map_kept_before, sh.map_skip),
-                                    sh.order.size - 1)]
-        j = np.choose(doll, [rows, near, country, world])
-        return self.values[month, j]
+        j[m] = self.neighbours[cell[m], o]
+        for k, kept_before, skip, offset in (
+                (COUNTRY, sh.country_kept_before, sh.country_skip, sh.block_start),
+                (MAP, sh.map_kept_before, sh.map_skip, np.zeros_like(sh.block_start))):
+            m = doll == k
+            size = sh.sizes[k, cell[m]].astype(np.int64)
+            pick = np.minimum((u_cell[m] * size).astype(np.int64), np.maximum(size - 1, 0))
+            pos = offset[cells][b[m]] + kept_positions(pick, b[m], kept_before[cells],
+                                                       skip[cells])
+            j[m] = sh.order[pos]
+        return self.values[month, j].reshape(B, T, S)
 
 
 def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs: dict,
@@ -227,13 +262,15 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
         raise ValueError(f"the history must end at month {last_month}, got {months[-1]}.")
     weight = np.asarray(knobs["weight"], dtype=np.float64)
     memory = np.asarray(knobs["memory"], dtype=np.float64)
-    age = (last_month - months).astype(np.float64)
-    month_w = np.stack([np.ones_like(age) if np.isinf(m) else np.exp(-age / m) for m in memory])
+    # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
+    # the score cannot drift apart (code review #147, finding 9).
+    month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
     near_w = np.where(geo.neighbours >= 0,
                       np.exp(-OFFSET_DISTANCE / float(knobs["length_scale"]))[None, :], 0.0)
     has_near = near_w > 0
     near_last = np.where(has_near.any(axis=1),
                          near_w.shape[1] - 1 - np.argmax(has_near[:, ::-1], axis=1), 0)
-    return Sampler(values=values, weight=weight, memory=memory, month_cdf=_cdf(month_w),
-                   near_cdf=_cdf(near_w), near_last=near_last, neighbours=geo.neighbours,
-                   shells=shells)
+    return Sampler(values=values, weight=weight, memory=memory,
+                   month_grid=_cdf_on_grid(_cdf(month_w)),
+                   near_grid=_cdf_on_grid(_cdf(near_w)), near_last=near_last,
+                   neighbours=geo.neighbours, shells=shells)

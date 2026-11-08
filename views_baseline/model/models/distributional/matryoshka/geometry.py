@@ -39,12 +39,18 @@ class Geometry:
 
     ``neighbours[i, o]`` is the index (into ``cells``) of the cell at offset o (OFFSET_DROW/DCOL,
     distance OFFSET_DISTANCE, band OFFSET_BAND) from cell i, or -1 if no such cell is in the data.
-    ``country[i]`` is the GAUL country code (``c_id``); ≤ 0 means the cell has no country.
+    ``country[i]`` is the GAUL country code (``c_id``); see `in_a_country`.
     """
 
     cells: np.ndarray        # (N,) priogrid_id, ascending
     country: np.ndarray      # (N,) GAUL country code
     neighbours: np.ndarray   # (N, n_offsets) cell index or -1
+
+
+def in_a_country(country: np.ndarray) -> np.ndarray:
+    """Whether each cell belongs to a country: a positive GAUL code. The real data codes "no
+    country" as -1; 0 and other non-positive codes are treated the same."""
+    return np.asarray(country) > 0
 
 
 def build_geometry(cells: np.ndarray, country: np.ndarray) -> Geometry:

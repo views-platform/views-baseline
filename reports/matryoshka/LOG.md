@@ -770,3 +770,16 @@ The full suite: 565 passed, 1 xfailed.
 - **PR #145** (the model, the notebook, no graphics) goes to development; CI is green. #143 is closed.
 - **PR #146** (`release/1.3.0`, the bump 1.2.0 → 1.3.0) is to be merged after #145. Goldens pass (5), and the full suite: 595 passed, 1 xfailed.
 - **views-models#717** is the stage-4 evaluation model next to `plain_burlap` and `rolling_burlap`. The config drops `window_months` and adds `country_column: c_id`, `backtest_cutoffs: 4`, `backtest_horizon: 36` and `stability_refits: True`. It is not to start before 1.3.0 is on PyPI.
+
+## 2026-11-09: saved artifacts (#148)
+
+The baseline manager refits in evaluate and forecast, and ignores `--artifact_name` (#147, finding 1). views-hydranet, views-r2darts2 and views-stepshifter all load the named artifact, or else the latest one. Decision (Simon): Matryoshka gets one load function in the hydranet style, and the artifact flag is an error for models without an artifact. Filed as #148. It is separate from PR #145.
+
+## 2026-11-09: code review #147 fixed on PR #145
+
+- **Draw (findings 4, 9, 13).** The row search now compares whole numbers: k = u · 2^53 (exact for rng.random) against ceil(cdf · 2^53). So a pick depends only on its own uniform and row, never on its position in a block. The new test caught a first version that rounded the CDF down. The month step reuses `time_weights`. Each sample works out a cell only for the doll it picked. Same synthetic grid (8,000 cells × 36 months × 256 samples): 15.5 s before, 11.7 s after. Real data not re-timed.
+- **Checks (2, 5, 6).** Inf and non-integer targets are rejected (in the model and in `classify`). Settings are type-checked at construction; empty targets and `output_length < 1` fail loudly.
+- **Logging (3).** INFO per target with the knobs and score; WARNING on non-convergence or floored probabilities.
+- **Tests (7, 8, 10, 11).** Per-target knobs; a golden for the draw path; one has-a-country rule (`in_a_country`), with -1 in the fixtures; the C-34 exception pinned in test_dual_input.
+- **Docs (12, 14, 15, low).** "Opens outward" is a finding, not a property (one-sided: near memory 14 < cell 23). ADR-002 rule 3 now allows scipy. ADR-024: the history is the data, not a setting. ADR-001 and the Rolling CIC no longer say "only baseline after train_end". CIC cost numbers corrected (616 s, 4.3 GiB, 41 s). output.py docstring. A test that notebooks have no outputs. Input arrays freed before the draw. The unfitted-cell message names the cells.
+- Finding 1 moved to #148.

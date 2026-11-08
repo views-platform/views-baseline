@@ -110,15 +110,17 @@ def sample_prediction_grid(
 ) -> dict[str, "PredictionFrame"]:
     """Shared distributional-model predict scaffold (ADR-011/ADR-020).
 
-    Every distributional baseline shares one shell — build the (entity, time) grid, drop
-    entities without fitted state (``fitted_state``), then fill an ``(N, n_samples)`` array
-    in **entity→time→target** order from a single seeded RNG — differing only in the per-cell
-    draw. ``draw_cell(cid, target, rng)`` returns the ``(n_samples,)`` draw for one cell and
-    is called once per (entity, time, target), so the RNG advances identically for every
-    model (the reproducibility contract, ADR-011). The ``level`` is resolved once at the
-    model's input boundary (``to_feature_frame``) and passed in. Output routes through the
-    single ``to_prediction_frames`` seam (ADR-020). The distributional analogue of
-    :func:`build_prediction_frame` (which fills constants for point models).
+    Every distributional baseline except ``MatryoshkaConflictology`` (which draws whole blocks
+    of cells at once, in the same RNG order: ADR-024) shares one shell — build the (entity,
+    time) grid, drop entities without fitted state (``fitted_state``), then fill an
+    ``(N, n_samples)`` array in **entity→time→target** order from a single seeded RNG —
+    differing only in the per-cell draw. ``draw_cell(cid, target, rng)`` returns the
+    ``(n_samples,)`` draw for one cell and is called once per (entity, time, target), so the
+    RNG advances identically for every model (the reproducibility contract, ADR-011). The
+    ``level`` is resolved once at the model's input boundary (``to_feature_frame``) and passed
+    in. Output routes through the single ``to_prediction_frames`` seam (ADR-020). The
+    distributional analogue of :func:`build_prediction_frame` (which fills constants for point
+    models).
     """
     time_ids = build_time_grid(test_start, sequence_number, output_length)
     entities = filter_entities(entity_ids, fitted_state, model_name)

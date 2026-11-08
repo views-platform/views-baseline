@@ -16,8 +16,11 @@ observed. It is picked in three steps:
 1. **A doll:** the cell itself, its neighbourhood (cells within 5 grid cells, closer ones more
    likely), the rest of its country, or the rest of the map. Doll `k` is picked ∝
    `weight[k] · exp(−h / memory[k])`, where `h` is how many months after the last observed month the
-   forecast month lies. Inner dolls forget faster, so the forecast opens outward as it looks further
-   ahead.
+   forecast month lies. Each doll's share changes with `h` at its own rate: the dolls with the longest
+   memories gain share as the forecast looks further ahead. The fitted memories decide which those
+   are. The ADR expected the inner dolls to forget fastest, so that the forecast would open outward;
+   the fitted knobs do not always do that (one-sided violence: the neighbourhood's memory, about 14
+   months, is shorter than the cell's, about 23). This is a finding, not a property of the model.
 2. **A month** ∝ `exp(−(c − s) / memory[k])`, over every history month `s` up to the last observed
    month `c`.
 3. **A cell in that doll:** a neighbour at distance `d` ∝ `exp(−d / ℓ)`; uniform within the country
@@ -105,11 +108,17 @@ cell has weight, nothing fades, and the history is the last 36 months.
 **Assumption:** in the pipeline's evaluation runs, the `df` passed to `predict` holds the observed months
 up to `train_end + k` for every cell, as for `RollingConflictology`.
 
+**Exception to C-34.** The other baselines' `predict` reads only the index (level and entities), never
+the target values (C-34, `tests/test_dual_input.py`). This one reads the targets, because origin `k`
+draws from the history up to `train_end + k`. A frame without the target columns fails loudly by name
+(`test_matryoshka_predict_needs_its_target_columns`).
+
 **Cost**, measured 2026-11-07 at pgm `land` on the pinned calibration input
-(`reports/matryoshka/results/package_check.json`):
-- **Fit,** three targets, no stability refits: 621 s, with a peak of 5.4 GiB. Stability refits multiply
+(`reports/matryoshka/results/package_check.json`; the draw was changed after this, in #147, and has
+not been re-timed):
+- **Fit,** three targets, no stability refits: 616 s, with a peak of 4.3 GiB. Stability refits multiply
   the search time by about 5.
-- **Predict,** one origin, all cells, 36 months: 35 s for one target at S = 64. Draw time scales with
+- **Predict,** one origin, all cells, 36 months: 41 s for one target at S = 64. Draw time scales with
   targets × S, so the full 3 targets × S = 256 is roughly 7 minutes per origin.
 - **Output:** the output alone is about 7 GB per origin at that size, the same as conflictology's.
 
@@ -121,15 +130,16 @@ up to `train_end + k` for every cell, as for `RollingConflictology`.
 |---|---|---|
 | A missing or duplicated cell-month, or non-consecutive months, up to `train_end` (fit) or `c` (predict) | `ValueError` with counts | The shells and their sizes assume a complete panel. |
 | NaN in a target or the country column | `ValueError` naming the column, a cell and a month | |
-| A negative target value | `ValueError` naming the cell and month (and `classify` refuses negatives) | A negative value would otherwise index the largest size class and silently bias the fit. |
+| A negative, infinite or non-integer target value | `ValueError` naming the cell and month (and `classify` refuses all three) | Such a value would otherwise be binned silently (a negative one as the largest size class) and bias the fit. |
 | Predict data starting at a different month from the fit history | `ValueError` naming both months | The history is all the data passed, so a different start would draw from a different distribution than the one fitted. |
 | A cell's country changes over time, or is not an integer | `ValueError` | |
 | Fewer than 120 months before the earliest cutoff | `ValueError` with the months available | ADR-024: at least 10 years. |
 | `stability_refits` with a single cutoff | `ValueError` | |
 | `loa` other than `pgm` | `ValueError` at fit | |
-| `predict` before `fit`; `sequence_number < 0`; data ending before `c`; different cells from fit | `ValueError` | |
-| `country_column` among the targets | `ValueError` at construction | |
-| The search stops without converging | **Not raised.** `knobs[t]["converged"]` is False and `message` says why | Reported, not hidden; the evaluation report shows it. |
+| `predict` before `fit`; `sequence_number < 0`; `output_length < 1`; data ending before `c` | `ValueError` | |
+| Different cells from fit | `ValueError` naming up to 5 unfitted and 5 missing cells | A cell that appears after `train_end` has no fitted country or shells. |
+| `country_column` among the targets; empty `targets`; a setting of the wrong type or range (a bool or float count, a string for `stability_refits`, `n_samples < 1`, a negative seed) | `ValueError` at construction, naming the setting | ADR-008. |
+| The search stops without converging, or backtest probabilities hit the floor | **Not raised.** A WARNING per target; `knobs[t]["converged"]`, `message` and `floored` keep the details | The knobs and scores of every fit are logged at INFO. |
 
 ---
 
@@ -194,8 +204,8 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 | `test_exact_slope_matches_nudged_differences` | The exact slope equals nudged differences (rtol 1e-6, no absolute slack). |
 | `test_kept_positions_skip_excluded_stretches`, `test_sampler_shells_are_exactly_the_brute_force_shells` | The sampler's uniform shell picks reach exactly the brute-force country and map shells, each cell once. |
 | `test_sampler_matches_the_exact_probabilities` (h = 1, 12) | What predict draws equals what the fit scores. |
-| `test_forecast_opens_outward_with_distance` | The cell's share shrinks and the map's grows with `h`. |
-| `test_row_lookup_never_overflows_onto_a_zero_probability_entry` | The largest uniform `rng.random` returns, in the last row of a 256-row block, stops at the last positive entry. |
+| `test_forecast_opens_outward_with_distance` | With memories that grow outward (set, not fitted), the cell's share shrinks and the map's grows with `h`. |
+| `test_row_lookup_never_overflows_onto_a_zero_probability_entry`, `test_row_search_is_exact_and_ignores_where_a_row_sits` | The row search compares whole numbers: it equals a plain per-row search of `u ≥ cdf` (also for `u` exactly on an entry), stops at the last positive entry, and gives the same answer wherever the row sits in the table. |
 | `test_a_panel_where_no_cell_has_a_country_still_works` | Counts, shares and draws with no country at all. |
 | `test_special_case_is_conflictology_with_a_moving_window` | Cell only, no fading, 36 months: draws are uniform over the cell's last 36 values. |
 | `test_fit_beats_the_cell_only_special_case_on_a_planted_neighbour_effect` | On data with spreading hotspots, the fit converges, beats the cell-only case, and gives the neighbourhood weight. |
@@ -209,6 +219,10 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 | `test_the_120_month_history_boundary`, `test_stability_refits_are_searches_without_the_left_out_cutoff`, `test_outcomes_are_the_months_after_each_cutoff`, `test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells` | The history boundary exactly, the refits, the scored months, and that fit and sampler use the same doll mix with empty shells. |
 | `test_near_last_is_each_cells_farthest_present_neighbour`, `test_predict_rejects_a_negative_value_in_its_history`, `test_start_score_is_the_score_at_the_starting_values` | The overflow cap's per-cell limit, predict's own negative check, and the reported starting score. |
 | `test_geometry_wraps_columns_at_the_date_line`, `test_geometry_rejects_unsorted_cells`, `test_fails_loud_on_duplicate_cell_months`, `test_fails_loud_on_non_consecutive_months`, `test_fails_loud_on_a_non_integer_country_code`, `test_fails_loud_when_the_data_ends_before_train_end`, `test_nan_in_the_predict_history_is_named`, `test_fit_names_nan_before_classifying`, `test_predict_fails_loud_on_same_count_but_different_cells` | Geometry edges and every fail-loud check, each by its own message. |
+| `test_settings_are_type_checked_at_construction`, `test_targets_must_not_be_empty`, `test_predict_rejects_an_empty_forecast`, `test_fails_loud_on_a_target_that_is_not_a_count`, `test_classify_rejects_values_that_are_not_counts`, `test_predict_names_the_cells_that_were_not_fitted` | The checks added after code review #147. |
+| `test_fit_logs_the_knobs_and_warns_when_the_search_stops_early`, `test_fit_warns_when_probabilities_hit_the_floor` | The fit's INFO line, and its two warnings. |
+| `test_each_target_draws_with_its_own_knobs` | With values that encode their cell, a cell-only target draws only from its cell and a neighbourhood target mostly from elsewhere: each target uses its own knobs. |
+| `test_golden_matryoshka` (`test_golden.py`), `test_matryoshka_predict_needs_its_target_columns` (`test_dual_input.py`) | The exact seeded output with set knobs (C-29), and the C-34 exception. |
 | Shared lists in `test_protocol.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_matryoshka_genome_is_exact`), `test_baseline.py`, `test_config_conformance.py` | Protocol, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. The shared dual-input and seed-output lists use a 60-month panel without a country column, so those two checks are in `test_matryoshka.py`. |
 
 ---

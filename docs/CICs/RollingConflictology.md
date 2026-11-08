@@ -106,7 +106,7 @@ only in the months after it.
   `to_feature_frame`, `to_level`), `frames.output.sample_prediction_grid`, `grid.train_test_boundary`.
 - **Instantiated by:** `BaselineModelCatalog._get_rolling_conflictology()`.
 - **Genome:** `["window_months", "n_samples", "seed"]`.
-- It is the only baseline that reads observed months after `train_end`.
+- It reads observed months after `train_end`, as `MatryoshkaConflictology` does; no other baseline does.
 
 ---
 

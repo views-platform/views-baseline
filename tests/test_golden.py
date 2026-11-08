@@ -80,3 +80,36 @@ def test_golden_interpolated_quantile():
         targets=["y1"], window_months=6, partition_dict=_PARTITION, loa="pgm",
         n_samples=4, seed=42))
     np.testing.assert_array_equal(out, [[1.0, 7.0, 6.0, 7.0], [6.0, 8.0, 5.0, 2.0]])
+
+
+def _golden_matryoshka():
+    """Matryoshka's draw path (ADR-024) with set knobs: the fit needs ten years of history and
+    has its own tests. Cell 1's four dolls are all non-empty: cells 2 and 721 are its
+    neighbours, 20 shares its country (5) outside the neighbourhood, and 40 (country 6) is the
+    rest of the map."""
+    from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
+
+    cells = np.array([1, 2, 20, 40, 721])
+    idx = pd.MultiIndex.from_product([range(481, 493), cells],
+                                     names=["month_id", "priogrid_id"])
+    t = idx.get_level_values(0).to_numpy()
+    u = idx.get_level_values(1).to_numpy()
+    df = pd.DataFrame({"y1": ((t * 3 + u * 7) % 9).astype(float),
+                       "c_id": np.where(u == 40, 6.0, 5.0)}, index=idx)
+    model = MatryoshkaConflictology(
+        targets=["y1"], partition_dict=_PARTITION, loa="pgm", n_samples=4,
+        country_column="c_id", backtest_cutoffs=1, backtest_horizon=1,
+        stability_refits=False, seed=42)
+    model.knobs = {"y1": {"weight": [1.0, 0.5, 0.3, 0.2], "memory": [3.0, 6.0, 12.0, 24.0],
+                          "length_scale": 1.5}}
+    model.entity_ids, model.country, model.history_start = cells, np.array([5, 5, 5, 6, 5]), 481
+    return model.predict(df=df, sequence_number=0, output_length=1)["y1"].values
+
+
+GOLDEN_MATRYOSHKA = [[2.0, 7.0, 2.0, 4.0], [1.0, 2.0, 5.0, 2.0], [7.0, 2.0, 5.0, 5.0],
+                     [4.0, 1.0, 7.0, 1.0], [4.0, 4.0, 4.0, 7.0]]
+
+
+def test_golden_matryoshka():
+    out = _golden_matryoshka()
+    np.testing.assert_array_equal(out, GOLDEN_MATRYOSHKA)

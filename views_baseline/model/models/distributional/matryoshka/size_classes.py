@@ -14,11 +14,16 @@ N_CLASSES = len(LOWER_EDGES)
 
 
 def classify(values: np.ndarray) -> np.ndarray:
-    """Size class (0..6) of each value, as int8. Values are fatality counts (≥ 0, no NaN)."""
+    """Size class (0..6) of each value, as int8. Values are fatality counts: whole numbers ≥ 0,
+    no NaN, no inf (anything else would be binned silently: code review #147, finding 2)."""
     values = np.asarray(values)
     if np.isnan(values).any():
         raise ValueError("classify: NaN in values.")
     if (values < 0).any():
         raise ValueError("classify: negative values; the size classes are fatality counts "
                          "(a negative value would silently score as the largest class).")
+    if not np.isfinite(values).all():
+        raise ValueError("classify: infinite values; the size classes are fatality counts.")
+    if (values != np.round(values)).any():
+        raise ValueError("classify: non-integer values; the size classes are fatality counts.")
     return (np.searchsorted(LOWER_EDGES, values, side="right") - 1).astype(np.int8)

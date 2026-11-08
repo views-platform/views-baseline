@@ -12,6 +12,8 @@ Out:       dict[str, PredictionFrame], one per target, each (cells × months, n_
 
 from __future__ import annotations
 
+import logging
+import numbers
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -39,8 +41,16 @@ if TYPE_CHECKING:
     import pandas as pd
     from views_frames import FeatureFrame
 
+logger = logging.getLogger(__name__)
+
 MODEL_NAME = "MatryoshkaConflictology"
 BLOCK_UNIFORMS = 2 ** 24   # uniforms per predict block (128 MiB of float64); memory/speed only
+
+
+def _require_int(name: str, value, minimum: int) -> None:
+    """An integer (not a bool, not a float) ≥ ``minimum``; ADR-008: fail at construction."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < minimum:
+        raise ValueError(f"{MODEL_NAME}: {name} must be an integer ≥ {minimum}, got {value!r}.")
 
 
 def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: int,
@@ -76,13 +86,32 @@ def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: i
             raise ValueError(f"{MODEL_NAME}: NaN in {name!r} (cell {int(cells[j])}, month "
                              f"{int(months[s])}); {int(np.isnan(x).sum())} cell-months "
                              f"affected.")
-        if name in non_negative and (x < 0).any():
-            s, j = np.argwhere(x < 0)[0]
-            raise ValueError(f"{MODEL_NAME}: negative value in target {name!r} (cell "
-                             f"{int(cells[j])}, month {int(months[s])}); the targets must be "
-                             f"fatality counts.")
+        if name in non_negative:
+            for bad, what in ((~np.isfinite(x), "an infinite value"), (x < 0, "a negative value"),
+                              (x != np.round(x), "a non-integer value")):
+                if bad.any():
+                    s, j = np.argwhere(bad)[0]
+                    raise ValueError(f"{MODEL_NAME}: {what} in target {name!r} (cell "
+                                     f"{int(cells[j])}, month {int(months[s])}); the targets "
+                                     f"must be fatality counts.")
         dense[name] = x
     return months, cells, dense
+
+
+def _log_fit(target: str, k: dict) -> None:
+    """INFO the knobs; WARN when the search did not converge or probabilities hit the floor
+    (ADR-008: the diagnostics must not stay on the model only)."""
+    logger.info("%s %s: weight %s, memory %s months, length scale %.3g cells; score %.6g "
+                "(start %.6g), %d steps, %.0f s.", MODEL_NAME, target,
+                np.round(k["weight"], 4).tolist(), np.round(k["memory"], 1).tolist(),
+                k["length_scale"], k["score"], k["start_score"], k["steps"], k["seconds"])
+    if not k["converged"]:
+        logger.warning("%s %s: the knob search did not converge (%s); the knobs are the last "
+                       "step's.", MODEL_NAME, target, k["message"])
+    if k["floored"]:
+        logger.warning("%s %s: %d backtest probabilities fell below the floor and score as the "
+                       "floor; the knobs give some observed outcomes (almost) no chance.",
+                       MODEL_NAME, target, k["floored"])
 
 
 class MatryoshkaConflictology:
@@ -111,6 +140,18 @@ class MatryoshkaConflictology:
         self.backtest_horizon = backtest_horizon
         self.stability_refits = stability_refits
         self.seed = seed
+        if not self.targets:
+            raise ValueError(f"{MODEL_NAME}: targets must not be empty.")
+        _require_int("n_samples", n_samples, 1)
+        _require_int("backtest_cutoffs", backtest_cutoffs, 1)
+        _require_int("backtest_horizon", backtest_horizon, 1)
+        _require_int("seed", seed, 0)
+        if not isinstance(stability_refits, bool):
+            raise ValueError(f"{MODEL_NAME}: stability_refits must be True or False, got "
+                             f"{stability_refits!r}.")
+        if not isinstance(country_column, str):
+            raise ValueError(f"{MODEL_NAME}: country_column must be a column name, got "
+                             f"{country_column!r}.")
         if country_column in self.targets:
             raise ValueError(f"country_column {country_column!r} must not be a target.")
         self.entity_ids = None        # (N,) priogrid ids, ascending
@@ -150,6 +191,8 @@ class MatryoshkaConflictology:
                          self.backtest_horizon, self.stability_refits)
             for t in self.targets
         }
+        for t, k in self.knobs.items():
+            _log_fit(t, k)
         self.entity_ids = cells
         self.country = geo.country
         self.history_start = int(months[0])
@@ -167,6 +210,8 @@ class MatryoshkaConflictology:
             raise ValueError(f"{MODEL_NAME}: call fit() before predict().")
         if sequence_number < 0:
             raise ValueError(f"sequence_number must be >= 0, got {sequence_number}.")
+        if output_length < 1:
+            raise ValueError(f"output_length must be >= 1, got {output_length}.")
         test_start, train_end = train_test_boundary(self.partition_dict)
         last = train_end + sequence_number
         ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
@@ -182,8 +227,16 @@ class MatryoshkaConflictology:
             raise ValueError(f"{MODEL_NAME}: sequence_number {sequence_number} needs data up to "
                              f"month {last}, but it ends at {int(months[-1])}.")
         if not np.array_equal(cells, self.entity_ids):
-            raise ValueError(f"{MODEL_NAME}: predict data has {cells.size} cells, not the "
-                             f"{self.entity_ids.size} cells it was fitted on.")
+            extra = np.setdiff1d(cells, self.entity_ids)[:5].tolist()
+            missing = np.setdiff1d(self.entity_ids, cells)[:5].tolist()
+            raise ValueError(
+                f"{MODEL_NAME}: the predict data must have the {self.entity_ids.size} cells it "
+                f"was fitted on (it has {cells.size}). Cells not fitted on: {extra or 'none'}; "
+                f"fitted cells missing: {missing or 'none'} (at most 5 of each shown). Every cell "
+                f"needs a country and shells from the fit, so the cells cannot change after "
+                f"train_end.")
+        level = to_level(df, loa=self.loa)
+        del ff, time, unit, values         # only the dense panel is needed from here (memory)
         geo = build_geometry(cells, self.country)
         shells = build_shell_tables(geo)
         samplers = {t: build_sampler(dense[t], months, last, self.knobs[t], geo, shells)
@@ -206,5 +259,4 @@ class MatryoshkaConflictology:
             rows = slice(b0 * T, (b0 + block.size) * T)
             for ti, t in enumerate(self.targets):
                 y_preds[t][rows] = samplers[t].draw(block, h, u[:, :, ti]).reshape(-1, S)
-        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr,
-                                    level=to_level(df, loa=self.loa))
+        return to_prediction_frames(y_preds, time=time_arr, unit=unit_arr, level=level)

@@ -123,7 +123,7 @@ Conflictology that chooses *which past observations to draw from* (ADR-024). Eac
 2. a month, recent ones more likely;
 3. a cell in that doll.
 
-Each doll has a weight and a memory. The inner dolls forget faster, so the further ahead a forecast looks, the more it draws from the surroundings. A quiet cell is never forecast as *certainly* quiet unless its neighbourhood, its country and the world give no reason to expect conflict.
+Each doll has a weight and a memory. The further ahead a forecast looks, the more it draws from the dolls with the longest memories. The fitted memories decide which those are, and they are not always the outer dolls. A quiet cell is never forecast as *certainly* quiet unless its neighbourhood, its country and the world give no reason to expect conflict.
 
 The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length scale) are **fitted** by backtest on data up to `train_end`, not configured. The data moves with each rolling origin, as for `RollingConflictology`. It needs a complete grid-month panel with a country column (views-models' pgm input carries `c_id`), at least 120 months before the earliest backtest cutoff, and pgm level.
 
