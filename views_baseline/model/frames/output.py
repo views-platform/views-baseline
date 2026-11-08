@@ -110,8 +110,8 @@ def sample_prediction_grid(
 ) -> dict[str, "PredictionFrame"]:
     """Shared distributional-model predict scaffold (ADR-011/ADR-020).
 
-    Every distributional baseline except ``MatryoshkaConflictology`` (which draws whole blocks
-    of cells at once, in the same RNG order: ADR-024) shares one shell — build the (entity,
+    The distributional baselines that draw one cell at a time share this shell (a model that
+    draws blocks of cells must keep the same RNG order itself) — build the (entity,
     time) grid, drop entities without fitted state (``fitted_state``), then fill an
     ``(N, n_samples)`` array in **entity→time→target** order from a single seeded RNG —
     differing only in the per-cell draw. ``draw_cell(cid, target, rng)`` returns the

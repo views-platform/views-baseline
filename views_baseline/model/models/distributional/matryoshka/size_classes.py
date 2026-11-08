@@ -19,11 +19,11 @@ def classify(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values)
     if np.isnan(values).any():
         raise ValueError("classify: NaN in values.")
+    if not np.isfinite(values).all():
+        raise ValueError("classify: infinite values; the size classes are fatality counts.")
     if (values < 0).any():
         raise ValueError("classify: negative values; the size classes are fatality counts "
                          "(a negative value would silently score as the largest class).")
-    if not np.isfinite(values).all():
-        raise ValueError("classify: infinite values; the size classes are fatality counts.")
     if (values != np.round(values)).any():
         raise ValueError("classify: non-integer values; the size classes are fatality counts.")
     return (np.searchsorted(LOWER_EDGES, values, side="right") - 1).astype(np.int8)

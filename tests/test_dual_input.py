@@ -149,5 +149,5 @@ def test_matryoshka_predict_needs_its_target_columns():
                                 backtest_cutoffs=1, backtest_horizon=1,
                                 stability_refits=False, seed=42)
     m.knobs = {"y1": {}, "y2": {}}            # predict must fail before it uses the knobs
-    with pytest.raises(ValueError, match="y1"):
+    with pytest.raises(ValueError, match=r"missing required target column\(s\) \['y1'"):
         m.predict(df=df.drop(columns=["y1", "y2"]), sequence_number=0, output_length=2)

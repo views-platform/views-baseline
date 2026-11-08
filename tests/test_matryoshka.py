@@ -52,18 +52,17 @@ VALUES = [0, 0, 0, 0, 1, 3, 12, 40, 300, 2000]
 
 
 def synthetic_grid(seed=0, n_rows=16, n_cols=22, holes=(40, 41, 63, 150, 151, 200)):
-    """Cells with sea holes, two countries split by column, and three cells without a country
-    (apart, so that a bug treating them as one country shows)."""
+    """Cells with sea holes, two countries split by column, and four cells without a country:
+    two coded -1 (as in the real data) and two coded 0, each pair far apart, so that a bug
+    treating either code as a country gives that "country" a non-empty shell and shows."""
     rows, cols = np.meshgrid(np.arange(100, 100 + n_rows), np.arange(200, 200 + n_cols),
                              indexing="ij")
     cells = (rows * N_COLS + cols + 1).ravel()
     cells = np.sort(cells[~np.isin(cells, cells[list(holes)])])
     c = (cells - 1) % N_COLS
     country = np.where(c < 200 + n_cols // 2, 7, 9)
-    # Three cells without a country, apart. The real data codes "no country" as -1; 0 is kept
-    # too, since the rule (in_a_country) treats every non-positive code the same.
-    country[[3, cells.size // 2]] = -1
-    country[cells.size - 4] = 0
+    country[[3, cells.size - 4]] = -1
+    country[[20, cells.size // 2]] = 0
     return cells, country
 
 
@@ -910,8 +909,23 @@ def test_fit_warns_when_probabilities_hit_the_floor(caplog):
                in r.getMessage() for r in caplog.records)
     caplog.clear()
     with caplog.at_level(logging.INFO):
+        _log_fit("y", {**knobs, "floored": 1})
+    assert any("1 backtest probabilities fell below" in r.getMessage() for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
         _log_fit("y", {**knobs, "floored": 0})
     assert not any(r.levelno == logging.WARNING for r in caplog.records)
+    caplog.clear()
+    refits = [{**knobs, "left_out": 474, "floored": 0},
+              {**knobs, "left_out": 486, "floored": 0, "converged": False, "message": "limit"}]
+    with caplog.at_level(logging.INFO):
+        _log_fit("y", {**knobs, "floored": 0, "leave_one_cutoff_out": refits})
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "stability refit without cutoff 486 did not converge" in \
+        warnings[0]
+
+
+Z_OFFSET = 1_000_000          # float32-exact with the encoded values added
 
 
 def test_each_target_draws_with_its_own_knobs(planted):
@@ -920,9 +934,9 @@ def test_each_target_draws_with_its_own_knobs(planted):
     their cell, so a draw shows which cell it came from. Using one target's knobs for the other
     breaks one of the two assertions."""
     cells, country, months, _, _ = planted
-    hist = months <= TRAIN_END
     values = _encoded(months, cells.size)
     df = to_df(cells, country, months, values, targets=("y", "z"))
+    df["z"] += Z_OFFSET
     m = MatryoshkaConflictology(targets=["y", "z"], partition_dict=PARTITION, loa="pgm",
                                 **CONFIG)
     m.knobs = {"y": {"weight": [1e-6, 1.0, 1e-6, 1e-6], "memory": [12.0] * 4,
@@ -931,12 +945,13 @@ def test_each_target_draws_with_its_own_knobs(planted):
                      "length_scale": 2.0}}
     m.entity_ids, m.country, m.history_start = cells, country, int(months[0])
     out = m.predict(df[df.index.get_level_values("month_id") <= TRAIN_END], 0, 2)
-    source = {t: out[t].values.reshape(cells.size, -1).astype(np.int64) % cells.size
-              for t in ("y", "z")}
+    source = {t: (out[t].values.reshape(cells.size, -1).astype(np.int64) % Z_OFFSET)
+              % cells.size for t in ("y", "z")}
     own = np.arange(cells.size)[:, None]
     assert (source["z"] == own).all(), "z (cell only) drew from another cell"
     assert (source["y"] != own).mean() > 0.9, "y (neighbourhood) drew mostly from its own cell"
-    assert hist.any()
+    # Each target draws from its own values: z's are offset, y's are not.
+    assert (out["z"].values >= Z_OFFSET).all() and (out["y"].values < Z_OFFSET).all()
 
 
 def test_predict_names_the_cells_that_were_not_fitted(planted, fitted):
@@ -946,3 +961,34 @@ def test_predict_names_the_cells_that_were_not_fitted(planted, fitted):
                np.hstack([values, np.zeros((months.size, 1))]))
     with pytest.raises(ValueError, match=rf"Cells not fitted on: \[{extra[-1]}\]"):
         fitted.predict(df, 0, 2)
+
+
+# ── review of 62bd614 ───────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("change", [{"weight": [0.0, 1.0, 1.0, 1.0]},
+                                    {"weight": [1.0, -0.1, 1.0, 1.0]},
+                                    {"memory": [3.0, 0.0, 40.0, 200.0]},
+                                    {"length_scale": 0.0}])
+def test_sampler_rejects_knobs_out_of_range(grid, change):
+    """A hand-set zero cell weight could leave a cell with no doll to draw from."""
+    cells, country, geo, months, values = grid
+    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+             "length_scale": 1.7, **change}
+    with pytest.raises(ValueError, match="knobs out of range"):
+        build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+                      build_shell_tables(geo))
+
+
+def test_fails_loud_on_an_infinite_country_code(planted):
+    *_, df = planted
+    broken = df.copy()
+    broken["c_id"] = broken["c_id"].where(broken.index.get_level_values("priogrid_id")
+                                          != broken.index.get_level_values("priogrid_id")[0],
+                                          np.inf)
+    with pytest.raises(ValueError, match="integer country codes"):
+        _model().fit(broken)
+
+
+def test_a_numpy_bool_is_accepted_for_stability_refits():
+    assert _model(stability_refits=np.False_).stability_refits is False

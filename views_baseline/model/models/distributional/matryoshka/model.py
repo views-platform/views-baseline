@@ -105,13 +105,17 @@ def _log_fit(target: str, k: dict) -> None:
                 "(start %.6g), %d steps, %.0f s.", MODEL_NAME, target,
                 np.round(k["weight"], 4).tolist(), np.round(k["memory"], 1).tolist(),
                 k["length_scale"], k["score"], k["start_score"], k["steps"], k["seconds"])
-    if not k["converged"]:
-        logger.warning("%s %s: the knob search did not converge (%s); the knobs are the last "
-                       "step's.", MODEL_NAME, target, k["message"])
-    if k["floored"]:
-        logger.warning("%s %s: %d backtest probabilities fell below the floor and score as the "
-                       "floor; the knobs give some observed outcomes (almost) no chance.",
-                       MODEL_NAME, target, k["floored"])
+    searches = [("the knob search", k)] + [
+        (f"the stability refit without cutoff {r['left_out']}", r)
+        for r in k.get("leave_one_cutoff_out", [])]
+    for what, r in searches:
+        if not r["converged"]:
+            logger.warning("%s %s: %s did not converge (%s); its knobs are the last step's.",
+                           MODEL_NAME, target, what, r["message"])
+        if r["floored"]:
+            logger.warning("%s %s: in %s, %d backtest probabilities fell below the floor and "
+                           "score as the floor; the knobs give some observed outcomes (almost) "
+                           "no chance.", MODEL_NAME, target, what, r["floored"])
 
 
 class MatryoshkaConflictology:
@@ -138,7 +142,8 @@ class MatryoshkaConflictology:
         self.country_column = country_column
         self.backtest_cutoffs = backtest_cutoffs
         self.backtest_horizon = backtest_horizon
-        self.stability_refits = stability_refits
+        self.stability_refits = bool(stability_refits) if isinstance(
+            stability_refits, np.bool_) else stability_refits
         self.seed = seed
         if not self.targets:
             raise ValueError(f"{MODEL_NAME}: targets must not be empty.")
@@ -146,7 +151,7 @@ class MatryoshkaConflictology:
         _require_int("backtest_cutoffs", backtest_cutoffs, 1)
         _require_int("backtest_horizon", backtest_horizon, 1)
         _require_int("seed", seed, 0)
-        if not isinstance(stability_refits, bool):
+        if not isinstance(stability_refits, (bool, np.bool_)):
             raise ValueError(f"{MODEL_NAME}: stability_refits must be True or False, got "
                              f"{stability_refits!r}.")
         if not isinstance(country_column, str):
@@ -181,7 +186,7 @@ class MatryoshkaConflictology:
         if np.any(country != country[:1]):
             raise ValueError(f"{MODEL_NAME}: {self.country_column!r} changes over time for "
                              f"some cells; a cell must belong to one country.")
-        if np.any(country[0] != np.round(country[0])):
+        if not np.all(np.isfinite(country[0])) or np.any(country[0] != np.round(country[0])):
             raise ValueError(f"{MODEL_NAME}: {self.country_column!r} must hold integer "
                              f"country codes.")
         geo = build_geometry(cells, country[0].astype(np.int64))

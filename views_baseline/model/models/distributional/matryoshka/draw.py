@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
+    CELL,
     COUNTRY,
     DOLLS,
     MAP,
@@ -147,23 +148,36 @@ def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray,
     ``table`` (R, W): int64, each row ascending and ≥ 0; ``rows``, ``x``: int64, same shape;
     ``last`` (R,). Each row is shifted into its own integer range, so one search answers every
     element, exactly. Rows are taken in chunks small enough for the shifted values to stay in
-    int64; the chunking cannot change the answer.
+    int64 (about 500 rows for a CDF table); each chunk's elements are found once, by sorting on
+    the row, so the cost does not grow with the number of chunks. The chunking cannot change the
+    answer.
     """
-    rows, x = np.asarray(rows, dtype=np.int64), np.asarray(x, dtype=np.int64)
-    out = np.empty(x.shape, dtype=np.int64)
+    shape = np.shape(x)
+    rows = np.asarray(rows, dtype=np.int64).ravel()
+    x = np.asarray(x, dtype=np.int64).ravel()
+    out = np.empty(x.size, dtype=np.int64)
     if x.size == 0:
-        return out
+        return out.reshape(shape)
     R, W = table.shape
     span = int(max(table.max(initial=0), x.max())) + 1
-    chunk = max(1, (2 ** 62) // span // 2)
-    for r0 in range(0, R, chunk):
-        sel = (rows >= r0) & (rows < r0 + chunk) if R > chunk else slice(None)
-        local = rows[sel] - r0
+    chunk = max(1, (2 ** 62) // span)
+
+    def search(r0: int, index) -> None:
+        local = rows[index] - r0
         part = table[r0:r0 + chunk]
         flat = (part + span * np.arange(part.shape[0], dtype=np.int64)[:, None]).ravel()
-        i = np.searchsorted(flat, x[sel] + span * local, side="right") - W * local
-        out[sel] = np.minimum(i, last[r0:r0 + chunk][local])
-    return out
+        i = np.searchsorted(flat, x[index] + span * local, side="right") - W * local
+        out[index] = np.minimum(i, last[r0:r0 + chunk][local])
+
+    if R <= chunk:
+        search(0, slice(None))
+    else:
+        order = np.argsort(rows, kind="stable")
+        bounds = np.searchsorted(rows[order], np.arange(0, R + chunk, chunk))
+        for c, (lo, hi) in enumerate(zip(bounds[:-1], bounds[1:])):
+            if hi > lo:
+                search(c * chunk, order[lo:hi])
+    return out.reshape(shape)
 
 
 def kept_positions(pick: np.ndarray, rows: np.ndarray, kept_before: np.ndarray,
@@ -242,14 +256,14 @@ class Sampler:
         o = _row_searchsorted(self.near_grid[cells], b[m], _uniforms_on_grid(u_cell[m]),
                               self.near_last[cells])
         j[m] = self.neighbours[cell[m], o]
-        for k, kept_before, skip, offset in (
-                (COUNTRY, sh.country_kept_before, sh.country_skip, sh.block_start),
-                (MAP, sh.map_kept_before, sh.map_skip, np.zeros_like(sh.block_start))):
+        for k, kept_before, skip in ((COUNTRY, sh.country_kept_before, sh.country_skip),
+                                     (MAP, sh.map_kept_before, sh.map_skip)):
             m = doll == k
             size = sh.sizes[k, cell[m]].astype(np.int64)
             pick = np.minimum((u_cell[m] * size).astype(np.int64), np.maximum(size - 1, 0))
-            pos = offset[cells][b[m]] + kept_positions(pick, b[m], kept_before[cells],
-                                                       skip[cells])
+            pos = kept_positions(pick, b[m], kept_before[cells], skip[cells])
+            if k == COUNTRY:                     # country positions are relative to its block
+                pos += sh.block_start[cell[m]]
             j[m] = sh.order[pos]
         return self.values[month, j].reshape(B, T, S)
 
@@ -262,11 +276,19 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
         raise ValueError(f"the history must end at month {last_month}, got {months[-1]}.")
     weight = np.asarray(knobs["weight"], dtype=np.float64)
     memory = np.asarray(knobs["memory"], dtype=np.float64)
+    length = float(knobs["length_scale"])
+    # The fit keeps these in range (the cell's weight is fixed at 1). Set by hand, a zero cell
+    # weight could leave a cell with no doll to draw from (code review of 62bd614).
+    if not (np.all(np.isfinite(weight)) and np.all(weight >= 0) and weight[CELL] > 0
+            and np.all(memory > 0) and length > 0):
+        raise ValueError(f"knobs out of range: weights must be finite and ≥ 0 with the cell's "
+                         f"> 0, memories and the length scale > 0; got weight {weight.tolist()}, "
+                         f"memory {memory.tolist()}, length scale {length}.")
     # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
     near_w = np.where(geo.neighbours >= 0,
-                      np.exp(-OFFSET_DISTANCE / float(knobs["length_scale"]))[None, :], 0.0)
+                      np.exp(-OFFSET_DISTANCE / length)[None, :], 0.0)
     has_near = near_w > 0
     near_last = np.where(has_near.any(axis=1),
                          near_w.shape[1] - 1 - np.argmax(has_near[:, ::-1], axis=1), 0)

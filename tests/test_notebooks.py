@@ -17,5 +17,14 @@ def test_notebook_has_no_outputs(path):
     assert not stored, f"{path.name}: clear the outputs of cells {stored} before committing."
 
 
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=[p.name for p in NOTEBOOKS])
+def test_notebook_carries_no_images(path):
+    """No graphics in markdown either: no cell attachments, no inline data: images."""
+    cells = json.loads(path.read_text())["cells"]
+    found = [i for i, c in enumerate(cells)
+             if c.get("attachments") or "data:image" in "".join(c.get("source", ""))]
+    assert not found, f"{path.name}: cells {found} embed an image."
+
+
 def test_there_is_a_notebook_to_check():
     assert NOTEBOOKS
