@@ -1036,18 +1036,18 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
     np.testing.assert_allclose(month_share, p, atol=5 * np.sqrt(p / got.size))
 
 
-@pytest.mark.parametrize("change, h", [
-    ({"memory": [0.01] * 4}, 100),                         # every weight fades to exactly 0
-    ({"weight": [0.0] * 4}, 1),
-    ({"weight": [1.0, 1e308, 1e308, 1e308]}, 1),           # the sum overflows
+@pytest.mark.parametrize("change, h, total", [
+    ({"memory": [0.01] * 4}, 100, "0.0"),                  # every weight fades to exactly 0
+    ({"weight": [0.0] * 4}, 1, "0.0"),
+    ({"weight": [1.0, 1e308, 1e308, 1e308]}, 1, "inf"),    # the sum overflows
 ])
-def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h):
+def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h, total):
     """Code review of 84fd824: an all-zero or undefined doll row used to fall through to the
     map silently (or crash on an empty map shell)."""
     cells, country, geo, months, values = grid
     s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
                       geo, build_shell_tables(geo))
-    with pytest.raises(ValueError, match="no doll can be drawn"):
+    with pytest.raises(ValueError, match=rf"no doll can be drawn.* sum to {total} "):
         s.draw(np.array([5, 7]), np.array([h]), np.random.default_rng(0).random((2, 1, 3, 4)))
 
 
@@ -1058,17 +1058,59 @@ FADES_WITHOUT_A_COUNTRY = {"weight": [1.0, 0.0, 1.0, 0.0], "memory": [0.05, 8.0,
 
 
 def test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead(grid):
-    """The first cell of the block is fine, the second has no country; months ahead 1 is fine
-    for both, 50 is not. The message must name the second cell's priogrid id and 50."""
+    """Block: a cell with a country (always fine), then two without (bad far ahead). Months
+    ahead 50, 1, 60: bad at 50 and 60. Four bad (cell, month) pairs, off the diagonal: the
+    message must name the first, the second cell at 50."""
     cells, country, geo, months, values = grid
+    shells = build_shell_tables(geo)
     s = build_sampler(values.astype(np.float32), months, months[-1], FADES_WITHOUT_A_COUNTRY,
-                      geo, build_shell_tables(geo))
+                      geo, shells)
     with_country = int(np.nonzero(country > 0)[0][0])
-    without = int(np.nonzero(country <= 0)[0][0])
+    first, second = np.nonzero(country <= 0)[0][:2]
+    assert shells.sizes[COUNTRY, with_country] > 0
     with pytest.raises(ValueError,
-                       match=rf"no doll can be drawn for cell {cells[without]} at 50 months"):
-        s.draw(np.array([with_country, without]), np.array([1, 50]),
-               np.random.default_rng(0).random((2, 2, 3, 4)))
+                       match=rf"no doll can be drawn for cell {cells[first]} at 50 months"):
+        s.draw(np.array([with_country, first, second]), np.array([50, 1, 60]),
+               np.random.default_rng(0).random((3, 3, 3, 4)))
+
+
+def test_check_drawable_covers_every_shell_pattern_and_every_months_ahead(monkeypatch):
+    """A grid with four shell patterns: a 6 × 6 block (its centre has no map shell), two cells
+    without a country in it, a far cell sharing a country, and a far cell alone in its own."""
+    from views_baseline.model.models.distributional.matryoshka.draw import Sampler
+
+    rr, cc = np.meshgrid(np.arange(100, 106), np.arange(200, 206), indexing="ij")
+    cells = np.sort(np.r_[(rr * N_COLS + cc + 1).ravel(), 150 * N_COLS + 401,
+                          150 * N_COLS + 421])
+    country = np.where((cells - 1) % N_COLS < 203, 7, 9)
+    country[[0, 20]] = -1
+    country[-1] = 8
+    geo = build_geometry(cells, country)
+    months = np.arange(100, 130)
+    values = np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size))
+    shells = build_shell_tables(geo)
+    s = build_sampler(values.astype(np.float32), months, months[-1], GOOD_KNOBS, geo, shells)
+    seen = []
+    real = Sampler.doll_cdf
+    monkeypatch.setattr(Sampler, "doll_cdf",
+                        lambda self, c, h: seen.append((np.asarray(c), np.asarray(h)))
+                        or real(self, c, h))
+    h = np.array([1, 7, 36])
+    s.check_drawable(h)
+    checked = np.concatenate([c for c, _ in seen])
+    pattern = (shells.sizes > 0).T
+    assert {tuple(p) for p in pattern[checked]} == {tuple(p) for p in pattern}
+    assert len({tuple(p) for p in pattern}) == 4, "the grid must have four patterns"
+    assert all(np.array_equal(hh, h) for _, hh in seen)
+
+
+def test_sampler_rejects_a_length_scale_that_empties_the_neighbourhood(grid):
+    """Code review of 8035122: with ℓ = 0.001 every neighbour weight is 0, and edge cells drew
+    another cell's value."""
+    cells, country, geo, months, values = grid
+    with pytest.raises(ValueError, match="length scale 0.001 is so small"):
+        build_sampler(values.astype(np.float32), months, months[-1],
+                      {**GOOD_KNOBS, "length_scale": 1e-3}, geo, build_shell_tables(geo))
 
 
 def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted, monkeypatch):
@@ -1076,19 +1118,23 @@ def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted,
     block is drawn, not minutes into predict."""
     from views_baseline.model.models.distributional.matryoshka import draw as draw_module
 
-    cells, country, *_, df = planted
+    _, country, *_, df = planted
     assert country[0] > 0, "the first cell must be fine, so checking it alone is not enough"
     m = _model()
     m.knobs = {"y": FADES_WITHOUT_A_COUNTRY}         # bad only for the cells without a country
     m.entity_ids, m.country, m.history_start = fitted.entity_ids, fitted.country, \
         fitted.history_start
 
+    drawn = []
+
     def no_draw(self, cells, h, u):
+        drawn.append(len(cells))
         return np.zeros((len(cells), len(h), u.shape[-1]))
 
     monkeypatch.setattr(draw_module.Sampler, "draw", no_draw)
     with pytest.raises(ValueError, match="no doll can be drawn"):
         m.predict(df, 0, 48)
+    assert not drawn, "predict drew before it checked the knobs"
 
 
 def test_fails_loud_on_an_infinite_country_code(planted):

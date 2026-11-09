@@ -833,3 +833,18 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - The pre-draw check is moved into the sampler (`check_drawable`), next to the reasoning it depends on (at most 8 shell patterns).
   - The image checks scan markdown only (code like `stats.norm.pdf` is fine). One list of extensions and one of tags serve both checks, and the tests try every entry.
   - The tracked-file check skips only outside a git checkout.
+
+## 2026-11-09: fifth review round (of 8035122)
+
+- **One real, hand-set-only bug (code-review, confirmed by running).** With ℓ = 0.001 every neighbour weight is 0, and 27 edge cells drew another cell's value, silently. The sampler now rejects a length scale that empties a non-empty neighbourhood. The fit's smallest is 0.25.
+- **My slip, caught by review-diff and confirmed by mutation:** the rewritten pre-draw test had lost its "nothing drawn before the check" assertion. It is back.
+- **Tests now tell the cases apart:**
+  - four bad (cell, months-ahead) pairs off the diagonal;
+  - a four-pattern grid, so the check is shown to cover every shell pattern and every h;
+  - both "no doll" totals (0 and inf) pinned.
+- **No committed graphics, widened to everything git tracks.** `tests/test_notebooks.py` became `tests/test_no_committed_graphics.py`:
+  - checks all notebooks and markdown files, not only `notebooks/`;
+  - reads paths with `-z`;
+  - code cells are checked for HTML and `data:` images;
+  - file names and code spans count as text;
+  - more extensions and `<input>`.

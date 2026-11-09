@@ -317,6 +317,10 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     near_w = np.where(geo.neighbours >= 0,
                       np.exp(-OFFSET_DISTANCE / length)[None, :], 0.0)
     has_near = near_w > 0
+    if np.any((geo.neighbours >= 0).any(axis=1) & ~has_near.any(axis=1)):
+        raise ValueError(f"knobs out of range: length scale {length} is so small that every "
+                         f"neighbour's weight exp(−d / ℓ) is 0, so a neighbourhood could be "
+                         f"picked with no cell in it to draw.")
     near_last = np.where(has_near.any(axis=1),
                          near_w.shape[1] - 1 - np.argmax(has_near[:, ::-1], axis=1), 0)
     return Sampler(values=values, weight=weight, memory=memory,
