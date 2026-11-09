@@ -783,3 +783,17 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
 - **Tests (7, 8, 10, 11).** Per-target knobs; a golden for the draw path; one has-a-country rule (`in_a_country`), with -1 in the fixtures; the C-34 exception pinned in test_dual_input.
 - **Docs (12, 14, 15, low).** "Opens outward" is a finding, not a property (one-sided: near memory 14 < cell 23). ADR-002 rule 3 now allows scipy. ADR-024: the history is the data, not a setting. ADR-001 and the Rolling CIC no longer say "only baseline after train_end". CIC cost numbers corrected (616 s, 4.3 GiB, 41 s). output.py docstring. A test that notebooks have no outputs. Input arrays freed before the draw. The unfitted-cell message names the cells.
 - Finding 1 moved to #148.
+
+## 2026-11-09: review of the #147 fixes, and a real-data re-timing
+
+- **Reviews of 62bd614** (review-diff, code-review high, falsify guard; clean contexts). No guard was decorative. Fixed in 84fd824:
+  - The sampler rejects knobs out of range: a hand-set zero cell weight crashed the draw.
+  - Infinite country codes fail; failed stability refits are logged; numpy bools are accepted.
+  - The row search finds each chunk's elements by sorting, not with a mask per chunk.
+  - Tests closing every real survivor of the guard audit: floored = 1; refit warnings; different y and z values; a golden that reaches every doll, with a √2 neighbour and a country block not at 0; two 0- and two −1-coded cells; no images in notebooks.
+  - Each survivor was re-applied and is now caught.
+- **Real data** (`results/package_check.json`, input md5 d3636988…):
+  - The knobs equal the prototype's v5 exactly (gap 0) for all three types.
+  - Fit 594 s, peak 4.3 GiB.
+  - Predict, one target, S = 64: 49–52 s new against 86–91 s for the code before #147, same machine and session. The 41 s of 2026-11-07 was a quieter machine.
+- Process note: a mutation script restored files with `git checkout` while fixes were uncommitted, and wiped two files. They were restored from a stash made just before, and checked identical. Mutation checks now run on committed trees only.

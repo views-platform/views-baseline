@@ -113,13 +113,13 @@ the target values (C-34, `tests/test_dual_input.py`). This one reads the targets
 draws from the history up to `train_end + k`. A frame without the target columns fails loudly by name
 (`test_matryoshka_predict_needs_its_target_columns`).
 
-**Cost**, measured 2026-11-07 at pgm `land` on the pinned calibration input
-(`reports/matryoshka/results/package_check.json`; the draw was changed after this, in #147, and has
-not been re-timed):
-- **Fit,** three targets, no stability refits: 616 s, with a peak of 4.3 GiB. Stability refits multiply
+**Cost**, measured 2026-11-09 at pgm `land` on the pinned calibration input
+(`reports/matryoshka/results/package_check.json`), on one laptop under other load:
+- **Fit,** three targets, no stability refits: 594 s, with a peak of 4.3 GiB. Stability refits multiply
   the search time by about 5.
-- **Predict,** one origin, all cells, 36 months: 41 s for one target at S = 64. Draw time scales with
-  targets × S, so the full 3 targets × S = 256 is roughly 7 minutes per origin.
+- **Predict,** one origin, all cells, 36 months: 49–52 s for one target at S = 64 (the draw before
+  #147: 86–91 s, same machine and session). Draw time scales with targets × S, so the full
+  3 targets × S = 256 is roughly 10 minutes per origin at this speed; less on a quieter machine.
 - **Output:** the output alone is about 7 GB per origin at that size, the same as conflictology's.
 
 ---

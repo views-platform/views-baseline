@@ -1,5 +1,5 @@
 {
-  "fit_seconds": 615.8,
+  "fit_seconds": 593.7,
   "targets": {
     "lr_sb_best": {
       "package": {
@@ -121,7 +121,7 @@
       "lr_sb_best"
     ],
     "n_samples": 64,
-    "seconds": 41.4,
+    "seconds": 61.8,
     "shape": [
       2333448,
       64
