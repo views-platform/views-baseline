@@ -251,12 +251,8 @@ class MatryoshkaConflictology:
         rng = np.random.default_rng(self.seed)
         S, T = self.n_samples, len(time_ids)
         h = np.asarray(time_ids) - last
-        # Fail before drawing, not blocks into it. A cell's doll mix depends only on which of its
-        # shells are empty, so one cell per pattern (at most 2^4) checks them all.
-        for sampler in samplers.values():
-            _, one_per_pattern = np.unique((sampler.shells.sizes > 0).T, axis=0,
-                                           return_index=True)
-            sampler.doll_cdf(np.sort(one_per_pattern), h)
+        for sampler in samplers.values():          # fail before drawing, not blocks into it
+            sampler.check_drawable(h)
         y_preds = {t: np.empty((time_arr.size, S), dtype=np.float32) for t in self.targets}
         # Uniforms are generated a block of cells at a time, in C order over
         # (cell, month, target, step, sample): the same stream, in the same entity → time →

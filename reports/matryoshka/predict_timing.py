@@ -33,7 +33,7 @@ def main(code_dir: str, input_path: str, knobs_path: str, label: str) -> None:
     months = df.index.get_level_values("month_id")
     cells = np.sort(df.index.get_level_values("priogrid_id").unique().to_numpy())
     country = df.xs(months.min(), level="month_id")["c_id"].reindex(cells).to_numpy()
-    if not np.isfinite(country).all():
+    if pd.isna(country).any():
         raise ValueError("c_id is missing for some cells in the first month.")
     model = MatryoshkaConflictology(
         targets=[TARGET], partition_dict={"test": (457, 492)}, loa="pgm", n_samples=64,

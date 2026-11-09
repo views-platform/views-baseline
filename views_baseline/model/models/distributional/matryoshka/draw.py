@@ -250,6 +250,16 @@ class Sampler:
                              f"{self.weight.tolist()}, memory {self.memory.tolist()}).")
         return _cdf(p)
 
+    def check_drawable(self, h: np.ndarray) -> None:
+        """Raise (as `doll_cdf`) unless every cell has a doll to draw at every months ahead h.
+
+        A cell's doll mix depends only on h and on which of its shells are empty, so one cell
+        per pattern of empty shells checks them all: at most 2^3 patterns, since a cell's own
+        shell is never empty. Predict calls this before drawing anything.
+        """
+        _, one_per_pattern = np.unique((self.shells.sizes > 0).T, axis=0, return_index=True)
+        self.doll_cdf(np.sort(one_per_pattern), h)
+
     def draw(self, cells: np.ndarray, h: np.ndarray, u: np.ndarray) -> np.ndarray:
         """Forecast draws (B, T, S) for cells (B,) at months ahead h (T,), from uniforms
         u (B, T, 3, S): u[..., 0, :] picks the doll, u[..., 1, :] the month, u[..., 2, :] the

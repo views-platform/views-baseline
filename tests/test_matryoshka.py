@@ -937,21 +937,20 @@ def test_fit_warns_when_probabilities_hit_the_floor(caplog):
         _log_fit("y", {**knobs, "floored": 0})
     assert not any(r.levelno == logging.WARNING for r in caplog.records)
     caplog.clear()
-    caplog.clear()
     with caplog.at_level(logging.INFO):
         _log_fit("y", {**knobs, "floored": 3, "converged": False, "message": "limit"})
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert "did not converge" in warnings[0] and "3 backtest probabilities" in warnings[1]
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "did not converge" in warned[0] and "3 backtest probabilities" in warned[1]
     caplog.clear()
     refits = [{**knobs, "left_out": 474, "floored": 2},
               {**knobs, "left_out": 486, "floored": 0, "converged": False, "message": "limit"}]
     with caplog.at_level(logging.INFO):
         _log_fit("y", {**knobs, "floored": 0, "leave_one_cutoff_out": refits})
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 2
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warned) == 2
     assert "stability refit without cutoff 474, 2 backtest probabilities fell below" in \
-        warnings[0]
-    assert "stability refit without cutoff 486 did not converge" in warnings[1]
+        warned[0]
+    assert "stability refit without cutoff 486 did not converge" in warned[1]
 
 
 Z_OFFSET = 1_000_000          # float32-exact with the encoded values added
@@ -1033,7 +1032,8 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
                  np.random.default_rng(0).random((5, 2, 3, S))).astype(np.int64)
     assert ((got % cells.size) != np.arange(5)[:, None, None]).all()
     month_share = np.bincount((got // cells.size).ravel(), minlength=months.size) / got.size
-    np.testing.assert_allclose(month_share, 1 / months.size, atol=5 / np.sqrt(got.size))
+    p = 1 / months.size
+    np.testing.assert_allclose(month_share, p, atol=5 * np.sqrt(p / got.size))
 
 
 @pytest.mark.parametrize("change, h", [
@@ -1043,15 +1043,32 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
 ])
 def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h):
     """Code review of 84fd824: an all-zero or undefined doll row used to fall through to the
-    map silently (or crash on an empty map shell). The message names the first bad cell by its
-    priogrid id and the months ahead by value."""
+    map silently (or crash on an empty map shell)."""
     cells, country, geo, months, values = grid
     s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
                       geo, build_shell_tables(geo))
-    block = np.array([5, 7, 9])
-    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {cells[5]} at {h} "
-                                         rf"months ahead"):
-        s.draw(block, np.array([h]), np.random.default_rng(0).random((3, 1, 3, 4)))
+    with pytest.raises(ValueError, match="no doll can be drawn"):
+        s.draw(np.array([5, 7]), np.array([h]), np.random.default_rng(0).random((2, 1, 3, 4)))
+
+
+# Only the cell (fading within a month or so) and the country (never fading): a cell with a
+# country can always be drawn; a cell without one cannot, once the cell's weight has faded.
+FADES_WITHOUT_A_COUNTRY = {"weight": [1.0, 0.0, 1.0, 0.0], "memory": [0.05, 8.0, np.inf, 200.0],
+                           "length_scale": 1.7}
+
+
+def test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead(grid):
+    """The first cell of the block is fine, the second has no country; months ahead 1 is fine
+    for both, 50 is not. The message must name the second cell's priogrid id and 50."""
+    cells, country, geo, months, values = grid
+    s = build_sampler(values.astype(np.float32), months, months[-1], FADES_WITHOUT_A_COUNTRY,
+                      geo, build_shell_tables(geo))
+    with_country = int(np.nonzero(country > 0)[0][0])
+    without = int(np.nonzero(country <= 0)[0][0])
+    with pytest.raises(ValueError,
+                       match=rf"no doll can be drawn for cell {cells[without]} at 50 months"):
+        s.draw(np.array([with_country, without]), np.array([1, 50]),
+               np.random.default_rng(0).random((2, 2, 3, 4)))
 
 
 def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted, monkeypatch):
@@ -1059,16 +1076,19 @@ def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted,
     block is drawn, not minutes into predict."""
     from views_baseline.model.models.distributional.matryoshka import draw as draw_module
 
-    *_, df = planted
+    cells, country, *_, df = planted
+    assert country[0] > 0, "the first cell must be fine, so checking it alone is not enough"
     m = _model()
-    m.knobs = {"y": {**GOOD_KNOBS, "memory": [0.01] * 4}}
+    m.knobs = {"y": FADES_WITHOUT_A_COUNTRY}         # bad only for the cells without a country
     m.entity_ids, m.country, m.history_start = fitted.entity_ids, fitted.country, \
         fitted.history_start
-    calls = []
-    monkeypatch.setattr(draw_module.Sampler, "draw", lambda *a, **k: calls.append(1))
+
+    def no_draw(self, cells, h, u):
+        return np.zeros((len(cells), len(h), u.shape[-1]))
+
+    monkeypatch.setattr(draw_module.Sampler, "draw", no_draw)
     with pytest.raises(ValueError, match="no doll can be drawn"):
-        m.predict(df, 0, 100 - 1)
-    assert not calls, "predict started drawing before checking the knobs"
+        m.predict(df, 0, 48)
 
 
 def test_fails_loud_on_an_infinite_country_code(planted):

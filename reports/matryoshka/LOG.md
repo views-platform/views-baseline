@@ -824,3 +824,12 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - error messages checked on cells whose position differs from their index.
   - The image check is now broad (any image file name, embedding HTML, `url(`, `data:`), with a test that no image file is tracked.
 - **Timing:** the CIC says the figures were taken at 84fd824. The script now prints which code it imported.
+
+## 2026-11-09: fourth review round (of a92e06f)
+
+- No production bug and no decorative guard. All survivors came from test inputs too uniform to tell behaviours apart. Fixed at the root:
+  - New knobs that fail only for cells without a country, only far ahead, so the pre-draw check and the error message are tested on a block whose first cell is fine.
+  - The infinite-memory tolerance is now 5 standard errors per month, so a memory capped at 60 or 200 months fails it.
+  - The pre-draw check is moved into the sampler (`check_drawable`), next to the reasoning it depends on (at most 8 shell patterns).
+  - The image checks scan markdown only (code like `stats.norm.pdf` is fine). One list of extensions and one of tags serve both checks, and the tests try every entry.
+  - The tracked-file check skips only outside a git checkout.
