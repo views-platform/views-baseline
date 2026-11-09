@@ -1039,7 +1039,7 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
 @pytest.mark.parametrize("change, h, total", [
     ({"memory": [0.01] * 4}, 100, "0.0"),                  # every weight fades to exactly 0
     ({"weight": [0.0] * 4}, 1, "0.0"),
-    ({"weight": [1.0, 1e308, 1e308, 1e308]}, 1, "inf"),    # the sum overflows
+    ({"weight": [1.0, 1e308, 1e308, 1e308]}, [1, 400], "inf"),  # overflows at 1, not at 400
 ])
 def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h, total):
     """Code review of 84fd824: an all-zero or undefined doll row used to fall through to the
@@ -1047,8 +1047,9 @@ def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h, total):
     cells, country, geo, months, values = grid
     s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
                       geo, build_shell_tables(geo))
-    with pytest.raises(ValueError, match=rf"no doll can be drawn.* sum to {total} "):
-        s.draw(np.array([5, 7]), np.array([h]), np.random.default_rng(0).random((2, 1, 3, 4)))
+    with pytest.raises(ValueError, match=rf"no doll can be drawn.* sums to {total} "):
+        h = np.atleast_1d(h)
+        s.draw(np.array([5, 7]), h, np.random.default_rng(0).random((2, h.size, 3, 4)))
 
 
 # Only the cell (fading within a month or so) and the country (never fading): a cell with a
@@ -1069,7 +1070,7 @@ def test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead(grid):
     first, second = np.nonzero(country <= 0)[0][:2]
     assert shells.sizes[COUNTRY, with_country] > 0
     with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {cells[first]} at 50 "
-                                         rf"months ahead: .* sum to 0.0 "):
+                                         rf"months ahead: .* sums to 0.0 "):
         s.draw(np.array([with_country, first, second]), np.array([50, 1, 60]),
                np.random.default_rng(0).random((3, 3, 3, 4)))
 
@@ -1100,8 +1101,9 @@ def _sparse_grid():
     return cells, country
 
 
-@pytest.mark.parametrize("make_grid", [_block_grid, _sparse_grid])
-def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, monkeypatch):
+@pytest.mark.parametrize("make_grid, n_patterns", [(_block_grid, 4), (_sparse_grid, 3)])
+def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, n_patterns,
+                                                                    monkeypatch):
     """One cell per pattern of drawable dolls is checked, at every months ahead given."""
     from views_baseline.model.models.distributional.matryoshka.draw import Sampler
 
@@ -1124,7 +1126,7 @@ def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, m
     checked = np.concatenate([c for c, _ in seen])
     pattern = s.drawable.T
     assert {tuple(p) for p in pattern[checked]} == {tuple(p) for p in pattern}
-    assert len({tuple(p) for p in pattern}) >= 3
+    assert len({tuple(p) for p in pattern}) == n_patterns
     assert all(np.array_equal(hh, h) for _, hh in seen)
 
 
@@ -1152,7 +1154,7 @@ def test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn(monkeypatch)
     knobs = {"weight": [1.0, 1.0, 0.0, 0.0], "memory": [10.0] * 4, "length_scale": 0.002}
     s = build_sampler(values, months, months[-1], knobs, geo, shells)
     assert not s.drawable[NEAR, sparse] and s.drawable[NEAR, sparse - 1]
-    block_cell = 14                                      # inside the block
+    block_cell = int(np.nonzero(cells == 102 * N_COLS + 204)[0][0])     # inside the block
     got = s.draw(np.array([block_cell, sparse]), np.array([1]),
                  np.random.default_rng(0).random((2, 1, 3, 4000)))[:, 0].astype(np.int64)
     source = got % cells.size
@@ -1160,7 +1162,7 @@ def test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn(monkeypatch)
     assert (source[0] != block_cell).any(), "the block cell never drew a neighbour"
     near_only = {**knobs, "weight": [0.0, 1.0, 0.0, 0.0]}
     s = build_sampler(values, months, months[-1], near_only, geo, shells)
-    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {SPARSE_CELL} .* sum "
+    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {SPARSE_CELL} .* sums "
                                          rf"to 0.0 "):
         s.check_drawable(np.array([1]))
 

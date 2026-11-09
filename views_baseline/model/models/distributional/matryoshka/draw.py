@@ -2,12 +2,14 @@
 
 For cell i, forecast month t = c + h (c = the last observed month) and doll k:
 
-  1. doll k     ∝ weight[k] · exp(−h / memory[k])           (empty shells excluded)
+  1. doll k     ∝ weight[k] · exp(−h / memory[k])           (dolls with nothing to draw excluded)
   2. month s    ∝ exp(−(c − s) / memory[k])                 (s = the history months ≤ c)
   3. cell j     the cell itself; a neighbour ∝ exp(−d_ij / ℓ); or uniform within the rest of the
                 country / the rest of the map
 
-This is exactly the distribution `forecast_probability` scores in closed form; the tests check
+Within the fit's knob bounds this is exactly the distribution `forecast_probability` scores in
+closed form (below ℓ ≈ 0.003 a cell's neighbour weights can all round to 0; the draw then drops
+that neighbourhood, the score does not); the tests check
 the two against each other.
 
 **Uniform draws from a shell without rejection.** The cells are put in country-major order, so
@@ -235,6 +237,7 @@ class Sampler:
     near_last: np.ndarray       # (N,) last neighbour offset with positive weight (0 if none)
     neighbours: np.ndarray
     shells: ShellTables
+    length_scale: float
     drawable: np.ndarray        # (D, N) bool
     cell_ids: np.ndarray        # (N,) priogrid ids, for messages
 
@@ -250,9 +253,11 @@ class Sampler:
         if bad.any():
             b, t = np.argwhere(bad)[0]
             raise ValueError(f"no doll can be drawn for cell {int(self.cell_ids[cells[b]])} at "
-                             f"{int(np.asarray(h)[t])} months ahead: the doll weights "
-                             f"weight · exp(−h / memory) sum to {total[b, t]} (weight "
-                             f"{self.weight.tolist()}, memory {self.memory.tolist()}).")
+                             f"{int(np.asarray(h)[t])} months ahead: over the dolls it can "
+                             f"draw from, weight · exp(−h / memory) sums to {total[b, t]} (weight "
+                             f"{self.weight.tolist()}, memory {self.memory.tolist()}; its "
+                             f"neighbourhood counts only if a neighbour's weight exp(−d / ℓ) is "
+                             f"positive, ℓ = {self.length_scale}).")
         return _cdf(p)
 
     def check_drawable(self, h: np.ndarray) -> None:
@@ -298,6 +303,11 @@ class Sampler:
         return self.values[month, j].reshape(B, T, S)
 
 
+def _kernel_weights(length: float) -> np.ndarray:
+    with np.errstate(over="ignore"):              # a tiny ℓ only rounds weights to 0
+        return np.exp(-OFFSET_DISTANCE / length)
+
+
 def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs: dict,
                   geo: Geometry, shells: ShellTables) -> Sampler:
     """The sampler for history ending at ``last_month`` (``months`` ascending, the last one is
@@ -320,7 +330,7 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
     near_w = np.where(geo.neighbours >= 0,
-                      np.exp(-OFFSET_DISTANCE / length)[None, :], 0.0)
+                      _kernel_weights(length)[None, :], 0.0)
     has_near = near_w > 0
     drawable = shells.sizes > 0
     drawable[NEAR] = has_near.any(axis=1)
@@ -329,5 +339,5 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     return Sampler(values=values, weight=weight, memory=memory,
                    month_grid=_cdf_on_grid(_cdf(month_w)),
                    near_grid=_cdf_on_grid(_cdf(near_w)), near_last=near_last,
-                   neighbours=geo.neighbours, shells=shells, drawable=drawable,
-                   cell_ids=geo.cells)
+                   neighbours=geo.neighbours, shells=shells, length_scale=length,
+                   drawable=drawable, cell_ids=geo.cells)

@@ -9,7 +9,8 @@ For history end c, forecast month t = c + h and cell i:
   P(class | i, h)     = Σ_k P(doll k | h) · q_k(i, class)
 
 The score is the mean log probability of the size class that actually happened (higher is better).
-This is exactly the distribution the three-step draw samples from, computed in closed form.
+Within the fit's knob bounds this is exactly the distribution the three-step draw samples from,
+computed in closed form (see draw.py for the one hand-set exception).
 
 The neighbourhood doll draws neighbour j with probability ∝ exp(−d_ij / ℓ) instead of uniformly.
 Neighbours are grouped in distance bands b (distance d_b, n_b(i) cells), so with

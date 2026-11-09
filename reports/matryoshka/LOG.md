@@ -865,3 +865,18 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - A tag must be followed by a space, ">" or "/", so code like `idx<image.shape` passes.
   - A git failure fails one test, not the file. Missing files are skipped, and files are read as UTF-8.
   - A minimum-set test protects the lists themselves.
+
+## 2026-11-09: seventh review round (of d90ff5f)
+
+- No bug reachable with fitted knobs. The Matryoshka guards all hold.
+- **Draw.**
+  - The "no doll" message now names the length scale and says the sum is over the drawable dolls.
+  - The module docs say draw and score match within the fit's knob bounds. Below ℓ ≈ 0.003, set by hand, the draw drops a neighbourhood with no weight and the score does not; documented, not engineered.
+  - Each grid's pattern count is pinned. The overflow message's value is tested where it differs from the row minimum.
+- **No committed graphics, restructured.** The audit showed that the code choosing which files to scan had no assertions of its own. One function, `problems(files, read)`, now holds the whole policy. It is tested on a made-up repository with one example of each case:
+  - an HTML file, and an HTML file with JavaScript;
+  - `.MD`, `.markdown`, `.qmd` and RST files;
+  - notebooks outside `notebooks/`, with an execution count, an output or a metadata image;
+  - a tracked graphic missing on disk.
+- The real repository is checked with a file list confirmed complete. `notebooks/` is checked even outside git.
+- **Not done, by choice.** A second full review round of these fixes. They are documentation, a message, test structure and one constructor field. Offered to Simon instead.
