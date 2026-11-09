@@ -93,6 +93,7 @@ def test_algorithm_genomes_covers_all_catalog_models():
         "ParametricConflictology", "ParametricHurdleConflictology",
         "InterpolatedQuantileConflictology", "KDEConflictology",
         "EmpiricalKDEMixtureConflictology", "RollingConflictology",
+        "MatryoshkaConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
 
@@ -393,6 +394,13 @@ def test_smoothed_climatology_genomes_are_exact():
         "window_months", "n_samples", "seed", "bandwidth"}
     assert set(genomes["EmpiricalKDEMixtureConflictology"]) == {
         "window_months", "n_samples", "seed", "alpha", "bandwidth"}
+
+
+def test_matryoshka_genome_is_exact():
+    """ADR-024: no window; the backtest design and the country column are configured."""
+    assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["MatryoshkaConflictology"]) == {
+        "n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
+        "stability_refits"}
 
 
 def test_rolling_conflictology_genome_is_exact():

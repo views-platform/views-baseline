@@ -19,6 +19,13 @@ The class attribute `distributional = True` is a semantic marker (it satisfies t
 
 - Does not mix pools across entities. Each entity's samples come exclusively from its own local history.
 - Does not weight observations by recency within the window.
+- Does not move its window with the rolling origin. The pool is fixed at `train_end` for every origin,
+  **deliberately**: it mirrors the production regime, where models are trained once a year and saved
+  artifacts are used for inference for the rest of the year. This is stricter than what learned models
+  get: they freeze their parameters but still read the latest observed data at each origin (e.g.
+  views-stepshifter reads its series up to `train_end + k`), whereas for a climatology the data is the
+  model, so freezing it freezes its inputs too. `RollingConflictology` (ADR-024's control, #126) is the
+  variant whose information matches the learned models'. Rationale recorded on #82 (2026-11-05).
 - Does not produce a point prediction. The output is a `dict[str, PredictionFrame]`, not a `pd.DataFrame`.
 - Does not validate `window_months` or `n_samples` at construction time.
 

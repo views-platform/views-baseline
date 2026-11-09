@@ -73,6 +73,8 @@ Both draw `n_samples` i.i.d. samples per cell from a fresh, seeded generator (`n
 
 For each unit `i`, collects that unit's **last `window_months` observed values** up to `train_end`, then draws `n_samples` samples **with replacement** from that per-unit history for every forecast cell. The predictive distribution for a cell is the recent empirical distribution of that same unit — a conflict "climatology." It uses only the unit's own recent history: no pooling across units, no older history.
 
+**The window is fixed at `train_end` for every forecast origin, on purpose.** It mirrors the production regime, where models are trained once a year and the saved artifacts are used for inference for the rest of the year. Note that this is stricter than what the learned models get: they freeze their *parameters* but still read the latest observed data at each origin, whereas for a climatology the data *is* the model, so freezing it also freezes its inputs. `RollingConflictology` below is the version whose information matches the learned models' (#82).
+
 ```python
 ConflictologyModel(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
@@ -113,6 +115,23 @@ ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_sam
 ```python
 RollingConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
+
+#### MatryoshkaConflictology — conflictology that also draws from a cell's surroundings
+
+Conflictology that chooses *which past observations to draw from* (ADR-024). Each draw is a value that was really observed, picked in three steps:
+1. a doll: the cell, its neighbourhood (within 5 cells, closer ones more likely), the rest of its country, or the rest of the map;
+2. a month, recent ones more likely;
+3. a cell in that doll.
+
+Each doll has a weight and a memory. The further ahead a forecast looks, the more it draws from the dolls with the longest memories. The fitted memories decide which those are, and they are not always the outer dolls. A quiet cell is never forecast as *certainly* quiet unless its neighbourhood, its country and the world give no reason to expect conflict.
+
+The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length scale) are **fitted** by backtest on data up to `train_end`, not configured. The data moves with each rolling origin, as for `RollingConflictology`. It needs a complete grid-month panel with a country column (views-models' pgm input carries `c_id`), at least 120 months before the earliest backtest cutoff, and pgm level.
+
+```python
+MatryoshkaConflictology(targets, partition_dict, loa, n_samples, country_column, backtest_cutoffs, backtest_horizon, stability_refits, seed=42)
+```
+
+The notebook [`notebooks/matryoshka_conflictology.ipynb`](notebooks/matryoshka_conflictology.ipynb) explains what it does and how, and draws the plots when it is run (Jupyter; the synthetic part runs in seconds, the real-data part needs the calibration input pull).
 
 #### InterpolatedQuantileConflictology — smoothed climatology B
 
@@ -158,7 +177,7 @@ catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
-#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology']
+#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'MatryoshkaConflictology']
 ```
 
 ---
