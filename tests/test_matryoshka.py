@@ -937,6 +937,12 @@ def test_fit_warns_when_probabilities_hit_the_floor(caplog):
         _log_fit("y", {**knobs, "floored": 0})
     assert not any(r.levelno == logging.WARNING for r in caplog.records)
     caplog.clear()
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        _log_fit("y", {**knobs, "floored": 3, "converged": False, "message": "limit"})
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "did not converge" in warnings[0] and "3 backtest probabilities" in warnings[1]
+    caplog.clear()
     refits = [{**knobs, "left_out": 474, "floored": 2},
               {**knobs, "left_out": 486, "floored": 0, "converged": False, "message": "limit"}]
     with caplog.at_level(logging.INFO):
@@ -1005,7 +1011,7 @@ def _with(name, doll, value):
     *[_with("memory", d, 0.0) for d in range(4)],
     _with("memory", 2, np.nan),
     {"weight": [1.0]}, {"memory": [3.0, 8.0, 40.0]},
-    {"length_scale": 0.0}, {"length_scale": np.nan},
+    {"length_scale": 0.0}, {"length_scale": np.nan}, {"length_scale": np.inf},
 ], ids=lambda c: str(c))
 def test_sampler_rejects_knobs_out_of_range(grid, change):
     """Hand-set knobs: every doll's weight and memory is checked, and their number."""
@@ -1016,11 +1022,18 @@ def test_sampler_rejects_knobs_out_of_range(grid, change):
 
 
 def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
-    cells, country, geo, months, values = grid
+    """Allowed, and honoured: with the cell's weight 0 no draw comes from the cell itself, and
+    with every memory infinite the months are drawn uniformly over the history."""
+    cells, country, geo, months, _ = grid
     knobs = {**GOOD_KNOBS, "weight": [0.0, 0.8, 0.4, 0.2], "memory": [np.inf] * 4}
-    s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
-                      build_shell_tables(geo))
-    s.draw(np.arange(5), np.array([1, 3]), np.random.default_rng(0).random((5, 2, 3, 8)))
+    values = _encoded(months, cells.size)
+    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
+    S = 20_000
+    got = s.draw(np.arange(5), np.array([1, 3]),
+                 np.random.default_rng(0).random((5, 2, 3, S))).astype(np.int64)
+    assert ((got % cells.size) != np.arange(5)[:, None, None]).all()
+    month_share = np.bincount((got // cells.size).ravel(), minlength=months.size) / got.size
+    np.testing.assert_allclose(month_share, 1 / months.size, atol=5 / np.sqrt(got.size))
 
 
 @pytest.mark.parametrize("change, h", [
@@ -1030,12 +1043,32 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
 ])
 def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h):
     """Code review of 84fd824: an all-zero or undefined doll row used to fall through to the
-    map silently (or crash on an empty map shell)."""
+    map silently (or crash on an empty map shell). The message names the first bad cell by its
+    priogrid id and the months ahead by value."""
     cells, country, geo, months, values = grid
     s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
                       geo, build_shell_tables(geo))
-    with pytest.raises(ValueError, match="no doll can be drawn for cell index 0"):
-        s.draw(np.arange(3), np.array([h]), np.random.default_rng(0).random((3, 1, 3, 4)))
+    block = np.array([5, 7, 9])
+    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {cells[5]} at {h} "
+                                         rf"months ahead"):
+        s.draw(block, np.array([h]), np.random.default_rng(0).random((3, 1, 3, 4)))
+
+
+def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted, monkeypatch):
+    """Code review of 49364fb: knobs under which no doll can be drawn fail before the first
+    block is drawn, not minutes into predict."""
+    from views_baseline.model.models.distributional.matryoshka import draw as draw_module
+
+    *_, df = planted
+    m = _model()
+    m.knobs = {"y": {**GOOD_KNOBS, "memory": [0.01] * 4}}
+    m.entity_ids, m.country, m.history_start = fitted.entity_ids, fitted.country, \
+        fitted.history_start
+    calls = []
+    monkeypatch.setattr(draw_module.Sampler, "draw", lambda *a, **k: calls.append(1))
+    with pytest.raises(ValueError, match="no doll can be drawn"):
+        m.predict(df, 0, 100 - 1)
+    assert not calls, "predict started drawing before checking the knobs"
 
 
 def test_fails_loud_on_an_infinite_country_code(planted):

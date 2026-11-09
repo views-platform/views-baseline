@@ -23,13 +23,18 @@ TARGET = "lr_sb_best"
 
 def main(code_dir: str, input_path: str, knobs_path: str, label: str) -> None:
     sys.path.insert(0, code_dir)
+    import views_baseline
     from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
 
-    knobs = json.loads(open(knobs_path).read())["targets"][TARGET]["package"]
+    print(label, "times the code in", views_baseline.__file__)
+    with open(knobs_path) as f:
+        knobs = json.load(f)["targets"][TARGET]["package"]
     df = pd.read_parquet(input_path, columns=[TARGET, "c_id"])
     months = df.index.get_level_values("month_id")
     cells = np.sort(df.index.get_level_values("priogrid_id").unique().to_numpy())
     country = df.xs(months.min(), level="month_id")["c_id"].reindex(cells).to_numpy()
+    if not np.isfinite(country).all():
+        raise ValueError("c_id is missing for some cells in the first month.")
     model = MatryoshkaConflictology(
         targets=[TARGET], partition_dict={"test": (457, 492)}, loa="pgm", n_samples=64,
         country_column="c_id", backtest_cutoffs=4, backtest_horizon=36, stability_refits=False,

@@ -119,8 +119,10 @@ other load:
   (`reports/matryoshka/results/package_check.json`). Stability refits multiply
   the search time by about 5.
 - **Predict,** one origin, all cells, 36 months: 49–52 s for one target at S = 64, and 86–91 s for
-  the draw before #147, timed alternately in one session (`results/predict_timing.json`,
-  `predict_timing.py`). The 61.8 s in `package_check.json` is a separate run, straight after the fit. Draw time scales with targets × S, so the full
+  the draw before #147, timed alternately in one session at commit 84fd824
+  (`reports/matryoshka/results/predict_timing.json`, `reports/matryoshka/predict_timing.py`).
+  Later commits changed the draw only by a check per block and by skipping a sort; not re-timed.
+  The 61.8 s in `package_check.json` is a separate run, straight after the fit. Draw time scales with targets × S, so the full
   3 targets × S = 256 is roughly 10 minutes per origin at this speed; less on a quieter machine.
 - **Output:** the output alone is about 7 GB per origin at that size, the same as conflictology's.
 
@@ -141,8 +143,8 @@ other load:
 | `predict` before `fit`; `sequence_number < 0`; `output_length < 1`; data ending before `c` | `ValueError` | |
 | Different cells from fit | `ValueError` naming up to 5 unfitted and 5 missing cells | A cell that appears after `train_end` has no fitted country or shells. |
 | `country_column` among the targets; empty `targets`; a setting of the wrong type or range (a bool or float count, a string for `stability_refits`, `n_samples < 1`, a negative seed). A numpy bool is accepted for `stability_refits` | `ValueError` at construction, naming the setting | ADR-008. |
-| Knobs set by hand that are out of range: not 4 weights and 4 memories, a weight negative or infinite, a memory or the length scale ≤ 0 or NaN (an infinite memory is allowed: no fading) | `ValueError("knobs out of range…")` when predict builds its sampler | The fit cannot produce these. |
-| Hand-set knobs under which no doll can be drawn for some cell and month ahead (all weights fade to 0, or their sum overflows) | `ValueError("no doll can be drawn…")` naming the cell, the months ahead and the knobs | Used to fall through to the map doll silently. |
+| Knobs set by hand that are out of range: not 4 weights and 4 memories, a weight negative or infinite, a memory ≤ 0 or NaN, a length scale ≤ 0, NaN or infinite (an infinite memory is allowed: no fading) | `ValueError("knobs out of range…")` when predict builds its sampler | The fit cannot produce these. |
+| Hand-set knobs under which no doll can be drawn for some cell and month ahead (all weights fade to 0, or their sum overflows) | `ValueError("no doll can be drawn…")` naming the cell's priogrid id, the months ahead and the knobs, before predict draws anything | Used to fall through to the map doll silently. |
 | An infinite country code | `ValueError` (with the non-integer check) | |
 | The search, or a stability refit, stops without converging, or its backtest probabilities hit the floor | **Not raised.** A WARNING per target and per refit; `knobs[t]["converged"]`, `message` and `floored` (and the same in each `leave_one_cutoff_out` entry) keep the details | The knobs and scores of every fit are logged at INFO. |
 
@@ -227,8 +229,8 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 | `test_settings_are_type_checked_at_construction`, `test_targets_must_not_be_empty`, `test_predict_rejects_an_empty_forecast`, `test_fails_loud_on_a_target_that_is_not_a_count`, `test_classify_rejects_values_that_are_not_counts`, `test_predict_names_the_cells_that_were_not_fitted` | The checks added after code review #147. |
 | `test_fit_logs_the_knobs_and_warns_when_the_search_stops_early`, `test_fit_warns_when_probabilities_hit_the_floor` | The fit's INFO line, and its warnings, for the search and for each stability refit. |
 | `test_each_target_draws_with_its_own_knobs` | With values that encode their cell, a cell-only target draws only from its cell and a neighbourhood target mostly from elsewhere: each target uses its own knobs. |
-| `test_sampler_rejects_knobs_out_of_range` (each doll's weight and memory, the counts, the length scale), `test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight`, `test_draw_fails_loud_when_no_doll_can_be_drawn`, `test_fails_loud_on_an_infinite_country_code`, `test_a_numpy_bool_is_accepted_for_stability_refits`, `test_row_search_answers_a_chunk_with_a_single_lookup` | The checks added after the reviews of the #147 fixes. |
-| `test_notebook_has_no_outputs`, `test_notebook_carries_no_images`, `test_the_image_pattern_catches_each_form` (`test_notebooks.py`) | No committed graphics: no outputs, attachments, image links, HTML images or inline SVG (#144). |
+| `test_sampler_rejects_knobs_out_of_range` (each doll's weight and memory, the counts, the length scale), `test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight`, `test_draw_fails_loud_when_no_doll_can_be_drawn`, `test_predict_checks_the_knobs_for_every_cell_before_drawing`, `test_fails_loud_on_an_infinite_country_code`, `test_a_numpy_bool_is_accepted_for_stability_refits`, `test_row_search_answers_a_chunk_with_a_single_lookup` | The checks added after the reviews of the #147 fixes. |
+| `test_notebook_has_no_outputs`, `test_notebook_carries_no_images`, `test_the_image_pattern_catches_each_form`, `test_the_image_pattern_leaves_plain_text_alone`, `test_no_image_files_are_tracked` (`test_notebooks.py`) | No committed graphics (#144): no notebook outputs or attachments; no image file names, embedding HTML elements, CSS `url(` or `data:` images in notebook cells; no tracked image files in the repository. |
 | `test_golden_matryoshka` (`test_golden.py`), `test_matryoshka_predict_needs_its_target_columns` (`test_dual_input.py`) | The exact seeded output with set knobs (C-29), and the C-34 exception. |
 | Shared lists in `test_protocol.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_matryoshka_genome_is_exact`), `test_baseline.py`, `test_config_conformance.py` | Protocol, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. The shared dual-input and seed-output lists use a 60-month panel without a country column, so those two checks are in `test_matryoshka.py`. |
 

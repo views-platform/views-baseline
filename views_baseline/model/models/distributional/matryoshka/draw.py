@@ -147,8 +147,9 @@ def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray,
     ``table`` (R, W): int64, each row ascending and ≥ 0; ``rows``, ``x``: int64, same shape;
     ``last`` (R,). Each row is shifted into its own integer range, so one search answers every
     element, exactly. Rows are taken in chunks small enough for the shifted values to stay in
-    int64 (about 500 rows for a CDF table); each chunk's elements are found once, by sorting on
-    the row, so the cost does not grow with the number of chunks. The chunking cannot change the
+    int64 (about 500 rows for a CDF table); each chunk's elements are found once (a slice when
+    the rows are already in order, as in the draw; otherwise by sorting on the row), so the cost
+    does not grow with the number of chunks. The chunking cannot change the
     answer.
     """
     shape = np.shape(x)
@@ -229,6 +230,7 @@ class Sampler:
     near_last: np.ndarray       # (N,) last neighbour offset with positive weight (0 if none)
     neighbours: np.ndarray
     shells: ShellTables
+    cell_ids: np.ndarray        # (N,) priogrid ids, for messages
 
     def doll_cdf(self, cells: np.ndarray, h: np.ndarray) -> np.ndarray:
         """(B, T, D): step 1's cumulative probabilities per cell and months ahead."""
@@ -242,7 +244,7 @@ class Sampler:
         bad = ~(np.isfinite(total) & (total > 0))
         if bad.any():
             b, t = np.argwhere(bad)[0]
-            raise ValueError(f"no doll can be drawn for cell index {int(cells[b])} at "
+            raise ValueError(f"no doll can be drawn for cell {int(self.cell_ids[cells[b]])} at "
                              f"{int(np.asarray(h)[t])} months ahead: the doll weights "
                              f"weight · exp(−h / memory) sum to {total[b, t]} (weight "
                              f"{self.weight.tolist()}, memory {self.memory.tolist()}).")
@@ -294,11 +296,11 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     # means no fading and is allowed. Whether some doll can be drawn at all is checked per
     # cell and month ahead, in `Sampler.doll_cdf`.
     if not (weight.shape == memory.shape == (len(DOLLS),) and np.all(np.isfinite(weight))
-            and np.all(weight >= 0) and np.all(memory > 0) and length > 0):
-        raise ValueError(f"knobs out of range: {len(DOLLS)} weights, finite and ≥ 0, and "
-                         f"{len(DOLLS)} memories > 0 (inf allowed), and a length scale > 0; got "
-                         f"weight {weight.tolist()}, memory {memory.tolist()}, length scale "
-                         f"{length}.")
+            and np.all(weight >= 0) and np.all(memory > 0) and 0 < length < np.inf):
+        raise ValueError(f"knobs out of range: {len(DOLLS)} weights, finite and ≥ 0, "
+                         f"{len(DOLLS)} memories > 0 (inf allowed), and a finite length scale "
+                         f"> 0; got weight {weight.tolist()}, memory {memory.tolist()}, "
+                         f"length scale {length}.")
     # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
@@ -310,4 +312,4 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     return Sampler(values=values, weight=weight, memory=memory,
                    month_grid=_cdf_on_grid(_cdf(month_w)),
                    near_grid=_cdf_on_grid(_cdf(near_w)), near_last=near_last,
-                   neighbours=geo.neighbours, shells=shells)
+                   neighbours=geo.neighbours, shells=shells, cell_ids=geo.cells)

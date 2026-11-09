@@ -804,9 +804,23 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
 - **Fixed:**
   - Hand-set knobs under which no doll can be drawn (all weights fade to 0, or their sum overflows) now fail loudly per cell. They used to fall through to the map silently.
   - The knob check now covers the number of knobs, every doll's position, NaN and inf. A zero cell weight is allowed: it is a valid mix.
-  - A refit's own floored count is warned about.
+  - Tested (the code already did it): a refit's own floored count is warned about.
   - The row search skips the sort when the rows are already in order (as in the draw).
   - `stability_refits` is checked, then stored as `bool`.
   - Notebook tests also refuse image links, HTML images and inline SVG.
   - The CIC failure and test tables are complete; the timing has its own source file.
 - **Survivors judged equivalent, left alone:** chunk size `2**63 // span` (still fits int64), a smaller chunk (speed only).
+
+## 2026-11-09: third review round (of 49364fb)
+
+- All three reviews: no correctness bug with fitted knobs; no decorative guard. Fixed:
+  - Knobs under which no doll can be drawn now fail before predict draws anything. One cell per pattern of empty shells is checked, at most 16.
+  - The message names the priogrid id and the months ahead.
+  - An infinite length scale is rejected.
+  - The dead first assignment of `stability_refits` is removed.
+- **Tests strengthened where the audit found them weak:**
+  - a zero cell weight and infinite memories are honoured, not only accepted;
+  - warning order for a search that is both unconverged and floored;
+  - error messages checked on cells whose position differs from their index.
+  - The image check is now broad (any image file name, embedding HTML, `url(`, `data:`), with a test that no image file is tracked.
+- **Timing:** the CIC says the figures were taken at 84fd824. The script now prints which code it imported.
