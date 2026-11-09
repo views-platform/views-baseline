@@ -795,5 +795,18 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
 - **Real data** (`results/package_check.json`, input md5 d3636988…):
   - The knobs equal the prototype's v5 exactly (gap 0) for all three types.
   - Fit 594 s, peak 4.3 GiB.
-  - Predict, one target, S = 64: 49–52 s new against 86–91 s for the code before #147, same machine and session. The 41 s of 2026-11-07 was a quieter machine.
+  - Predict, one target, S = 64: 49–52 s new against 86–91 s for the code before #147, timed alternately in one session (`results/predict_timing.json`, `predict_timing.py`). The 61.8 s in `package_check.json` is a separate run straight after the fit; the 41 s of 2026-11-07 was a quieter machine.
 - Process note: a mutation script restored files with `git checkout` while fixes were uncommitted, and wiped two files. They were restored from a stash made just before, and checked identical. Mutation checks now run on committed trees only.
+
+## 2026-11-09: second review round (of 84fd824)
+
+- review-diff, code-review high (with the skill's own background pass) and a falsify guard audit, in clean contexts. The code-review worked on an exported copy, so the guard audit's mutations could not reach it. No correctness bug reachable with fitted knobs; no decorative guard.
+- **Fixed:**
+  - Hand-set knobs under which no doll can be drawn (all weights fade to 0, or their sum overflows) now fail loudly per cell. They used to fall through to the map silently.
+  - The knob check now covers the number of knobs, every doll's position, NaN and inf. A zero cell weight is allowed: it is a valid mix.
+  - A refit's own floored count is warned about.
+  - The row search skips the sort when the rows are already in order (as in the draw).
+  - `stability_refits` is checked, then stored as `bool`.
+  - Notebook tests also refuse image links, HTML images and inline SVG.
+  - The CIC failure and test tables are complete; the timing has its own source file.
+- **Survivors judged equivalent, left alone:** chunk size `2**63 // span` (still fits int64), a smaller chunk (speed only).

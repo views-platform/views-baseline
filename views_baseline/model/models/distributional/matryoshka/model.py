@@ -142,8 +142,7 @@ class MatryoshkaConflictology:
         self.country_column = country_column
         self.backtest_cutoffs = backtest_cutoffs
         self.backtest_horizon = backtest_horizon
-        self.stability_refits = bool(stability_refits) if isinstance(
-            stability_refits, np.bool_) else stability_refits
+        self.stability_refits = stability_refits
         self.seed = seed
         if not self.targets:
             raise ValueError(f"{MODEL_NAME}: targets must not be empty.")
@@ -154,6 +153,7 @@ class MatryoshkaConflictology:
         if not isinstance(stability_refits, (bool, np.bool_)):
             raise ValueError(f"{MODEL_NAME}: stability_refits must be True or False, got "
                              f"{stability_refits!r}.")
+        self.stability_refits = bool(stability_refits)
         if not isinstance(country_column, str):
             raise ValueError(f"{MODEL_NAME}: country_column must be a column name, got "
                              f"{country_column!r}.")

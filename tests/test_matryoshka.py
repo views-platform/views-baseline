@@ -238,6 +238,26 @@ def test_row_lookup_never_overflows_onto_a_zero_probability_entry():
     np.testing.assert_array_equal(got, 3)
 
 
+@pytest.mark.parametrize("rows", [[0, 600, 1200, 1999], [1999, 0, 1200, 600]],
+                         ids=["ascending", "unordered"])
+def test_row_search_answers_a_chunk_with_a_single_lookup(rows):
+    """Code review of 84fd824: with one lookup per chunk of rows (CDF tables are searched about
+    500 rows at a time), every lookup must still be answered, sorted or not."""
+    from views_baseline.model.models.distributional.matryoshka.draw import (
+        _cdf,
+        _cdf_on_grid,
+        _row_searchsorted,
+        _uniforms_on_grid,
+    )
+
+    cdf = _cdf(np.random.default_rng(3).random((2000, 6)))
+    rows = np.array(rows)
+    u = np.array([0.1, 0.5, 0.7, 0.95])
+    expected = [np.searchsorted(cdf[r], x, side="right") for r, x in zip(rows, u)]
+    got = _row_searchsorted(_cdf_on_grid(cdf), rows, _uniforms_on_grid(u), np.full(2000, 5))
+    np.testing.assert_array_equal(got, expected)
+
+
 def test_row_search_is_exact_and_ignores_where_a_row_sits():
     """Code review #147, finding 4: the pick for a row must equal a plain per-row search of
     u ≥ cdf, for uniforms on rng.random's grid, including u exactly on a CDF entry, whatever
@@ -873,7 +893,8 @@ def test_fails_loud_on_a_target_that_is_not_a_count(planted, bad, message):
         _model().fit(broken)
 
 
-@pytest.mark.parametrize("bad, message", [(np.inf, "infinite"), (2.5, "non-integer")])
+@pytest.mark.parametrize("bad, message", [(np.inf, "infinite"), (-np.inf, "infinite"),
+                                          (2.5, "non-integer")])
 def test_classify_rejects_values_that_are_not_counts(bad, message):
     with pytest.raises(ValueError, match=message):
         classify(np.array([0.0, 3.0, bad]))
@@ -916,13 +937,15 @@ def test_fit_warns_when_probabilities_hit_the_floor(caplog):
         _log_fit("y", {**knobs, "floored": 0})
     assert not any(r.levelno == logging.WARNING for r in caplog.records)
     caplog.clear()
-    refits = [{**knobs, "left_out": 474, "floored": 0},
+    refits = [{**knobs, "left_out": 474, "floored": 2},
               {**knobs, "left_out": 486, "floored": 0, "converged": False, "message": "limit"}]
     with caplog.at_level(logging.INFO):
         _log_fit("y", {**knobs, "floored": 0, "leave_one_cutoff_out": refits})
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1 and "stability refit without cutoff 486 did not converge" in \
+    assert len(warnings) == 2
+    assert "stability refit without cutoff 474, 2 backtest probabilities fell below" in \
         warnings[0]
+    assert "stability refit without cutoff 486 did not converge" in warnings[1]
 
 
 Z_OFFSET = 1_000_000          # float32-exact with the encoded values added
@@ -966,18 +989,53 @@ def test_predict_names_the_cells_that_were_not_fitted(planted, fitted):
 # ── review of 62bd614 ───────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("change", [{"weight": [0.0, 1.0, 1.0, 1.0]},
-                                    {"weight": [1.0, -0.1, 1.0, 1.0]},
-                                    {"memory": [3.0, 0.0, 40.0, 200.0]},
-                                    {"length_scale": 0.0}])
+GOOD_KNOBS = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
+              "length_scale": 1.7}
+
+
+def _with(name, doll, value):
+    out = list(GOOD_KNOBS[name])
+    out[doll] = value
+    return {name: out}
+
+
+@pytest.mark.parametrize("change", [
+    *[_with("weight", d, -0.1) for d in range(4)],
+    *[_with("weight", d, np.inf) for d in range(4)],
+    *[_with("memory", d, 0.0) for d in range(4)],
+    _with("memory", 2, np.nan),
+    {"weight": [1.0]}, {"memory": [3.0, 8.0, 40.0]},
+    {"length_scale": 0.0}, {"length_scale": np.nan},
+], ids=lambda c: str(c))
 def test_sampler_rejects_knobs_out_of_range(grid, change):
-    """A hand-set zero cell weight could leave a cell with no doll to draw from."""
+    """Hand-set knobs: every doll's weight and memory is checked, and their number."""
     cells, country, geo, months, values = grid
-    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
-             "length_scale": 1.7, **change}
     with pytest.raises(ValueError, match="knobs out of range"):
-        build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+        build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
+                      geo, build_shell_tables(geo))
+
+
+def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
+    cells, country, geo, months, values = grid
+    knobs = {**GOOD_KNOBS, "weight": [0.0, 0.8, 0.4, 0.2], "memory": [np.inf] * 4}
+    s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
                       build_shell_tables(geo))
+    s.draw(np.arange(5), np.array([1, 3]), np.random.default_rng(0).random((5, 2, 3, 8)))
+
+
+@pytest.mark.parametrize("change, h", [
+    ({"memory": [0.01] * 4}, 100),                         # every weight fades to exactly 0
+    ({"weight": [0.0] * 4}, 1),
+    ({"weight": [1.0, 1e308, 1e308, 1e308]}, 1),           # the sum overflows
+])
+def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h):
+    """Code review of 84fd824: an all-zero or undefined doll row used to fall through to the
+    map silently (or crash on an empty map shell)."""
+    cells, country, geo, months, values = grid
+    s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
+                      geo, build_shell_tables(geo))
+    with pytest.raises(ValueError, match="no doll can be drawn for cell index 0"):
+        s.draw(np.arange(3), np.array([h]), np.random.default_rng(0).random((3, 1, 3, 4)))
 
 
 def test_fails_loud_on_an_infinite_country_code(planted):

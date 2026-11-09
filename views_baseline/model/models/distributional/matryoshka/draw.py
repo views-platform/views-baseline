@@ -25,7 +25,6 @@ from dataclasses import dataclass
 import numpy as np
 
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
-    CELL,
     COUNTRY,
     DOLLS,
     MAP,
@@ -172,11 +171,13 @@ def _row_searchsorted(table: np.ndarray, rows: np.ndarray, x: np.ndarray,
     if R <= chunk:
         search(0, slice(None))
     else:
-        order = np.argsort(rows, kind="stable")
-        bounds = np.searchsorted(rows[order], np.arange(0, R + chunk, chunk))
+        ascending = bool(np.all(rows[1:] >= rows[:-1]))     # as in the draw: no sort needed
+        order = None if ascending else np.argsort(rows, kind="stable")
+        bounds = np.searchsorted(rows if ascending else rows[order],
+                                 np.arange(0, R + chunk, chunk))
         for c, (lo, hi) in enumerate(zip(bounds[:-1], bounds[1:])):
             if hi > lo:
-                search(c * chunk, order[lo:hi])
+                search(c * chunk, slice(lo, hi) if ascending else order[lo:hi])
     return out.reshape(shape)
 
 
@@ -233,7 +234,19 @@ class Sampler:
         """(B, T, D): step 1's cumulative probabilities per cell and months ahead."""
         a = self.weight[None, :] * np.exp(-np.asarray(h, dtype=np.float64)[:, None] / self.memory)
         nonempty = (self.shells.sizes[:, cells] > 0).T                       # (B, D)
-        return _cdf(a[None, :, :] * nonempty[:, None, :])
+        p = a[None, :, :] * nonempty[:, None, :]
+        with np.errstate(over="ignore"):              # an overflow is reported just below
+            total = p.sum(axis=-1)
+        # Fitted knobs always give a positive, finite total (the cell's weight is 1, memories
+        # ≥ 1 month). Hand-set ones may not: all weights fading to 0, or overflowing.
+        bad = ~(np.isfinite(total) & (total > 0))
+        if bad.any():
+            b, t = np.argwhere(bad)[0]
+            raise ValueError(f"no doll can be drawn for cell index {int(cells[b])} at "
+                             f"{int(np.asarray(h)[t])} months ahead: the doll weights "
+                             f"weight · exp(−h / memory) sum to {total[b, t]} (weight "
+                             f"{self.weight.tolist()}, memory {self.memory.tolist()}).")
+        return _cdf(p)
 
     def draw(self, cells: np.ndarray, h: np.ndarray, u: np.ndarray) -> np.ndarray:
         """Forecast draws (B, T, S) for cells (B,) at months ahead h (T,), from uniforms
@@ -277,13 +290,15 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     weight = np.asarray(knobs["weight"], dtype=np.float64)
     memory = np.asarray(knobs["memory"], dtype=np.float64)
     length = float(knobs["length_scale"])
-    # The fit keeps these in range (the cell's weight is fixed at 1). Set by hand, a zero cell
-    # weight could leave a cell with no doll to draw from (code review of 62bd614).
-    if not (np.all(np.isfinite(weight)) and np.all(weight >= 0) and weight[CELL] > 0
-            and np.all(memory > 0) and length > 0):
-        raise ValueError(f"knobs out of range: weights must be finite and ≥ 0 with the cell's "
-                         f"> 0, memories and the length scale > 0; got weight {weight.tolist()}, "
-                         f"memory {memory.tolist()}, length scale {length}.")
+    # The fit keeps the knobs in range; these checks are for knobs set by hand. A memory of inf
+    # means no fading and is allowed. Whether some doll can be drawn at all is checked per
+    # cell and month ahead, in `Sampler.doll_cdf`.
+    if not (weight.shape == memory.shape == (len(DOLLS),) and np.all(np.isfinite(weight))
+            and np.all(weight >= 0) and np.all(memory > 0) and length > 0):
+        raise ValueError(f"knobs out of range: {len(DOLLS)} weights, finite and ≥ 0, and "
+                         f"{len(DOLLS)} memories > 0 (inf allowed), and a length scale > 0; got "
+                         f"weight {weight.tolist()}, memory {memory.tolist()}, length scale "
+                         f"{length}.")
     # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
