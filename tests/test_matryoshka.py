@@ -1068,49 +1068,101 @@ def test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead(grid):
     with_country = int(np.nonzero(country > 0)[0][0])
     first, second = np.nonzero(country <= 0)[0][:2]
     assert shells.sizes[COUNTRY, with_country] > 0
-    with pytest.raises(ValueError,
-                       match=rf"no doll can be drawn for cell {cells[first]} at 50 months"):
+    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {cells[first]} at 50 "
+                                         rf"months ahead: .* sum to 0.0 "):
         s.draw(np.array([with_country, first, second]), np.array([50, 1, 60]),
                np.random.default_rng(0).random((3, 3, 3, 4)))
 
 
-def test_check_drawable_covers_every_shell_pattern_and_every_months_ahead(monkeypatch):
-    """A grid with four shell patterns: a 6 × 6 block (its centre has no map shell), two cells
-    without a country in it, a far cell sharing a country, and a far cell alone in its own."""
-    from views_baseline.model.models.distributional.matryoshka.draw import Sampler
-
+def _block_grid():
+    """A 6 × 6 block, one country, two cells without one: every combination of an empty and a
+    non-empty country and map shell (centre cells have neither)."""
     rr, cc = np.meshgrid(np.arange(100, 106), np.arange(200, 206), indexing="ij")
-    cells = np.sort(np.r_[(rr * N_COLS + cc + 1).ravel(), 150 * N_COLS + 401,
+    cells = np.sort((rr * N_COLS + cc + 1).ravel())
+    country = np.full(cells.size, 7)
+    country[[0, 35]] = -1
+    return cells, country
+
+
+SPARSE_CELL = 103 * N_COLS + 210          # nearest neighbour 4 cells away
+
+
+def _sparse_grid():
+    """A 6 × 6 block in two countries, a cell 4 cells off its east edge (in the east country),
+    and two isolated cells far apart in country 8, so each has a country shell of exactly one
+    cell and an empty neighbourhood."""
+    rr, cc = np.meshgrid(np.arange(100, 106), np.arange(200, 206), indexing="ij")
+    cells = np.sort(np.r_[(rr * N_COLS + cc + 1).ravel(), SPARSE_CELL, 150 * N_COLS + 401,
                           150 * N_COLS + 421])
     country = np.where((cells - 1) % N_COLS < 203, 7, 9)
     country[[0, 20]] = -1
-    country[-1] = 8
+    country[(cells - 1) // N_COLS == 150] = 8
+    return cells, country
+
+
+@pytest.mark.parametrize("make_grid", [_block_grid, _sparse_grid])
+def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, monkeypatch):
+    """One cell per pattern of drawable dolls is checked, at every months ahead given."""
+    from views_baseline.model.models.distributional.matryoshka.draw import Sampler
+
+    cells, country = make_grid()
     geo = build_geometry(cells, country)
     months = np.arange(100, 130)
     values = np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size))
-    shells = build_shell_tables(geo)
-    s = build_sampler(values.astype(np.float32), months, months[-1], GOOD_KNOBS, geo, shells)
+    s = build_sampler(values.astype(np.float32), months, months[-1], GOOD_KNOBS, geo,
+                      build_shell_tables(geo))
     seen = []
     real = Sampler.doll_cdf
-    monkeypatch.setattr(Sampler, "doll_cdf",
-                        lambda self, c, h: seen.append((np.asarray(c), np.asarray(h)))
-                        or real(self, c, h))
+
+    def spy(self, c, h):
+        seen.append((np.asarray(c), np.asarray(h)))
+        return real(self, c, h)
+
+    monkeypatch.setattr(Sampler, "doll_cdf", spy)
     h = np.array([1, 7, 36])
     s.check_drawable(h)
     checked = np.concatenate([c for c, _ in seen])
-    pattern = (shells.sizes > 0).T
+    pattern = s.drawable.T
     assert {tuple(p) for p in pattern[checked]} == {tuple(p) for p in pattern}
-    assert len({tuple(p) for p in pattern}) == 4, "the grid must have four patterns"
+    assert len({tuple(p) for p in pattern}) >= 3
     assert all(np.array_equal(hh, h) for _, hh in seen)
 
 
-def test_sampler_rejects_a_length_scale_that_empties_the_neighbourhood(grid):
-    """Code review of 8035122: with ℓ = 0.001 every neighbour weight is 0, and edge cells drew
-    another cell's value."""
-    cells, country, geo, months, values = grid
-    with pytest.raises(ValueError, match="length scale 0.001 is so small"):
-        build_sampler(values.astype(np.float32), months, months[-1],
-                      {**GOOD_KNOBS, "length_scale": 1e-3}, geo, build_shell_tables(geo))
+def test_the_two_grids_have_the_shell_cases_the_coverage_test_needs():
+    block = build_shell_tables(build_geometry(*_block_grid())).sizes
+    sparse = build_shell_tables(build_geometry(*_sparse_grid())).sizes
+    assert (block[MAP] == 0).any() and (block[MAP] > 0).any()
+    assert (block[COUNTRY] == 0).any() and (block[COUNTRY] > 0).any()
+    assert (sparse[COUNTRY] == 1).any() and (sparse[NEAR] == 0).any()
+
+
+def test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn(monkeypatch):
+    """Code review of 8035122 and df349b4: at ℓ = 0.002, exp(−1/ℓ) > 0 but exp(−4/ℓ) = 0, so
+    only the sparse cell (nearest neighbour 4 cells away) loses its neighbourhood. It used to
+    be picked anyway, and drew another cell's value. Now that cell draws only from its other
+    dolls; the block's cells still draw neighbours; and with weight on the neighbourhood alone,
+    the sparse cell is named as having no doll to draw."""
+    cells, country = _sparse_grid()
+    geo = build_geometry(cells, country)
+    months = np.arange(100, 130)
+    values = _encoded(months, cells.size)
+    shells = build_shell_tables(geo)
+    sparse = int(np.nonzero(cells == SPARSE_CELL)[0][0])
+    assert shells.sizes[NEAR, sparse] > 0, "the sparse cell does have a neighbour"
+    knobs = {"weight": [1.0, 1.0, 0.0, 0.0], "memory": [10.0] * 4, "length_scale": 0.002}
+    s = build_sampler(values, months, months[-1], knobs, geo, shells)
+    assert not s.drawable[NEAR, sparse] and s.drawable[NEAR, sparse - 1]
+    block_cell = 14                                      # inside the block
+    got = s.draw(np.array([block_cell, sparse]), np.array([1]),
+                 np.random.default_rng(0).random((2, 1, 3, 4000)))[:, 0].astype(np.int64)
+    source = got % cells.size
+    assert (source[1] == sparse).all(), "the sparse cell drew from another cell"
+    assert (source[0] != block_cell).any(), "the block cell never drew a neighbour"
+    near_only = {**knobs, "weight": [0.0, 1.0, 0.0, 0.0]}
+    s = build_sampler(values, months, months[-1], near_only, geo, shells)
+    with pytest.raises(ValueError, match=rf"no doll can be drawn for cell {SPARSE_CELL} .* sum "
+                                         rf"to 0.0 "):
+        s.check_drawable(np.array([1]))
 
 
 def test_predict_checks_the_knobs_for_every_cell_before_drawing(planted, fitted, monkeypatch):

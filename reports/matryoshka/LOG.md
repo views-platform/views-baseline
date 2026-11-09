@@ -822,7 +822,7 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - a zero cell weight and infinite memories are honoured, not only accepted;
   - warning order for a search that is both unconverged and floored;
   - error messages checked on cells whose position differs from their index.
-  - The image check is now broad (any image file name, embedding HTML, `url(`, `data:`), with a test that no image file is tracked.
+  - The image check is now broad (any image file name, embedding HTML, CSS url references, base64 image URIs), with a test that no image file is tracked.
 - **Timing:** the CIC says the figures were taken at 84fd824. The script now prints which code it imported.
 
 ## 2026-11-09: fourth review round (of a92e06f)
@@ -847,4 +847,21 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - reads paths with `-z`;
   - code cells are checked for HTML and `data:` images;
   - file names and code spans count as text;
-  - more extensions and `<input>`.
+  - more extensions, and the HTML input element.
+
+## 2026-11-09: sixth review round (of df349b4)
+
+- No bug reachable with fitted knobs; no decorative guard.
+- **Root-cause fix (code-review).** The draw judged a neighbourhood non-empty from its neighbour count, while the pick used the neighbours' weights. Now the sampler keeps `drawable` (D × N): the shells' non-emptiness, with the neighbourhood counting only if some neighbour has a positive weight. Step 1 uses it and so does `check_drawable`.
+  - The length-scale guard of the fifth round is removed: it also refused working knobs.
+  - A cell whose neighbour weights all underflow simply never picks its neighbourhood. If that leaves it nothing, the existing "no doll" error names it.
+  - At fitted knobs (ℓ ≥ 0.25) `drawable` equals the shells the fit scores.
+- **Tests.**
+  - Two purpose-built grids: one where centre cells have no map shell; one with one-cell country shells, a cell whose nearest neighbour is 4 away, and isolated cells.
+  - A partial ℓ (0.002) empties only the sparse cell's neighbourhood. The no-doll message is pinned to its total.
+- **No committed graphics, made strict.**
+  - The scan no longer tries to skip code spans; every way it tried had a hole. Docs name the forms in words instead.
+  - Also covered: HTML files, `.markdown` in any case, and notebook metadata.
+  - A tag must be followed by a space, ">" or "/", so code like `idx<image.shape` passes.
+  - A git failure fails one test, not the file. Missing files are skipped, and files are read as UTF-8.
+  - A minimum-set test protects the lists themselves.

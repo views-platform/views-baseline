@@ -219,7 +219,12 @@ class Sampler:
     ``values`` (M, N): the history panel, months ascending, ending at c. ``month_grid`` (D, M):
     step 2's CDF per doll, and ``near_grid`` (N, n_offsets) step 3's for the neighbourhood (zero
     row for an empty neighbourhood), both as `_cdf_on_grid` integers. ``weight``, ``memory``
-    (D,): step 1.
+    (D,): step 1. ``drawable`` (D, N): whether each doll of each cell has a cell to draw.
+
+    ``drawable`` is the shells' non-emptiness, except that a neighbourhood counts only if some
+    neighbour has a positive kernel weight: step 1 must never pick a doll that step 3 cannot
+    draw from (code review of df349b4). At fitted knobs (ℓ ≥ 0.25) every present neighbour has
+    a positive weight, so this equals the shells the fit scores.
     """
 
     values: np.ndarray
@@ -230,13 +235,13 @@ class Sampler:
     near_last: np.ndarray       # (N,) last neighbour offset with positive weight (0 if none)
     neighbours: np.ndarray
     shells: ShellTables
+    drawable: np.ndarray        # (D, N) bool
     cell_ids: np.ndarray        # (N,) priogrid ids, for messages
 
     def doll_cdf(self, cells: np.ndarray, h: np.ndarray) -> np.ndarray:
         """(B, T, D): step 1's cumulative probabilities per cell and months ahead."""
         a = self.weight[None, :] * np.exp(-np.asarray(h, dtype=np.float64)[:, None] / self.memory)
-        nonempty = (self.shells.sizes[:, cells] > 0).T                       # (B, D)
-        p = a[None, :, :] * nonempty[:, None, :]
+        p = a[None, :, :] * self.drawable[:, cells].T[:, None, :]
         with np.errstate(over="ignore"):              # an overflow is reported just below
             total = p.sum(axis=-1)
         # Fitted knobs always give a positive, finite total (the cell's weight is 1, memories
@@ -253,11 +258,11 @@ class Sampler:
     def check_drawable(self, h: np.ndarray) -> None:
         """Raise (as `doll_cdf`) unless every cell has a doll to draw at every months ahead h.
 
-        A cell's doll mix depends only on h and on which of its shells are empty, so one cell
-        per pattern of empty shells checks them all: at most 2^3 patterns, since a cell's own
-        shell is never empty. Predict calls this before drawing anything.
+        A cell's doll mix depends only on h and on which of its dolls are drawable, so one cell
+        per pattern of drawable dolls checks them all: at most 2^3 patterns, since a cell's own
+        doll is always drawable. Predict calls this before drawing anything.
         """
-        _, one_per_pattern = np.unique((self.shells.sizes > 0).T, axis=0, return_index=True)
+        _, one_per_pattern = np.unique(self.drawable.T, axis=0, return_index=True)
         self.doll_cdf(np.sort(one_per_pattern), h)
 
     def draw(self, cells: np.ndarray, h: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -317,13 +322,12 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     near_w = np.where(geo.neighbours >= 0,
                       np.exp(-OFFSET_DISTANCE / length)[None, :], 0.0)
     has_near = near_w > 0
-    if np.any((geo.neighbours >= 0).any(axis=1) & ~has_near.any(axis=1)):
-        raise ValueError(f"knobs out of range: length scale {length} is so small that every "
-                         f"neighbour's weight exp(−d / ℓ) is 0, so a neighbourhood could be "
-                         f"picked with no cell in it to draw.")
+    drawable = shells.sizes > 0
+    drawable[NEAR] = has_near.any(axis=1)
     near_last = np.where(has_near.any(axis=1),
                          near_w.shape[1] - 1 - np.argmax(has_near[:, ::-1], axis=1), 0)
     return Sampler(values=values, weight=weight, memory=memory,
                    month_grid=_cdf_on_grid(_cdf(month_w)),
                    near_grid=_cdf_on_grid(_cdf(near_w)), near_last=near_last,
-                   neighbours=geo.neighbours, shells=shells, cell_ids=geo.cells)
+                   neighbours=geo.neighbours, shells=shells, drawable=drawable,
+                   cell_ids=geo.cells)
