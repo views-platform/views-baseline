@@ -53,6 +53,11 @@ _MODELS = [
                                               alpha=0.5, bandwidth=1.0, seed=42)),
 ]
 _IDS = [n for n, _ in _MODELS]
+# MatryoshkaConflictology is left out on purpose: it needs ten years of history and a grid with
+# countries, which the tiny frames here lack. It has its own DataFrame-vs-FeatureFrame test
+# (test_matryoshka.py), and it is the one exception to C-34: predict reads the target values,
+# because a forecast from origin train_end + k draws from the history up to that month (ADR-024).
+# test_matryoshka_predict_needs_its_target_columns pins the exception.
 
 
 @pytest.mark.parametrize("factory", [f for _, f in _MODELS], ids=_IDS)
@@ -133,3 +138,16 @@ def test_featureframe_input_produces_valid_output(factory):
     for t in out:
         assert out[t].values.shape[0] > 0
         assert not np.isnan(out[t].values).any()
+
+
+def test_matryoshka_predict_needs_its_target_columns():
+    """The C-34 exception (ADR-024): an index-only frame fails loudly at predict, by name."""
+    from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
+
+    df = make_dummy_df()
+    m = MatryoshkaConflictology(**_BASE, n_samples=8, country_column="c_id",
+                                backtest_cutoffs=1, backtest_horizon=1,
+                                stability_refits=False, seed=42)
+    m.knobs = {"y1": {}, "y2": {}}            # predict must fail before it uses the knobs
+    with pytest.raises(ValueError, match=r"missing required target column\(s\) \['y1'"):
+        m.predict(df=df.drop(columns=["y1", "y2"]), sequence_number=0, output_length=2)

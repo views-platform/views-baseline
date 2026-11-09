@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-09",
+  "what": "MatryoshkaConflictology.predict, one origin (36 months), all 64,818 land cells, lr_sb_best, S = 64, knobs set from package_check.json (no fit)",
+  "input_md5": "d3636988b1085af74a08555c347ec5fe",
+  "script": "reports/matryoshka/predict_timing.py",
+  "order": "old, new, new, old (one session, alternating)",
+  "seconds": {"old (b6dda80)": [91.1, 86.2], "new (84fd824)": [51.7, 49.0]},
+  "note": "package_check.json's predict_one_origin (61.8 s) was a separate run, right after a 594 s fit, in the same session."
+}

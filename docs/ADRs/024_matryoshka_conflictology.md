@@ -1,6 +1,6 @@
 # ADR-024: MatryoshkaConflictology: a climatology that opens outward as its information ages
 
-**Status:** Accepted (amended 2026-11-05: data up to each forecast origin; see "Where the history ends")
+**Status:** Accepted. Amended 2026-11-05 (data up to each forecast origin; see "Where the history ends") and 2026-11-06 (the two rings replaced by one smooth neighbourhood, and the design made final after the prototype; see "Amendment 2026-11-06: what the prototype settled")
 **Date:** 2026-11-05
 **Deciders:** Simon
 **Consulted:** views-baseline #109 and #82 (Phase-1 results and the age checks); views-models `reports/2026-11-04_baseline_phase1/sparse_support_question.md` (branch `docs/baseline-phase1-campaign`, commit `a001aba7`); views-hydranet `reports/2026-09-30_evaluation_learning_report.md` (evaluation lessons)
@@ -20,8 +20,7 @@ this certainty gets steadily less justified as the information ages.
 Russian dolls:
 
 - the **cell** itself is the smallest doll;
-- around it, its **nearest neighbours**;
-- then the **next ring** of neighbours;
+- around it, its **neighbourhood**: nearby cells, the closest ones counting most;
 - then its **country**;
 - and finally the **whole map**.
 
@@ -149,23 +148,26 @@ We add a new baseline, **`MatryoshkaConflictology`**.
 At grid-cell level (pgm), from the inside out:
 
 1. **The cell itself.**
-2. **Ring 1:** the 8 cells touching it, including diagonally.
-3. **Ring 2:** the 16 cells touching ring 1.
-4. **The rest of the country:** the cell's country, minus the cell and its two rings.
-5. **The rest of the map:** everything else. This is a backstop: it only gets weight if the data shows
+2. **The neighbourhood** (amended 2026-11-06, #139; it replaces the two square rings of the first
+   version): the land cells within 5 cells of it, measured in a straight line between cell centres (up to
+   80 cells). Within this doll, a neighbour at distance `d` is picked with probability proportional to
+   `exp(−d / ℓ)`, so closer cells count more. The length scale `ℓ` is a fitted knob.
+3. **The rest of the country:** the cell's country, minus the cell and its neighbourhood.
+4. **The rest of the map:** everything else. This is a backstop: it only gets weight if the data shows
    it helps. For the 76 cells that have no country (mostly small islands), it is the only outer doll.
 
 **Each doll is a shell: it leaves out the dolls inside it.** So no cell is ever counted twice. Without
-this, the country would contain the cell and its rings, and the whole map would contain everything, so the
-cell's own history would be counted several times over. A shell can be empty: for example, a coastal cell
-may have no land cells in its ring 2, and a small country may lie entirely within the rings. An empty shell
-simply takes no part in the forecast.
+this, the country would contain the cell and its neighbourhood, and the whole map would contain
+everything, so the cell's own history would be counted several times over. A shell can be empty: for
+example, a small island may have no land cells within 5 cells, and a small country may lie entirely within
+the neighbourhood. An empty shell simply takes no part in the forecast.
 
 Neighbours can be computed directly from each cell's ID, because `priogrid_id = (row − 1) × 720 + col`.
 We verified this on all 64,818 land cells, so no new data is needed.
 
-At **country level (cm)** there are no rings for now: the dolls are the country itself, then the rest of
-the map. Neighbouring countries, or a region/theatre doll, can be added in a later version.
+At **country level (cm)** there is no neighbourhood for now: the dolls are the country itself, then the
+rest of the map. A neighbouring-countries doll was considered for the grid level and dropped (#138; see the
+2026-11-06 amendment).
 
 ### What "country" means here
 
@@ -214,9 +216,11 @@ Recent months are more likely than old ones, at the doll's own pace. Dividing by
 probabilities add up to exactly 1, so this step only decides *which* months the doll's say goes to, never
 *how much* say the doll has.
 
-**Step 3: pick a cell within that doll in that month,** uniformly. If the shell has `n_k(s)` cells that
-month, each has probability `1 / n_k(s)`. This makes every doll count as one voice however many cells it
-has; without it, a large country would drown out the cell itself.
+**Step 3: pick a cell within that doll in that month.** For the country and the map this is uniform: if
+the shell has `n_k(s)` cells that month, each has probability `1 / n_k(s)`. For the neighbourhood, a
+neighbour at distance `d` has probability `exp(−d / ℓ) / Σ exp(−d' / ℓ)`, the sum running over the
+cell's land neighbours (amended 2026-11-06). Either way, every doll counts as one voice however many cells
+it has; without that, a large country would drown out the cell itself.
 
 **Put together,** the probability of drawing the observation of cell `i` in doll `k` in month `s` is
 proportional to
@@ -224,6 +228,8 @@ proportional to
 ```
 w(k, s, i; t) = ring_weight[k] × exp(−(t − c) / memory[k]) × exp(−(c − s) / memory[k]) / Z_k / n_k(s)
 ```
+
+(for the neighbourhood, `1 / n_k(s)` is replaced by the distance weight of step 3)
 
 (the forecast divides by the sum of `w` over everything, so the probabilities add up to 1).
 
@@ -314,31 +320,30 @@ only be a way to save computing time. The literature supports looking far back:
 
 **Each doll has its own weight and its own memory**, estimated from data:
 
-| doll | weight | memory |
-|---|---|---|
-| the cell | fixed at 1 (the reference) | estimated |
-| ring 1 | estimated | estimated |
-| ring 2 | estimated | estimated |
-| the rest of the country | estimated | estimated |
-| the rest of the map | estimated | estimated |
+| doll | weight | memory | other |
+|---|---|---|---|
+| the cell | fixed at 1 (the reference) | estimated | |
+| the neighbourhood | estimated | estimated | length scale `ℓ`, estimated |
+| the rest of the country | estimated | estimated | |
+| the rest of the map | estimated | estimated | |
 
-That is **9 knobs**, and there is a separate set for each violence type (state-based, non-state,
-one-sided), because the evidence shows they age differently. A single shared set is also fitted as a
-check, and used instead if it does just as well.
+That is **8 knobs** (amended 2026-11-06; the first version had 9, with two rings), and there is a separate
+set for each violence type (state-based, non-state, one-sided), because the evidence shows they age
+differently. The fitted memories confirm this (see the amendment below). A single shared set, planned
+here as a check, was not fitted in the prototype; the separate sets are kept.
 
-We considered a simpler rule where each ring outward gets a fixed fraction of the weight and a fixed
-multiple of the memory. With only two rings that saves just one knob, so we do not impose it. Instead the
-fit reports whether the freely estimated values happen to follow such a rule.
+The fit searches within fixed limits: weights 1e-6 to 1,000, memories 1 to 600 months, `ℓ` 0.25 to 10
+cells. **The 600-month memory limit is a deliberate ceiling** (#140): a memory at 600 means "the whole
+history, roughly equally", which is longer than the 28 years of history can tell apart.
 
 ### Starting points from the literature
 
 von der Maase (2025), *The Currents of Conflict*, estimates how conflict relates across space and time
 using Gaussian processes. Its estimates give sensible starting values and plausible ranges:
 
-- **Space:** a length scale of 0.72° (a Matérn 3/2 kernel over cell centres). Translated to our rings,
-  that means ring 1 relates to the cell about 0.58 as strongly as the cell itself, and ring 2 about
-  0.24. So each ring outward keeps roughly 40% of the previous one's influence, and a third ring would add
-  less than 10%. This independently supports using two rings.
+- **Space:** a length scale of 0.72° (a Matérn 3/2 kernel over cell centres). The neighbourhood's `ℓ`
+  is directly comparable. The fitted values are 0.40° (state-based), 0.68° (non-state) and 0.49°
+  (one-sided), so non-state matches closely, and the other two are somewhat shorter.
 - **Time:** a short-term timescale of about 4 months and a long-term one of about 122 months.
 
 These were estimated on log fatalities in the 60 most conflict-heavy cells, so they describe hot regions,
@@ -379,7 +384,9 @@ Why this score, and not CRPS or the Brier score (lessons from the hydranet evalu
   the model had never seen that exact count. Classes avoid that, and one misplaced record, like the 113,000
   Tigray deaths in a single cell, costs one bad class instead of dominating the score (it made up 38% of
   every model's CRPS in Phase-1). If a class never occurred anywhere in the history of a violence type, it
-  is merged with its neighbour for that type, so no class can have probability zero for every cell.
+  is merged with its neighbour for that type, so no class can have probability zero for every cell. (In
+  the training data every class occurs for every violence type, so no merge has been needed. The rarest
+  is more than 1,000 fatalities for non-state violence, with 10 cell-months.)
 
 **The fitting score is never used to judge the model.** The hydranet report's rule (§8, row 16): *no
 quantity in the training objective may serve as a promotion criterion*. The log score is reported, but the
@@ -412,8 +419,8 @@ data. It is not a prerequisite for building Matryoshka (#127); the two can be ru
 - **One idea covers three open issues.** It combines forecasts that know how old their information is
   (#82), older data counting less (#111) and borrowing from neighbours (#112) into a single weighting,
   rather than three separate models whose interactions would never be tested.
-- **It stays small and readable.** No outside data, 9 knobs per violence type, and each knob has a plain
-  meaning: a memory in months, or how much a doll counts.
+- **It stays small and readable.** No outside data, 8 knobs per violence type, and each knob has a plain
+  meaning: a memory in months, how much a doll counts, or how far the neighbourhood reaches.
 - **It never invents values.** Unlike model C, every draw is something that actually happened nearby.
   Forecasts stay whole numbers, and C's known bias at small counts (ADR-023) does not apply.
 
@@ -460,8 +467,8 @@ month ahead as three years ahead.
 - **Estimating knobs is new for this repo.** Every existing baseline only has a window length. A backtest
   loop adds code and running time, and needs its own tests.
 - **Forecasting is heavier.** The weights depend on the month being forecast, so the draw has to be
-  prepared for every cell *and* every forecast month, not just every cell. Ring averages per month need to
-  be computed in advance on the 360 × 720 grid.
+  prepared for every cell *and* every forecast month, not just every cell. Neighbourhood sums per month
+  need to be computed in advance on the 360 × 720 grid.
 - **Misplaced records spread further.** Some records in the data put a whole region's annual death toll
   into one cell and one month. One such record puts about 113,000 deaths from the Tigray war into a single
   cell in December 2021 (UCDP event 463131; views-datafactory#533). With Matryoshka, such a record would
@@ -474,11 +481,13 @@ month ahead as three years ahead.
 
 - The new class goes in `views_baseline/model/models/distributional/`, registered in the model catalog,
   with explicit configuration keys and no hidden defaults (ADR-021).
-- Structural choices (number of rings, the outer dolls, how much history, the backtest design) are
-  configuration. The fitted knob values are stored on the model and reported, not configured.
+- The backtest design is configuration. The history is not: it is all the data passed, from its first
+  month (recorded at fit as `history_start`, and checked at predict). How much history to use is
+  decided by the input pull, not by a setting. The dolls, the 5-cell neighbourhood
+  radius, the size classes and the knob limits are fixed by this ADR, not configured. The fitted knob
+  values are stored on the model and reported, not configured.
 - Neighbours are computed from `priogrid_id`. Each doll is a shell that excludes the dolls inside it.
-  Grid level first; country level uses country → rest of the map,
-  without rings.
+  Grid level first; country level uses country → rest of the map, without a neighbourhood.
 - Random draws follow the same seeding discipline as the other distributional models
   (`sample_prediction_grid`), so results are reproducible.
 - Memory use during evaluation is handled by the streaming evaluation added in 1.1.1 (#121).
@@ -525,9 +534,9 @@ All settled by Simon on 2026-11-05:
   Checked numerically (`reports/matryoshka/matryoshka_math_check.py`).
 - The knobs are fitted on a **log score over seven size classes**, and that score is never used to judge
   the model.
-- Two rings of neighbours.
+- Two rings of neighbours. *(Replaced on 2026-11-06 by one smooth neighbourhood; see the amendment.)*
 - A separate set of knobs for each violence type.
-- No rings at country level for now.
+- No rings (now: no neighbourhood) at country level for now.
 - One memory per doll in this first version.
 - A free weight and memory for every doll (no fixed ring rule).
 - At least 10 years of history, by default all of it.
@@ -545,9 +554,106 @@ there to measure.
 
 - **Two memories for the cell itself:** a short one for bursts that die out within months (about 4
   months in von der Maase 2025) on top of a long one for the cell's long-run level.
-- **A region or theatre doll**, and rings at country level (using which countries border which).
 - **A slower fade than exponential**, for example based on the logarithm of time (after Hegre et al.
-  2013), if the fitted country memory keeps hitting its upper limit.
+  2013). The one-sided rest-of-map memory sits at the 600-month ceiling in every fit (#140); that is the
+  case this would address. Accepted as it is for now.
+
+The region doll and the neighbouring-countries doll that were listed here have been tested or dropped; see
+the amendment below.
+
+---
+
+## Amendment 2026-11-06: what the prototype settled
+
+The design above was built as a prototype (`reports/matryoshka/`, branch `feat/127-matryoshka-prototype`)
+and fitted on real data before any package code. Every result and decision is in the running log
+`reports/matryoshka/LOG.md`, and on the issues of epic #135. Simon declared the design final on
+2026-11-06 (LOG.md, commit `187ce44`). **The package build (#127) follows this amendment where it differs
+from the text above.**
+
+**The pictures** are in the notebook `notebooks/matryoshka_conflictology.ipynb`. It explains what the model
+does and how, with the package code, and draws every plot when it is run: the dolls of a cell, the
+neighbourhood kernel, how the mix of dolls changes with distance, the fit, the sampler against the exact
+probabilities, the out-of-sample maps against conflictology, and the size of a possible outbreak in quiet
+places. No graphics are committed (#144). The prototype's own map scripts are in
+`reports/matryoshka/prototype/` (`map_forecasts.py`, `map_conditional_mean.py`, `compare_maps.py`).
+
+### What changed, and why
+
+- **The two square rings became one smooth neighbourhood (#139, kept).**
+  - The rings left visible square halos around active cells in the forecast maps.
+  - The fitted ring weights, per cell, already fell off smoothly with distance.
+  - A neighbourhood with `exp(−d / ℓ)` within 5 cells scores better than the rings for state-based and
+    one-sided violence (+5.3e-5 and +3.1e-5 in mean log score) and ties for non-state (+1.5e-6). It also
+    has one knob fewer.
+- **A province (admin-1) doll was tested and dropped (#136).** On top of the rings and again on top of the
+  smooth neighbourhood, every score difference was within the noise (about 6e-6). On the smooth
+  neighbourhood, state-based switched the province off entirely (weight 0). It would also have needed a new data column in views-models.
+- **Separating "whether violence happens" from "how big it is" was dropped (#137).**
+  - In quiet places the outer dolls give a large size (about 25 deaths given any). This is because the
+    world's violence is dominated by ongoing wars, while recent outbreaks in quiet places are smaller
+    (about 10; `prototype/describe_onset_sizes.py`).
+  - Choosing sizes by whether a place was quiet before would add a new kind of rule. The model's idea is
+    only *which past observations to draw from*. The large size is the honest answer of the world pool.
+- **A neighbouring-countries doll was dropped (#138).** The neighbourhood already crosses borders, and the
+  province test showed that another administrative doll adds nothing.
+- **Distances are not corrected for latitude (#141).** The fitted `ℓ` is under one cell, so the correction
+  would change practically nothing.
+- **Smoothing the drawn values (a kernel density, Silverman's bandwidth) was considered and rejected.**
+  - It widens the pool but does not move its centre.
+  - Matryoshka has no gap in what it can draw: every cell reaches every observed value through the outer
+    dolls.
+- **Loosely determined knobs are accepted (#140):**
+  - the one-sided map memory at the ceiling;
+  - the non-state country weight and memory, which trade off against each other.
+
+  Their ranges are reported, not hidden.
+
+### How the knobs are found
+
+- **Search:** L-BFGS-B over the logarithms of the knobs, with the exact slope of the score (not slopes
+  estimated by nudging each knob).
+- **Stopping thresholds:** the defaults stopped too early, so they are strict: `ftol = 1e-13`,
+  `gtol = 1e-9`, at most 200 steps.
+- **Exact class probabilities:** the scoring works these out exactly from counts per doll and month; no
+  sampling.
+- **Storage:** only the cell-months with deaths are stored (sparse), since nearly all are zero.
+- **Cost:** about 1 minute and about 4 GiB per violence type at pgm `land`, with 4 backtest cutoffs (384,
+  396, 408, 420) and 36 months scored after each.
+- **Checks in the prototype**, each tested by deliberately breaking the code:
+  - the shells, sizes and class shares against a brute-force construction on a small grid;
+  - the exact probabilities against 200,000 simulated three-step draws;
+  - the exact slope against nudged differences (relative tolerance 1e-6);
+  - the expected value against direct sums.
+
+### The fitted knobs (training data up to month 456)
+
+| | state-based | non-state | one-sided |
+|---|---|---|---|
+| weight: neighbourhood / country / map | 0.95 / 0.18 / 0.046 | 2.80 / 0.38 / 0.21 | 1.72 / 0.47 / 0.028 |
+| memory in months: cell / neighbourhood / country / map | 13.5 / 13.4 / 11.6 / 24.8 | 15.6 / 11.6 / 80.1 / 29.1 | 23.1 / 13.8 / 22.1 / 600 (ceiling) |
+| `ℓ` (cells; degrees) | 0.80; 0.40° | 1.35; 0.68° | 0.98; 0.49° |
+| mean log score (conflictology) | −0.0151 (−0.0407) | −0.0055 (−0.0164) | −0.0067 (−0.0196) |
+| observed outcomes given a near-zero chance (conflictology) | 0 (11,456) | 0 (5,139) | 0 (5,861) |
+
+**Stability.** Refitting with each backtest cutoff left out in turn:
+
+| | state-based | non-state | one-sided |
+|---|---|---|---|
+| cell memory (months) | 12–15 | 15–17 | 17–28 |
+| `ℓ` (cells) | 0.77–0.83 | 1.23–1.65 | 0.95–0.99 |
+| country memory (months) | 10–14 | 11–196 (traded against its weight, 0.30–2.03) | 18–25 |
+| map memory (months) | 20–36 | 25–31 | 600 in every refit |
+
+Everything else is in `reports/matryoshka/PROTOTYPE_v5_kernel.md` and `results/v5_kernel/`.
+
+**Reading:**
+- The cell and its neighbourhood forget at about the same pace, 12–24 months, for every type.
+- Non-state violence leans hardest on its neighbourhood and reaches furthest.
+- The world backstop gets little weight, and for one-sided violence it remembers the whole history.
+
+The log scores are fitting scores and do not judge the model. Judging is the evaluation below
+("How we will check it").
 
 ---
 
@@ -555,7 +661,10 @@ there to measure.
 
 - Issues in this repo: #82 (fixed vs moving window), #109 (Phase-1 results and corrections), #111
   (temporal weighting), #112 (spatial pooling), #122 (scoring), #126 (moving-window control), #127
-  (building Matryoshka).
+  (building Matryoshka); epic #135 and its steps #136–#142 (the prototype decisions).
+- `notebooks/matryoshka_conflictology.ipynb`: the explainer, with every plot drawn when it is run (#144).
+- `reports/matryoshka/LOG.md` (the running log of the prototype) and `reports/matryoshka/PROTOTYPE_v5_kernel.md`
+  (the final fit), branch `feat/127-matryoshka-prototype`.
 - ADR-021 (no hidden defaults), ADR-023 (smoothed climatology baselines; report-only evaluation).
 - views-models `reports/2026-11-04_baseline_phase1/` on branch `docs/baseline-phase1-campaign`
   (commit `a001aba7`): the Phase-1 measurements, including `cond_fcst.py`, `lead_vs_calendar.py` and
