@@ -664,6 +664,40 @@ The log scores are fitting scores and do not judge the model. Judging is the eva
 
 ---
 
+## Amendment 2026-11-12: choosing which dolls to use (#153)
+
+**Why.** A paper on Matryoshka has to show whether each level earns its place: does the country doll
+add anything on top of the cell and its neighbourhood, does the map doll? The fair test fits smaller
+versions with the same code, the same knob search and the same backtest. Single levels on their own are
+a different question, answered by `PooledConflictology` (#151).
+
+**Decision.** `MatryoshkaConflictology` takes a required setting, `dolls`: the names of the dolls to
+use, in the order `cell`, `near`, `country`, `map`. All four is the model above.
+
+- **The cell is always used.** Its weight is the reference the other weights are measured against
+  (#150, comment of 2026-11-12).
+- **An off doll's cells move outward** to the next doll that is on (Simon, 2026-11-12; epic #153):
+  - without `near`, the country doll holds the cell's same-country neighbours, and the map the others;
+  - without `country`, the map doll holds the cell's country;
+  - without `map`, its cells are in no doll, since the map is outermost.
+
+  The alternative, dropping an off doll's cells altogether, was rejected. "No country" would then also
+  hide the country's cells from the map doll, which mixes two effects.
+- **An off doll has an empty shell**, so the exact probability gives it no weight and the draw never
+  picks it. Its knobs are **left out of the search**, not pinned at a small value. They are stored as
+  weight 0 and memory NaN, and the length scale as NaN when `near` is off.
+- **No default** (ADR-021): a config without `dolls` is rejected.
+
+**What it guarantees.** For every subset that includes the cell, the tests show:
+- the shells are disjoint and have the counted sizes;
+- the draw samples exactly the distribution the search scores;
+- the slope of the free knobs is exact.
+
+With all four dolls, the output is byte-identical to 1.3.0 (`GOLDEN_MATRYOSHKA`), and the fit time is
+unchanged (`reports/matryoshka/LOG.md`, 2026-11-12).
+
+**Sources:** issues #150, #151, #153–#157.
+
 ## References
 
 - Issues in this repo: #82 (fixed vs moving window), #109 (Phase-1 results and corrections), #111

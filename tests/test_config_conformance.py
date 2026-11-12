@@ -262,6 +262,7 @@ MERGED_CONFIGS = {
         "backtest_horizon": 36,
         "country_column": "c_id",
         "creator": "Simon",
+        "dolls": ["cell", "near", "country", "map"],
         "deployment_status": "shadow",
         "evaluation_profile": "hydranet_ucdp",
         "level": "pgm",

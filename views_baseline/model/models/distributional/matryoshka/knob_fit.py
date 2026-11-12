@@ -1,4 +1,5 @@
-"""The knob search: fit Matryoshka's 8 knobs per violence type by backtest (ADR-024).
+"""The knob search: fit Matryoshka's knobs (8 with all four dolls) per violence type by backtest
+(ADR-024).
 
 Data in:   one violence type's complete panel (M months × N cells) up to ``train_end``, its
            geometry, and the backtest design (cutoffs, horizon).
@@ -22,6 +23,7 @@ from views_baseline.model.models.distributional.matryoshka.doll_counts import (
     NEAR,
     DollCounts,
     build_doll_counts,
+    doll_names,
 )
 from views_baseline.model.models.distributional.matryoshka.forecast_probability import (
     doll_shares,
@@ -33,7 +35,10 @@ from views_baseline.model.models.distributional.matryoshka.forecast_probability 
     time_weights,
 )
 from views_baseline.model.models.distributional.matryoshka.geometry import Geometry
-from views_baseline.model.models.distributional.matryoshka.size_classes import classify
+from views_baseline.model.models.distributional.matryoshka.size_classes import (
+    N_CLASSES,
+    classify,
+)
 
 CUTOFF_SPACING = 12               # months between backtest cutoffs
 MIN_HISTORY_MONTHS = 120          # history before the earliest cutoff (ADR-024: at least 10 years)
@@ -59,10 +64,20 @@ def backtest_cutoffs(train_end: int, n_cutoffs: int, horizon: int) -> np.ndarray
     return last - CUTOFF_SPACING * np.arange(n_cutoffs)[::-1]
 
 
-class Objective:
-    """Minus the mean log score and minus its exact slope, as a function of the knobs.
+def free_knobs(on: np.ndarray) -> np.ndarray:
+    """(2D,) bool: which entries of the full knob vector (log weight[1..D−1], log memory[0..D−1],
+    log length scale) the search fits for the on-mask. An off doll's knobs are left out, not
+    pinned: its shell is empty, so it adds nothing to the score (#153)."""
+    return np.concatenate([on[1:], on, [on[NEAR]]])
 
-    theta = (log weight[1..D−1], log memory[0..D−1], log length scale), D = len(DOLLS): 2D values.
+
+class Objective:
+    """Minus the mean log score and minus its exact slope, as a function of the free knobs.
+
+    The full knob vector is (log weight[1..D−1], log memory[0..D−1], log length scale),
+    D = len(DOLLS): 2D values. theta holds only its free entries (`free_knobs(dc.on)`); with every
+    doll on, theta is the full vector. An off doll has weight 0 and, inside the score, memory inf
+    (so its terms stay finite); its shares are zeros and are never computed.
     Keeps each doll's latest shares (and their slopes), keyed by its memory (and, for NEAR, the
     length scale), so a weight-only change, or a doll whose knobs did not move, reuses them. One
     entry per doll bounds the memory: each is 3 arrays of n_cutoffs × N × 7 float64.
@@ -71,12 +86,17 @@ class Objective:
 
     def __init__(self, dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray):
         self.dc, self.cutoffs, self.outcomes = dc, cutoffs, outcomes
+        self.on = dc.on
+        self.free = free_knobs(dc.on)
         self._latest: dict[int, tuple[tuple, tuple]] = {}
+        self._zeros = np.zeros((cutoffs.size, dc.sizes.shape[1], N_CLASSES))
         self.evaluations = 0
         self.first_score: float | None = None
 
     def shares(self, doll: int, memory: float, length: float):
-        """(q, ∂q/∂log memory, ∂q/∂log ℓ or None), each (n_cut, N, K)."""
+        """(q, ∂q/∂log memory, ∂q/∂log ℓ or None), each (n_cut, N, K). Zeros for an off doll."""
+        if not self.on[doll]:
+            return self._zeros, self._zeros, (self._zeros if doll == NEAR else None)
         key = (round(float(memory), 9), round(float(length), 9) if doll == NEAR else None)
         if doll not in self._latest or self._latest[doll][0] != key:
             n = self.cutoffs.size
@@ -87,12 +107,16 @@ class Objective:
             self._latest[doll] = (key, (both[:n], both[n:], dlen))
         return self._latest[doll][1]
 
-    @staticmethod
-    def unpack(theta: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    def unpack(self, theta: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+        """(weight, memory, length) from the free knobs. An off doll: weight 0, memory inf; the
+        length scale is NaN with the neighbourhood off."""
         D = len(DOLLS)
-        weight = np.concatenate([[1.0], np.exp(theta[:D - 1])])
-        memory = np.exp(theta[D - 1:2 * D - 1])
-        return weight, memory, float(np.exp(theta[2 * D - 1]))
+        full = np.zeros(2 * D)
+        full[self.free] = theta
+        weight = np.where(self.on, np.concatenate([[1.0], np.exp(full[:D - 1])]), 0.0)
+        memory = np.where(self.on, np.exp(full[D - 1:2 * D - 1]), np.inf)
+        length = float(np.exp(full[2 * D - 1])) if self.on[NEAR] else np.nan
+        return weight, memory, length
 
     def score(self, weight: np.ndarray, memory: np.ndarray, length: float) -> tuple[float, int]:
         q = np.stack([self.shares(k, memory[k], length)[0] for k in range(len(DOLLS))])
@@ -107,12 +131,14 @@ class Objective:
                                           weight, memory)
         if self.first_score is None:
             self.first_score = score
-        return -score, -slope
+        return -score, -slope[self.free]
 
 
-def start_theta() -> np.ndarray:
-    return np.concatenate([np.log(START_WEIGHT[1:]), np.log(START_MEMORY),
+def start_theta(on: np.ndarray) -> np.ndarray:
+    """The starting values of the free knobs (`free_knobs`)."""
+    full = np.concatenate([np.log(START_WEIGHT[1:]), np.log(START_MEMORY),
                            [np.log(START_LENGTH)]])
+    return full[free_knobs(on)]
 
 
 def search(dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray) -> dict:
@@ -123,12 +149,15 @@ def search(dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray) -> dict:
     obj = Objective(dc, cutoffs, outcomes)
     bounds = ([tuple(np.log(WEIGHT_BOUNDS))] * (len(DOLLS) - 1)
               + [tuple(np.log(MEMORY_BOUNDS))] * len(DOLLS) + [tuple(np.log(LENGTH_BOUNDS))])
+    bounds = [b for b, free in zip(bounds, obj.free) if free]
     t0 = time.time()
-    res = minimize(obj, start_theta(), jac=True, method="L-BFGS-B", bounds=bounds,
+    res = minimize(obj, start_theta(dc.on), jac=True, method="L-BFGS-B", bounds=bounds,
                    options=SEARCH_OPTIONS)
-    weight, memory, length = Objective.unpack(res.x)
+    weight, memory, length = obj.unpack(res.x)
     score, floored = obj.score(weight, memory, length)
-    return {"weight": weight.tolist(), "memory": memory.tolist(), "length_scale": length,
+    # Stored: an off doll's memory is NaN (it has none), not the inf used inside the score.
+    return {"dolls": doll_names(dc.on), "weight": weight.tolist(),
+            "memory": np.where(dc.on, memory, np.nan).tolist(), "length_scale": length,
             "score": score, "start_score": obj.first_score, "floored": floored,
             "converged": bool(res.success),
             "message": str(res.message), "evaluations": obj.evaluations, "steps": int(res.nit),
@@ -136,8 +165,9 @@ def search(dc: DollCounts, cutoffs: np.ndarray, outcomes: np.ndarray) -> dict:
 
 
 def fit_knobs(values: np.ndarray, months: np.ndarray, geo: Geometry, cutoffs: np.ndarray,
-              horizon: int, stability_refits: bool) -> dict:
-    """The knobs for one violence type. ``values`` is the (M, N) panel up to ``train_end``.
+              horizon: int, stability_refits: bool, on: np.ndarray) -> dict:
+    """The knobs for one violence type. ``values`` is the (M, N) panel up to ``train_end``;
+    ``on`` is the on-mask of the dolls in use (`doll_mask`).
 
     With ``stability_refits``, the search is repeated with each cutoff left out in turn
     (ADR-024: "show how stable each knob is"); needs at least two cutoffs.
@@ -151,7 +181,7 @@ def fit_knobs(values: np.ndarray, months: np.ndarray, geo: Geometry, cutoffs: np
     if stability_refits and cutoffs.size < 2:
         raise ValueError("stability_refits needs at least 2 backtest cutoffs.")
     classes = classify(values)
-    dc = build_doll_counts(classes, months, geo)
+    dc = build_doll_counts(classes, months, geo, on)
     outcomes = outcome_classes(classes, months, cutoffs, horizon)
     result = search(dc, cutoffs, outcomes)
     if stability_refits:

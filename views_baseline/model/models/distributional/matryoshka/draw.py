@@ -15,9 +15,12 @@ the two against each other.
 **Uniform draws from a shell without rejection.** The cells are put in country-major order, so
 each country is one contiguous block. A shell is then "a range of positions minus a few excluded
 stretches" (the country: its block minus the cell and its same-country neighbours; the map:
-everything minus the country block and the other inner cells). The j-th kept position is
-``j + (total length of the excluded stretches that come before it)``, found with one sorted
-search per cell. The tables of excluded stretches depend only on the geometry, not on the knobs.
+everything minus the country block and the other inner cells). The shells follow the on-mask
+(`doll_counts.doll_mask`, #153): without the neighbourhood, the inner set is the cell alone;
+without the country, the map excludes the inner cells only; an off doll's shell is empty.
+The j-th kept position is ``j + (total length of the excluded stretches that come before it)``,
+found with one sorted search per cell. The tables of excluded stretches depend only on the
+geometry and the on-mask, not on the knobs.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ from views_baseline.model.models.distributional.matryoshka.doll_counts import (
     DOLLS,
     MAP,
     NEAR,
+    doll_mask,
+    doll_names,
     group_index,
     shell_sizes,
 )
@@ -54,6 +59,7 @@ class ShellTables:
     positions, per excluded stretch r: kept positions before it, and total excluded length up to
     and including it (padding: kept_before = a large number). ``map_kept_before``/``map_skip``:
     the same for the map shell in absolute positions. ``sizes`` (4, N): shell sizes, DOLLS order.
+    ``on`` (D,): the on-mask the shells were built for.
     """
 
     order: np.ndarray
@@ -63,6 +69,7 @@ class ShellTables:
     map_kept_before: np.ndarray
     map_skip: np.ndarray
     sizes: np.ndarray
+    on: np.ndarray
 
 
 def _stretch_table(starts: np.ndarray, lengths: np.ndarray, pad: int):
@@ -80,9 +87,12 @@ def _stretch_table(starts: np.ndarray, lengths: np.ndarray, pad: int):
     return kept_before, skip
 
 
-def build_shell_tables(geo: Geometry) -> ShellTables:
+def build_shell_tables(geo: Geometry, on: np.ndarray) -> ShellTables:
+    """The tables for the on-mask ``on`` (`doll_mask`)."""
+    on = doll_mask(on)
     N = geo.cells.size
-    nbr = geo.neighbours
+    # With near off, the inner set is the cell alone: its neighbours move outward.
+    nbr = geo.neighbours if on[NEAR] else np.full_like(geo.neighbours, -1)
     has_country = in_a_country(geo.country)
     country_index, _ = group_index(geo.country, has_country)
     # Country-major order: cells with a country, grouped by country; then the cells without one.
@@ -112,16 +122,19 @@ def build_shell_tables(geo: Geometry) -> ShellTables:
     c_starts = np.where(same_country, inner_pos - start[:, None], pad)
     c_lengths = same_country.astype(np.int64)
     country_kept_before, country_skip = _stretch_table(c_starts, c_lengths, pad)
-    # Map shell: the other inner cells (length 1 each) plus the whole country block.
-    other = present & ~same_country
+    # Map shell: the other inner cells (length 1 each) plus the whole country block. With the
+    # country off, the map keeps the country: it excludes every inner cell, one by one.
+    block = has_country & on[COUNTRY]
+    other = present & ~(same_country & on[COUNTRY])
     m_starts = np.concatenate([np.where(other, inner_pos, pad),
-                               np.where(has_country, start, pad)[:, None]], axis=1)
-    m_lengths = np.concatenate([other.astype(np.int64), length[:, None]], axis=1)
+                               np.where(block, start, pad)[:, None]], axis=1)
+    m_lengths = np.concatenate([other.astype(np.int64), np.where(block, length, 0)[:, None]],
+                               axis=1)
     map_kept_before, map_skip = _stretch_table(m_starts, m_lengths, pad)
-    _, sizes = shell_sizes(geo)
+    _, sizes = shell_sizes(geo, on)
     return ShellTables(order=order, block_start=start,
                        country_kept_before=country_kept_before, country_skip=country_skip,
-                       map_kept_before=map_kept_before, map_skip=map_skip, sizes=sizes)
+                       map_kept_before=map_kept_before, map_skip=map_skip, sizes=sizes, on=on)
 
 
 # rng.random() returns k / 2**53, so u · 2**53 = k is an exact integer, and for any float c in
@@ -311,26 +324,36 @@ def _kernel_weights(length: float) -> np.ndarray:
 def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs: dict,
                   geo: Geometry, shells: ShellTables) -> Sampler:
     """The sampler for history ending at ``last_month`` (``months`` ascending, the last one is
-    ``last_month``). ``knobs`` holds ``weight``, ``memory`` (DOLLS order) and ``length_scale``."""
+    ``last_month``). ``knobs`` holds ``weight``, ``memory`` (DOLLS order) and ``length_scale``.
+
+    The dolls in use are ``shells.on``. An off doll must have weight 0; its memory (and, with the
+    neighbourhood off, the length scale) is not used and may be NaN, as the fit stores it."""
     if months[-1] != last_month:
         raise ValueError(f"the history must end at month {last_month}, got {months[-1]}.")
+    on = shells.on
     weight = np.asarray(knobs["weight"], dtype=np.float64)
     memory = np.asarray(knobs["memory"], dtype=np.float64)
     length = float(knobs["length_scale"])
     # The fit keeps the knobs in range; these checks are for knobs set by hand. A memory of inf
     # means no fading and is allowed. Whether some doll can be drawn at all is checked per
     # cell and month ahead, in `Sampler.doll_cdf`.
-    if not (weight.shape == memory.shape == (len(DOLLS),) and np.all(np.isfinite(weight))
-            and np.all(weight >= 0) and np.all(memory > 0) and 0 < length < np.inf):
+    if not (weight.shape == memory.shape == (len(DOLLS),) and np.all(np.isfinite(weight[on]))
+            and np.all(weight[on] >= 0) and np.all(memory[on] > 0)
+            and (0 < length < np.inf or not on[NEAR])):
         raise ValueError(f"knobs out of range: {len(DOLLS)} weights, finite and ≥ 0, "
                          f"{len(DOLLS)} memories > 0 (inf allowed), and a finite length scale "
-                         f"> 0; got weight {weight.tolist()}, memory {memory.tolist()}, "
-                         f"length scale {length}.")
+                         f"> 0, for the dolls in use ({doll_names(on)}); got weight "
+                         f"{weight.tolist()}, memory {memory.tolist()}, length scale {length}.")
+    if np.any(weight[~on] != 0):
+        raise ValueError(f"a doll that is off must have weight 0; the dolls in use are "
+                         f"{doll_names(on)}, got weight {weight.tolist()}.")
+    # An off doll is never drawn (its shell is empty); inf keeps its unused terms finite.
+    weight, memory = np.where(on, weight, 0.0), np.where(on, memory, np.inf)
     # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
     near_w = np.where(geo.neighbours >= 0,
-                      _kernel_weights(length)[None, :], 0.0)
+                      _kernel_weights(length)[None, :] if on[NEAR] else 0.0, 0.0)
     has_near = near_w > 0
     drawable = shells.sizes > 0
     drawable[NEAR] = has_near.any(axis=1)

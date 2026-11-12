@@ -46,6 +46,7 @@ def _catalog(seed):
         "backtest_cutoffs": 1,
         "backtest_horizon": 6,
         "stability_refits": False,
+        "dolls": ["cell", "near", "country", "map"],
         "seed": seed,
     }
     return BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
@@ -109,6 +110,7 @@ def test_catalog_requires_seed(algo):
         "alpha": 0.5,
         "country_column": "c_id", "pool_by": "map", "backtest_cutoffs": 1, "backtest_horizon": 6,
         "stability_refits": False,
+        "dolls": ["cell", "near", "country", "map"],
     }
     cat = BaselineModelCatalog(config=cfg, partition_dict=_PARTITION, loa="pgm")
     with pytest.raises(ValueError, match="seed"):

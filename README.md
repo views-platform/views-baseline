@@ -133,10 +133,10 @@ Conflictology that chooses *which past observations to draw from* (ADR-024). Eac
 
 Each doll has a weight and a memory. The further ahead a forecast looks, the more it draws from the dolls with the longest memories. The fitted memories decide which those are, and they are not always the outer dolls. A quiet cell is never forecast as *certainly* quiet unless its neighbourhood, its country and the world give no reason to expect conflict.
 
-The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length scale) are **fitted** by backtest on data up to `train_end`, not configured. The data moves with each rolling origin, as for `RollingConflictology`. It needs a complete grid-month panel with a country column (views-models' pgm input carries `c_id`), at least 120 months before the earliest backtest cutoff, and pgm level.
+The 8 knobs per target (3 weights, 4 memories and the neighbourhood's length scale) are **fitted** by backtest on data up to `train_end`, not configured. `dolls` chooses which dolls to use (#153): the cell always, plus any of `near`, `country` and `map`. A doll that is off hands its cells outward to the next doll that is on (without `country`, the map includes the cell's country), and its knobs are left out of the fit. All four is the full model; fewer dolls answer "does adding this level help?". The data moves with each rolling origin, as for `RollingConflictology`. It needs a complete grid-month panel with a country column (views-models' pgm input carries `c_id`), at least 120 months before the earliest backtest cutoff, and pgm level.
 
 ```python
-MatryoshkaConflictology(targets, partition_dict, loa, n_samples, country_column, backtest_cutoffs, backtest_horizon, stability_refits, seed=42)
+MatryoshkaConflictology(targets, partition_dict, loa, n_samples, country_column, backtest_cutoffs, backtest_horizon, stability_refits, dolls, seed=42)
 ```
 
 The notebook [`notebooks/matryoshka_conflictology.ipynb`](notebooks/matryoshka_conflictology.ipynb) explains what it does and how, and draws the plots when it is run (Jupyter; the synthetic part runs in seconds, the real-data part needs the calibration input pull).

@@ -41,7 +41,8 @@ _DISTRIBUTIONAL_MODELS = [
     (
         MatryoshkaConflictology,
         {**_BASE, "n_samples": 10, "country_column": "c_id", "backtest_cutoffs": 1,
-         "backtest_horizon": 6, "stability_refits": False},
+         "backtest_horizon": 6, "stability_refits": False,
+         "dolls": ["cell", "near", "country", "map"]},
     ),
     (KDEConflictology, {**_BASE, "window_months": 3, "n_samples": 10, "bandwidth": "sj"}),
     (

@@ -236,5 +236,6 @@ class BaselineModelCatalog:
             backtest_cutoffs=self.config["backtest_cutoffs"],
             backtest_horizon=self.config["backtest_horizon"],
             stability_refits=self.config["stability_refits"],
+            dolls=self.config["dolls"],
             seed=self.config["seed"],
         )
