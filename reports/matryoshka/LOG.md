@@ -880,3 +880,22 @@ The baseline manager refits in evaluate and forecast, and ignores `--artifact_na
   - a tracked graphic missing on disk.
 - The real repository is checked with a file list confirmed complete. `notebooks/` is checked even outside git.
 - **Not done, by choice.** A second full review round of these fixes. They are documentation, a message, test structure and one constructor field. Offered to Simon instead.
+
+## 2026-11-12: paper planning, simpler versions for comparison (#150)
+
+Simon expects reviewers to ask whether a simpler model does as well: just smoothing over space, just the country, just admin levels, just rings. Rings and province were already tested in the prototype and lost (#139, #136). "Just smoothing" and "just the country" are Matryoshka with dolls switched off, which the package cannot do yet: the search fits log weights, so a weight can never reach 0. Filed #150 to add a `dolls` setting. The existing smoothed baselines B/C/E smooth over sizes, not space, so they do not answer the smoothing question.
+
+Later the same day, Simon split the question in two. Single levels on their own (just admin 1, just the country, just the map) become a pooling setting on `ConflictologyModel` (#151). Combinations, i.e. whether adding a level helps, stay in Matryoshka (#150). So #150 keeps the cell doll as required. The admin-1 data still has to reach views-models; that issue will be filed when #151 is picked up.
+
+## 2026-11-12: #151 PooledConflictology built
+
+- **Model, not setting.** ADR-021 forbids a silent default for an output-changing setting, so `pool_by` on `ConflictologyModel` would have forced an edit to every existing conflictology config in views-models. Instead: a new model, `PooledConflictology` (a subclass, the same pattern as `RollingConflictology`), with `pool_by` required.
+- **No-area cells (Simon's choice).** Code −1 (76 cells for `c_id`, mostly small islands) draw from their own window, with one warning per fit. Other negative codes are real areas (the Azores admin-1 codes).
+- **Cost, synthetic pgm-sized panel** (65,000 cells, 105 months, window 36, S=64, 12 months ahead): pooled by country, fit 1.1 s and predict 10.9 s; by map, 0.6 s and 12.4 s; plain conflictology, 0.7 s and 13.1 s. Peak memory 0.9 GB for the whole script.
+- **Tests.** 17 new tests in `tests/test_pooled_conflictology.py`; the suite has 765 passing.
+
+**Reviews of aab4ca4 (#151).**
+- **review-diff:** nothing blocking. Fixed: the error message printed `np.float64(nan)` under numpy 2; codes of 2**24 or more are now rejected (float32 storage could merge two areas).
+- **code-review high:** no correctness bugs.
+- **Guard audit:** 21 mutations, 5 survived, three guards weak. Fixed with two no-area cells instead of one, a no-warning case, the `train_end` month itself, and a catalog test that rejects a config without `pool_by`.
+- **Re-audit of e915185:** every guard holds. The remaining survivors cannot change the forecast; the only one that changes anything at all touches the INFO log line.

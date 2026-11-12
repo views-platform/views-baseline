@@ -18,6 +18,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    PooledConflictology,
     RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -46,6 +47,8 @@ _MODELS = [
      lambda: InterpolatedQuantileConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
     ("RollingConflictology",
      lambda: RollingConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
+    ("PooledConflictology",
+     lambda: PooledConflictology(**_BASE, window_months=3, n_samples=8, pool_by="map", seed=42)),
     ("KDEConflictology",
      lambda: KDEConflictology(**_BASE, window_months=3, n_samples=8, bandwidth=1.0, seed=42)),
     ("EmpiricalKDEMixtureConflictology",

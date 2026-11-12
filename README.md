@@ -116,6 +116,14 @@ ParametricHurdleConflictology(targets, window_months, partition_dict, loa, n_sam
 RollingConflictology(targets, window_months, partition_dict, loa, n_samples, seed=42)
 ```
 
+#### PooledConflictology — conflictology pooled over an area
+
+`ConflictologyModel` where a cell draws from the window of **every cell in its area**, not only its own (#151). `pool_by` names the area column (for example the country column `c_id`, or an admin-1 column), or is `"map"` for one area holding every cell. It answers whether one level on its own does as well as Matryoshka (ADR-024). A cell without an area (code −1) draws from its own window, and `fit` logs how many did. An area code that is not an integer, or that changes over time up to `train_end`, stops the run.
+
+```python
+PooledConflictology(targets, window_months, partition_dict, loa, n_samples, pool_by, seed=42)
+```
+
 #### MatryoshkaConflictology — conflictology that also draws from a cell's surroundings
 
 Conflictology that chooses *which past observations to draw from* (ADR-024). Each draw is a value that was really observed, picked in three steps:
@@ -177,7 +185,8 @@ catalog.list_models()
 # ['ZeroModel', 'LocfModel', 'AverageModel', 'ConflictologyModel', 'MixtureBaseline',
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
-#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'MatryoshkaConflictology']
+#  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'PooledConflictology',
+#  'MatryoshkaConflictology']
 ```
 
 ---
