@@ -9,6 +9,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    PooledConflictology,
     RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -36,6 +37,7 @@ _DISTRIBUTIONAL_MODELS = [
     ),
     (InterpolatedQuantileConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
     (RollingConflictology, {**_BASE, "window_months": 3, "n_samples": 10}),
+    (PooledConflictology, {**_BASE, "window_months": 3, "n_samples": 10, "pool_by": "map"}),
     (
         MatryoshkaConflictology,
         {**_BASE, "n_samples": 10, "country_column": "c_id", "backtest_cutoffs": 1,

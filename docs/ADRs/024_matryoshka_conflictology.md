@@ -409,6 +409,13 @@ the same data at each origin, so any difference comes from the dolls and the fad
 data. It also answers #82's own question, how much plain conflictology gains just from using the latest
 data. It is not a prerequisite for building Matryoshka (#127); the two can be run side by side.
 
+### Single levels on their own (amendment 2026-11-12, #151)
+
+A reviewer will also ask whether one level on its own (just the country, just admin 1, just the map)
+does as well. `PooledConflictology` answers that: conflictology whose window is pooled over every cell
+in the cell's area (`pool_by`). Whether *adding* a level to the others helps is the other question; that
+needs Matryoshka with dolls switched off (#150).
+
 ---
 
 ## Why this design

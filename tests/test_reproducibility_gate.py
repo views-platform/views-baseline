@@ -92,7 +92,7 @@ def test_algorithm_genomes_covers_all_catalog_models():
         "ConflictologyModel", "MixtureBaseline",
         "ParametricConflictology", "ParametricHurdleConflictology",
         "InterpolatedQuantileConflictology", "KDEConflictology",
-        "EmpiricalKDEMixtureConflictology", "RollingConflictology",
+        "EmpiricalKDEMixtureConflictology", "RollingConflictology", "PooledConflictology",
         "MatryoshkaConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
@@ -401,6 +401,12 @@ def test_matryoshka_genome_is_exact():
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["MatryoshkaConflictology"]) == {
         "n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
         "stability_refits"}
+
+
+def test_pooled_conflictology_genome_is_exact():
+    """#151: conflictology's keys plus the area column, with no default (ADR-021)."""
+    assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["PooledConflictology"]) == {
+        "window_months", "n_samples", "seed", "pool_by"}
 
 
 def test_rolling_conflictology_genome_is_exact():
