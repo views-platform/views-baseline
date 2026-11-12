@@ -38,7 +38,7 @@ def main(code_dir: str, input_path: str, knobs_path: str, label: str) -> None:
     model = MatryoshkaConflictology(
         targets=[TARGET], partition_dict={"test": (457, 492)}, loa="pgm", n_samples=64,
         country_column="c_id", backtest_cutoffs=4, backtest_horizon=36, stability_refits=False,
-        seed=42)
+        dolls=["cell", "near", "country", "map"], seed=42)
     model.knobs = {TARGET: {k: knobs[k] for k in ("weight", "memory", "length_scale")}}
     model.entity_ids, model.country = cells, country.astype(np.int64)
     model.history_start = int(months.min())

@@ -18,6 +18,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    PooledConflictology,
     RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -46,6 +47,8 @@ _MODELS = [
      lambda: InterpolatedQuantileConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
     ("RollingConflictology",
      lambda: RollingConflictology(**_BASE, window_months=3, n_samples=8, seed=42)),
+    ("PooledConflictology",
+     lambda: PooledConflictology(**_BASE, window_months=3, n_samples=8, pool_by="map", seed=42)),
     ("KDEConflictology",
      lambda: KDEConflictology(**_BASE, window_months=3, n_samples=8, bandwidth=1.0, seed=42)),
     ("EmpiricalKDEMixtureConflictology",
@@ -147,7 +150,8 @@ def test_matryoshka_predict_needs_its_target_columns():
     df = make_dummy_df()
     m = MatryoshkaConflictology(**_BASE, n_samples=8, country_column="c_id",
                                 backtest_cutoffs=1, backtest_horizon=1,
-                                stability_refits=False, seed=42)
+                                stability_refits=False,
+                                dolls=["cell", "near", "country", "map"], seed=42)
     m.knobs = {"y1": {}, "y2": {}}            # predict must fail before it uses the knobs
     with pytest.raises(ValueError, match=r"missing required target column\(s\) \['y1'"):
         m.predict(df=df.drop(columns=["y1", "y2"]), sequence_number=0, output_length=2)

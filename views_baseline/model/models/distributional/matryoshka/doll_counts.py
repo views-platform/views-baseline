@@ -7,9 +7,13 @@ For cell i in month s, the four dolls are disjoint shells (ADR-024, amendment 20
   country  the other cells of its country, outside the cell and its neighbourhood
   map      every other cell (outside the cell, its neighbourhood and its country)
 
-With "inner" = cell + neighbourhood:
-  country rest = country total − inner cells in the same country
-  map rest     = global total − inner cells − country rest
+Which dolls are used is an explicit on-mask (`doll_mask`; #153). An off doll's shell is empty,
+and its cells move outward to the next doll that is on: without the neighbourhood, the country
+holds the same-country neighbours and the map the others; without the country, the map holds
+the country. The map is outermost, so without it its cells are in no shell. The cell is always
+on. With "inner" = the cell + (its neighbourhood, if near is on):
+  country rest = country total − inner cells in the same country            (if country is on)
+  map rest     = global total − inner cells − (country rest, if country is on)  (if map is on)
 
 Almost every cell-month has no deaths (class 0), so only the non-zero classes are stored, as
 sparse (N, M) matrices. A doll's class-0 share is 1 minus its other shares (the shares of a
@@ -35,6 +39,25 @@ from views_baseline.model.models.distributional.matryoshka.size_classes import N
 
 DOLLS = ["cell", "near", "country", "map"]
 CELL, NEAR, COUNTRY, MAP = range(len(DOLLS))
+#: Every doll on: the model of ADR-024.
+ALL_ON = np.ones(len(DOLLS), dtype=bool)
+
+
+def doll_mask(on) -> np.ndarray:
+    """The on-mask as a (D,) bool array in DOLLS order. Raises unless it has D booleans and the
+    cell is on (the cell's weight is the reference the others are measured against)."""
+    on = np.asarray(on)
+    if on.shape != (len(DOLLS),) or on.dtype != bool:
+        raise ValueError(f"the doll mask must be {len(DOLLS)} booleans in the order {DOLLS}, "
+                         f"got {on!r}.")
+    if not on[CELL]:
+        raise ValueError("the cell doll must be on: its weight is the reference.")
+    return on.copy()
+
+
+def doll_names(on: np.ndarray) -> list[str]:
+    """The names of the dolls that are on, in DOLLS order (the inverse of the on-mask)."""
+    return [d for d, o in zip(DOLLS, on) if o]
 
 
 @dataclass(frozen=True)
@@ -47,8 +70,9 @@ class DollCounts:
       inner_same_country[k]  cell + neighbourhood, own country only, in class k
     Dense, classes 1..K−1 (row 0 unused, zero):
       country_tot (K, M, C), global_tot (K, M)
-    band_sizes (B, N): land neighbours per band; sizes (4, N): shell sizes in DOLLS order (for the
-    neighbourhood: its number of land cells; whether it is empty is what matters for the mix).
+    band_sizes (B, N): land neighbours per band; sizes (4, N): shell sizes in DOLLS order for the
+    on-mask ``on`` (for the neighbourhood: its number of land cells; whether it is empty is what
+    matters for the mix). The counts themselves do not depend on ``on``; the shells do.
     """
 
     months: np.ndarray
@@ -60,6 +84,7 @@ class DollCounts:
     country_index: np.ndarray   # (N,) row into country_tot, or -1 for no country
     band_sizes: np.ndarray
     sizes: np.ndarray
+    on: np.ndarray              # (D,) bool, the dolls in use (`doll_mask`)
 
 
 def group_index(codes: np.ndarray, member: np.ndarray) -> tuple[np.ndarray, int]:
@@ -74,8 +99,11 @@ def _sparse(rows: np.ndarray, cols: np.ndarray, data: np.ndarray, shape) -> spar
     return sparse.csr_matrix((data, (rows, cols)), shape=shape)   # duplicates are summed
 
 
-def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) -> DollCounts:
-    """``classes`` is (M, N): the size class of every cell in every month (complete panel)."""
+def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry,
+                      on: np.ndarray) -> DollCounts:
+    """``classes`` is (M, N): the size class of every cell in every month (complete panel);
+    ``on`` is the on-mask (`doll_mask`)."""
+    on = doll_mask(on)
     M, N = classes.shape
     B = BAND_DISTANCE.size
     if classes.shape != (months.size, geo.cells.size):
@@ -115,28 +143,34 @@ def build_doll_counts(classes: np.ndarray, months: np.ndarray, geo: Geometry) ->
     global_tot = np.zeros((N_CLASSES, M))
     np.add.at(global_tot, (k, s), 1.0)
 
-    band_sizes, sizes = shell_sizes(geo)
+    band_sizes, sizes = shell_sizes(geo, on)
     return DollCounts(months=months, own=own, band=band, inner_same_country=inner_c,
                       country_tot=country_tot, global_tot=global_tot, country_index=country_index,
-                      band_sizes=band_sizes, sizes=sizes)
+                      band_sizes=band_sizes, sizes=sizes, on=on)
 
 
-def shell_sizes(geo: Geometry) -> tuple[np.ndarray, np.ndarray]:
+def shell_sizes(geo: Geometry, on: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """``band_sizes`` (B, N): neighbours per distance band; ``sizes`` (4, N): shell sizes in DOLLS
-    order. The panel is complete, so neither changes over time."""
+    order for the on-mask ``on`` (0 for an off doll). The panel is complete, so neither changes
+    over time."""
+    on = doll_mask(on)
     nbr = geo.neighbours
     N = nbr.shape[0]
     has_country = in_a_country(geo.country)
     country_index, n_countries = group_index(geo.country, has_country)
     band_sizes = np.stack([((nbr >= 0) & (OFFSET_BAND[None, :] == b)).sum(axis=1)
                            for b in range(BAND_DISTANCE.size)])
-    n_near = (nbr >= 0).sum(axis=1)
+    # With near off, the inner set is the cell alone: its neighbours move outward.
+    n_near = (nbr >= 0).sum(axis=1) if on[NEAR] else np.zeros(N, int)
     same_country_nbr = (nbr >= 0) & has_country[:, None] & (
         country_index[np.where(nbr >= 0, nbr, 0)] == country_index[:, None])
+    inner_same_country = 1 + (same_country_nbr.sum(axis=1) if on[NEAR] else 0)
     # One extra zero entry for the cells without a country (also when no cell has one).
     country_size = np.r_[np.bincount(country_index[has_country], minlength=n_countries), 0]
     n_country = np.where(has_country,
                          country_size[np.where(has_country, country_index, n_countries)]
-                         - 1 - same_country_nbr.sum(axis=1), 0)
-    n_map = N - 1 - n_near - n_country
+                         - inner_same_country, 0)
+    if not on[COUNTRY]:
+        n_country = np.zeros(N, int)             # its cells move out to the map
+    n_map = N - 1 - n_near - n_country if on[MAP] else np.zeros(N, int)
     return band_sizes, np.stack([np.ones(N, int), n_near, n_country, n_map])

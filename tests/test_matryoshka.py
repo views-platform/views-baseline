@@ -15,11 +15,13 @@ import pytest
 
 from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
+    ALL_ON,
     COUNTRY,
     DOLLS,
     MAP,
     NEAR,
     build_doll_counts,
+    doll_mask,
     shell_sizes,
 )
 from views_baseline.model.models.distributional.matryoshka.draw import (
@@ -38,8 +40,14 @@ from views_baseline.model.models.distributional.matryoshka.geometry import (
     build_geometry,
 )
 from views_baseline.model.models.distributional.matryoshka.knob_fit import (
+    START_LENGTH,
+    START_MEMORY,
+    START_WEIGHT,
     Objective,
     backtest_cutoffs,
+    free_knobs,
+    search,
+    start_theta,
 )
 from views_baseline.model.models.distributional.matryoshka.size_classes import (
     N_CLASSES,
@@ -66,19 +74,31 @@ def synthetic_grid(seed=0, n_rows=16, n_cols=22, holes=(40, 41, 63, 150, 151, 20
     return cells, country
 
 
-def brute_force_shells(cells, country, length):
+def brute_force_shells(cells, country, length, on=ALL_ON):
     """(4, N, N) shell membership and (4, N, N) P(cell j | doll, cell i), from pairwise
-    distances, independently of the package's offset table."""
+    distances, independently of the package's offset table.
+
+    An off doll's shell is empty and its cells move outward to the next doll that is on (#153):
+    without the neighbourhood the inner set is the cell alone; without the country, the map holds
+    it; without the map, its cells are in no shell."""
     r, c = (cells - 1) // N_COLS, (cells - 1) % N_COLS
     dist = np.hypot(r[:, None] - r[None, :], c[:, None] - c[None, :])
-    near = (dist > 0) & (dist <= NEAR_RADIUS)
+    near = (dist > 0) & (dist <= NEAR_RADIUS) & on[NEAR]
     same_c = (country[:, None] == country[None, :]) & (country[:, None] > 0)
     inner = (dist == 0) | near
-    shells = np.stack([dist == 0, near, same_c & ~inner, ~same_c & ~inner])
+    country_shell = same_c & ~inner & on[COUNTRY]
+    map_shell = ~inner & ~(same_c & on[COUNTRY]) & on[MAP]
+    shells = np.stack([dist == 0, near, country_shell, map_shell])
     pick = np.stack([shells[0], np.where(near, np.exp(-dist / length), 0.0), shells[2],
                      shells[3]]).astype(float)
     pick = pick / np.maximum(pick.sum(axis=2, keepdims=True), 1e-300)
     return shells, pick
+
+
+#: Every on-mask with the cell on: the subsets of dolls a model can use (#153).
+SUBSETS = [np.array([True, n, c, m]) for n in (False, True) for c in (False, True)
+           for m in (False, True)]
+SUBSET_IDS = ["+".join(d for d, o in zip(DOLLS, on) if o) for on in SUBSETS]
 
 
 @pytest.fixture(scope="module")
@@ -93,48 +113,82 @@ def grid():
 # ── ported prototype checks ─────────────────────────────────────────────────────────────
 
 
-def test_shells_are_disjoint_cover_every_cell_and_have_the_counted_sizes(grid):
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_shells_are_disjoint_cover_every_cell_and_have_the_counted_sizes(grid, on):
+    """With the map on, the shells cover every cell; with it off, exactly the cells the map
+    would hold are in no shell."""
     cells, country, geo, _, _ = grid
-    shells, _ = brute_force_shells(cells, country, 1.0)
-    assert (shells.sum(axis=0) == 1).all(), "shells must be disjoint and cover every cell"
-    _, sizes = shell_sizes(geo)
+    shells, _ = brute_force_shells(cells, country, 1.0, on)
+    covered = shells.sum(axis=0)
+    assert (covered <= 1).all(), "shells must be disjoint"
+    with_map, _ = brute_force_shells(cells, country, 1.0, on | np.array([0, 0, 0, 1], bool))
+    np.testing.assert_array_equal(covered == 0, ~on[MAP] & with_map[MAP])
+    assert (covered == 1).all() or not on[MAP]
+    _, sizes = shell_sizes(geo, on)
     np.testing.assert_array_equal(shells.sum(axis=2), sizes)
 
 
-def test_doll_shares_equal_a_direct_kernel_weighted_average(grid):
+def test_the_brute_force_shells_move_an_off_dolls_cells_outward(grid):
+    """Pins the reference itself: the cells of an off doll join the next doll that is on."""
+    cells, country, _, _, _ = grid
+    full, _ = brute_force_shells(cells, country, 1.0)
+    no_near, _ = brute_force_shells(cells, country, 1.0, np.array([1, 0, 1, 1], bool))
+    no_country, _ = brute_force_shells(cells, country, 1.0, np.array([1, 1, 0, 1], bool))
+    same_c = (country[:, None] == country[None, :]) & (country[:, None] > 0)
+    np.testing.assert_array_equal(no_near[COUNTRY], full[COUNTRY] | (full[NEAR] & same_c))
+    np.testing.assert_array_equal(no_near[MAP], full[MAP] | (full[NEAR] & ~same_c))
+    np.testing.assert_array_equal(no_country[MAP], full[MAP] | full[COUNTRY])
+    assert full[NEAR].any() and (full[NEAR] & same_c).any() and (full[NEAR] & ~same_c).any()
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_doll_shares_equal_a_direct_kernel_weighted_average(grid, on):
+    """An off doll's shares are all 0 (its shell is empty)."""
     cells, country, geo, months, values = grid
     length = 1.7
-    _, pick = brute_force_shells(cells, country, length)
+    _, pick = brute_force_shells(cells, country, length, on)
     classes = classify(values)
-    dc = build_doll_counts(classes, months, geo)
+    dc = build_doll_counts(classes, months, geo, on)
     W = np.stack([time_weights(months, np.array([150]), m) for m in (3.0, 8.0, 40.0, 200.0)])
     onehot = (classes[..., None] == np.arange(N_CLASSES)).astype(float)
     for k in range(len(DOLLS)):
         q = doll_shares(dc, W[k], k, length)[0]
         direct = np.einsum("m,ij,mjk->ik", W[k, 0], pick[k], onehot)
+        direct[:, 0] = np.where(pick[k].sum(axis=1) > 0, direct[:, 0], 0.0)
         np.testing.assert_allclose(q, direct, atol=1e-10, err_msg=DOLLS[k])
 
 
-def test_exact_probabilities_match_an_independent_three_step_draw(grid):
+@pytest.mark.parametrize("on", [np.array([0, 1, 1, 1], bool), np.ones(3, bool),
+                                np.array([1, 1, 1, 1])])
+def test_the_doll_mask_needs_four_booleans_with_the_cell_on(on):
+    with pytest.raises(ValueError, match="doll"):
+        doll_mask(on)
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_exact_probabilities_match_an_independent_three_step_draw(grid, on):
     """The closed form against ADR-024's draw, sampled from the brute-force shells."""
     cells, country, geo, months, values = grid
     length, h, S = 1.7, 5, 200_000
     weight, memory = np.array([1.0, 0.8, 0.4, 0.2]), np.array([3.0, 8.0, 40.0, 200.0])
-    shells, pick = brute_force_shells(cells, country, length)
+    shells, pick = brute_force_shells(cells, country, length, on)
     classes = classify(values)
-    dc = build_doll_counts(classes, months, geo)
+    dc = build_doll_counts(classes, months, geo, on)
     cutoff = 150
     q = np.stack([doll_shares(dc, time_weights(months, np.array([cutoff]), memory[k]), k,
                               length)[0] for k in range(len(DOLLS))])        # (4, N, K)
     rng = np.random.default_rng(1)
     hist = months[months <= cutoff]
-    for i in (int(np.argmax(dc.sizes[NEAR])), int(np.argmin(dc.sizes[NEAR]))):
+    near_sizes = shell_sizes(geo, ALL_ON)[1][NEAR]          # cells picked by geometry, not mask
+    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes))):
         a = np.array([weight[k] * np.exp(-h / memory[k]) if shells[k][i].any() else 0.0
                       for k in range(len(DOLLS))])
         dolls = rng.choice(len(DOLLS), size=S, p=a / a.sum())
         draws = np.empty(S, np.int64)
         for k in range(len(DOLLS)):
             sel = dolls == k
+            if not sel.any():                                  # an off or empty doll
+                continue
             w = np.exp(-(cutoff - hist) / memory[k])
             ms = rng.choice(hist.size, size=sel.sum(), p=w / w.sum())
             cs = rng.choice(cells.size, size=sel.sum(), p=pick[k][i])
@@ -143,17 +197,21 @@ def test_exact_probabilities_match_an_independent_three_step_draw(grid):
         np.testing.assert_allclose(freq, (a / a.sum()) @ q[:, i, :], atol=4 / np.sqrt(S))
 
 
-def test_exact_slope_matches_nudged_differences():
-    """Strict: relative tolerance 1e-6, no absolute slack (the prototype's check_slope.py)."""
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_exact_slope_matches_nudged_differences(on):
+    """Strict: relative tolerance 1e-6, no absolute slack (the prototype's check_slope.py).
+    The search fits only the free knobs: 2 per on doll, minus the cell's fixed weight, plus ℓ
+    with the neighbourhood on."""
     cells, country = synthetic_grid(n_rows=14, n_cols=20, holes=())
     geo = build_geometry(cells, country)
     months = np.arange(100, 190)
     values = np.random.default_rng(1).choice(VALUES, size=(months.size, cells.size))
     classes = classify(values)
-    dc = build_doll_counts(classes, months, geo)
+    dc = build_doll_counts(classes, months, geo, on)
     cutoffs = np.array([150, 162])
     obj = Objective(dc, cutoffs, outcome_classes(classes, months, cutoffs, 24))
-    theta = np.log([0.8, 0.5, 0.2, 3.0, 8.0, 40.0, 200.0, 1.7])
+    theta = np.log([0.8, 0.5, 0.2, 3.0, 8.0, 40.0, 200.0, 1.7])[free_knobs(on)]
+    assert theta.size == 2 * on.sum() - 1 + on[NEAR]
     exact = -obj(theta)[1]
     nudge = 1e-4
     numeric = np.array([
@@ -166,6 +224,77 @@ def test_exact_slope_matches_nudged_differences():
 # ── the package's sampler ───────────────────────────────────────────────────────────────
 
 
+def test_with_every_doll_on_the_search_fits_all_eight_knobs_from_the_same_start():
+    """All four dolls: the free knobs are the full vector, in the order the search always had."""
+    assert free_knobs(ALL_ON).all()
+    np.testing.assert_array_equal(start_theta(ALL_ON), np.concatenate(
+        [np.log(START_WEIGHT[1:]), np.log(START_MEMORY), [np.log(START_LENGTH)]]))
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_each_free_knob_gets_its_own_start_value_and_bounds(on, monkeypatch):
+    """Built knob by knob from the names, not from the code's own mask: a weight for each on doll
+    after the cell, a memory for each on doll, then ℓ if near is on."""
+    from views_baseline.model.models.distributional.matryoshka import knob_fit
+
+    expected = ([(f"weight {d}", START_WEIGHT[i], knob_fit.WEIGHT_BOUNDS)
+                 for i, d in enumerate(DOLLS) if i > 0 and on[i]]
+                + [(f"memory {d}", START_MEMORY[i], knob_fit.MEMORY_BOUNDS)
+                   for i, d in enumerate(DOLLS) if on[i]]
+                + ([("length", START_LENGTH, knob_fit.LENGTH_BOUNDS)] if on[NEAR] else []))
+    np.testing.assert_array_equal(start_theta(on), np.log([v for _, v, _ in expected]))
+    seen = {}
+
+    def fake_minimize(fun, x0, jac, method, bounds, options):
+        seen["x0"], seen["bounds"] = x0, bounds
+        raise StopIteration
+
+    monkeypatch.setattr(knob_fit, "minimize", fake_minimize)
+    cells, country = synthetic_grid(n_rows=6, n_cols=8, holes=())
+    months = np.arange(100, 140)
+    classes = classify(np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size)))
+    dc = build_doll_counts(classes, months, build_geometry(cells, country), on)
+    with pytest.raises(StopIteration):
+        search(dc, np.array([125]), outcome_classes(classes, months, np.array([125]), 6))
+    np.testing.assert_array_equal(seen["x0"], np.log([v for _, v, _ in expected]))
+    assert seen["bounds"] == [tuple(np.log(b)) for _, _, b in expected]
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_a_search_stores_an_off_dolls_knobs_as_weight_zero_and_memory_nan(on):
+    """And the length scale as NaN when the neighbourhood is off; on dolls get fitted values."""
+    cells, country = synthetic_grid(n_rows=10, n_cols=12, holes=())
+    geo = build_geometry(cells, country)
+    months = np.arange(100, 190)
+    classes = classify(np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size)))
+    dc = build_doll_counts(classes, months, geo, on)
+    cutoffs = np.array([160])
+    r = search(dc, cutoffs, outcome_classes(classes, months, cutoffs, 12))
+    assert r["dolls"] == [d for d, o in zip(DOLLS, on) if o]
+    weight, memory = np.array(r["weight"]), np.array(r["memory"])
+    assert np.all(weight[~on] == 0) and np.all(np.isnan(memory[~on]))
+    assert np.all(weight[on] > 0) and np.all(np.isfinite(memory[on])) and weight[0] == 1.0
+    assert np.isnan(r["length_scale"]) != on[NEAR]
+    assert np.isfinite(r["score"]) and r["score"] >= r["start_score"]
+
+
+def test_the_search_never_computes_an_off_dolls_shares(monkeypatch):
+    from views_baseline.model.models.distributional.matryoshka import knob_fit
+
+    seen = []
+    real = knob_fit.doll_shares
+    monkeypatch.setattr(knob_fit, "doll_shares",
+                        lambda dc, W, doll, length=None: seen.append(doll) or real(dc, W, doll,
+                                                                                   length))
+    cells, country = synthetic_grid(n_rows=10, n_cols=12, holes=())
+    months = np.arange(100, 190)
+    classes = classify(np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size)))
+    on = np.array([True, False, True, False])
+    dc = build_doll_counts(classes, months, build_geometry(cells, country), on)
+    search(dc, np.array([160]), outcome_classes(classes, months, np.array([160]), 12))
+    assert set(seen) == {0, COUNTRY}
+
+
 def test_kept_positions_skip_excluded_stretches():
     # row 0: positions 0..9, excluded 2, 3 and 6 → kept 0 1 4 5 7 8 9
     # row 1: excluded 0..4 (one stretch of length 5) → kept 5 6 7 ...
@@ -176,12 +305,13 @@ def test_kept_positions_skip_excluded_stretches():
     np.testing.assert_array_equal(got, [[0, 1, 4, 5, 7, 8, 9], [5, 6, 7, 8, 9, 10, 11]])
 
 
-def test_sampler_shells_are_exactly_the_brute_force_shells(grid):
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_sampler_shells_are_exactly_the_brute_force_shells(grid, on):
     """Every uniform pick j = 0..size−1 of the country and map shells lands on a distinct cell
     of that shell, and together they are the whole shell."""
     cells, country, geo, _, _ = grid
-    shells, _ = brute_force_shells(cells, country, 1.0)
-    tables = build_shell_tables(geo)
+    shells, _ = brute_force_shells(cells, country, 1.0, on)
+    tables = build_shell_tables(geo, on)
     for i in range(cells.size):
         for k in (COUNTRY, MAP):
             n = int(tables.sizes[k, i])
@@ -196,26 +326,36 @@ def test_sampler_shells_are_exactly_the_brute_force_shells(grid):
                                           err_msg=f"cell {i}, {DOLLS[k]}")
 
 
+def _knobs_as_fitted(on):
+    """Knobs as the fit stores them for the on-mask: an off doll has weight 0 and memory NaN,
+    and without the neighbourhood the length scale is NaN."""
+    return {"weight": np.where(on, [1.0, 0.8, 0.4, 0.2], 0.0).tolist(),
+            "memory": np.where(on, [3.0, 8.0, 40.0, 200.0], np.nan).tolist(),
+            "length_scale": 1.7 if on[NEAR] else np.nan}
+
+
 @pytest.mark.parametrize("h", [1, 12])
-def test_sampler_matches_the_exact_probabilities(grid, h):
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_sampler_matches_the_exact_probabilities(grid, h, on):
     """What predict draws equals what the fit scores: class frequencies of many draws against
     the closed form, for a cell with a full neighbourhood and a corner cell."""
     cells, country, geo, months, values = grid
-    knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
-             "length_scale": 1.7}
+    knobs = _knobs_as_fitted(on)
     cutoff = 150
     hist = months <= cutoff
     sampler = build_sampler(values[hist].astype(np.float32), months[hist], cutoff, knobs, geo,
-                            build_shell_tables(geo))
+                            build_shell_tables(geo, on))
     classes = classify(values)
-    dc = build_doll_counts(classes[hist], months[hist], geo)
+    dc = build_doll_counts(classes[hist], months[hist], geo, on)
     memory = np.asarray(knobs["memory"])
     q = np.stack([doll_shares(dc, time_weights(months[hist], np.array([cutoff]), memory[k]),
                               k, knobs["length_scale"])[0] for k in range(len(DOLLS))])
     rng = np.random.default_rng(2)
     S = 200_000
-    for i in (int(np.argmax(dc.sizes[NEAR])), int(np.argmin(dc.sizes[NEAR]))):
+    near_sizes = shell_sizes(geo, ALL_ON)[1][NEAR]          # cells picked by geometry, not mask
+    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes))):
         p_doll = np.diff(np.r_[0.0, sampler.doll_cdf(np.array([i]), np.array([h]))[0, 0]])
+        assert np.all(p_doll[~on] == 0.0), "an off doll must never be picked"
         draws = sampler.draw(np.array([i]), np.array([h]), rng.random((1, 1, 3, S)))[0, 0]
         freq = np.bincount(classify(draws), minlength=N_CLASSES) / S
         np.testing.assert_allclose(freq, p_doll @ q[:, i, :], atol=4 / np.sqrt(S))
@@ -298,9 +438,9 @@ def test_a_panel_where_no_cell_has_a_country_still_works():
     geo = build_geometry(cells, country)
     months = np.arange(100, 130)
     values = np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size))
-    _, sizes = shell_sizes(geo)
+    _, sizes = shell_sizes(geo, ALL_ON)
     assert (sizes[COUNTRY] == 0).all()
-    dc = build_doll_counts(classify(values), months, geo)
+    dc = build_doll_counts(classify(values), months, geo, ALL_ON)
     q = doll_shares(dc, time_weights(months, np.array([120]), 10.0), MAP)
     # On a 6 × 6 grid the central cells have every other cell within 5 cells: empty map shell.
     np.testing.assert_allclose(q.sum(axis=2)[0], (sizes[MAP] > 0).astype(float))
@@ -308,7 +448,7 @@ def test_a_panel_where_no_cell_has_a_country_still_works():
     knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
              "length_scale": 1.7}
     s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
-                      build_shell_tables(geo))
+                      build_shell_tables(geo, ALL_ON))
     draws = s.draw(np.arange(cells.size), np.array([1, 5]),
                    np.random.default_rng(5).random((cells.size, 2, 3, 50)))
     assert set(np.unique(draws)) <= set(VALUES)
@@ -319,7 +459,7 @@ def test_forecast_opens_outward_with_distance(grid):
     knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
              "length_scale": 1.7}
     s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
-                      build_shell_tables(geo))
+                      build_shell_tables(geo, ALL_ON))
     cdf = s.doll_cdf(np.array([100]), np.array([1, 6, 12, 36]))[0]
     p = np.diff(np.concatenate([np.zeros((4, 1)), cdf], axis=1), axis=1)
     assert np.all(np.diff(p[:, 0]) < 0), "the cell's share must shrink with distance"
@@ -331,7 +471,7 @@ def test_forecast_opens_outward_with_distance(grid):
 PARTITION = {"test": (493, 540)}
 TRAIN_END = 492
 CONFIG = dict(n_samples=32, country_column="c_id", backtest_cutoffs=2, backtest_horizon=6,
-              stability_refits=False, seed=7)
+              stability_refits=False, dolls=list(DOLLS), seed=7)
 
 
 def planted_panel(first=300, last=540, seed=3):
@@ -382,7 +522,7 @@ def test_fit_beats_the_cell_only_special_case_on_a_planted_neighbour_effect(plan
     assert len(k["weight"]) == len(k["memory"]) == len(DOLLS)
     hist = months <= TRAIN_END
     classes = classify(values[hist])
-    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country))
+    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country), ALL_ON)
     cutoffs = backtest_cutoffs(TRAIN_END, 2, 6)
     obj = Objective(dc, cutoffs, outcome_classes(classes, months[hist], cutoffs, 6))
     cell_only = obj.score(np.array([1.0, 1e-6, 1e-6, 1e-6]), np.array([600.0] * 4), 1.0)[0]
@@ -481,6 +621,89 @@ def _model(**overrides):
                                    **{**CONFIG, **overrides})
 
 
+# ── the dolls setting (#153) ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_every_subset_of_dolls_fits_and_predicts(planted, on):
+    """The fitted knobs say which dolls were used, an off doll is stored as weight 0 and memory
+    NaN, and predict draws (finite, from the history) with the off dolls never picked."""
+    cells, country, months, values, df = planted
+    dolls = [d for d, o in zip(DOLLS, on) if o]
+    m = _model(dolls=dolls).fit(df)
+    k = m.knobs["y"]
+    assert k["converged"], k["message"]
+    assert k["dolls"] == dolls
+    assert np.all(np.array(k["weight"])[~on] == 0) and np.all(np.isnan(np.array(k["memory"])[~on]))
+    out = m.predict(df, 0, 3)["y"]
+    assert np.isin(out.values, values[months <= TRAIN_END]).all()
+
+
+def test_with_the_country_off_the_country_codes_change_nothing(planted):
+    """Its cells moved out to the map, so relabelling the countries changes neither the knobs
+    nor the draws."""
+    cells, country, months, values, df = planted
+    relabelled = to_df(cells, np.where(country > 0, 50 - country, country), months, values)
+    dolls = ["cell", "near", "map"]
+    a = _model(dolls=dolls).fit(df)
+    b = _model(dolls=dolls).fit(relabelled)
+    for key in ("weight", "memory", "length_scale", "score"):
+        np.testing.assert_array_equal(a.knobs["y"][key], b.knobs["y"][key])
+    np.testing.assert_array_equal(a.predict(df, 2, 3)["y"].values,
+                                  b.predict(relabelled, 2, 3)["y"].values)
+    full_a = _model().fit(df).knobs["y"]["score"]
+    full_b = _model().fit(relabelled).knobs["y"]["score"]
+    assert full_a == full_b, "relabelling must not matter to the full model either"
+
+
+def test_with_the_country_on_merging_two_countries_changes_the_fit(planted):
+    """The contrast: the invariance above holds because the country doll is off."""
+    cells, country, months, values, df = planted
+    merged = to_df(cells, np.where(country > 0, 7, country), months, values)
+    assert _model().fit(df).knobs["y"]["score"] != _model().fit(merged).knobs["y"]["score"]
+    off = ["cell", "near", "map"]
+    assert (_model(dolls=off).fit(df).knobs["y"]["score"]
+            == _model(dolls=off).fit(merged).knobs["y"]["score"])
+
+
+def test_stability_refits_use_the_same_dolls(planted):
+    *_, df = planted
+    k = _model(dolls=["cell", "country"], stability_refits=True).fit(df).knobs["y"]
+    assert len(k["leave_one_cutoff_out"]) == CONFIG["backtest_cutoffs"]
+    for r in k["leave_one_cutoff_out"]:
+        assert r["dolls"] == ["cell", "country"]
+        assert r["weight"][NEAR] == 0 and np.isnan(r["memory"][NEAR])
+        assert np.isnan(r["length_scale"])
+
+
+def test_predict_refuses_knobs_fitted_with_other_dolls(planted):
+    *_, df = planted
+    m = _model(dolls=["cell", "near"]).fit(df)
+    m.dolls = list(DOLLS)
+    with pytest.raises(ValueError, match=r"fitted with dolls \['cell', 'near'\]"):
+        m.predict(df, 0, 1)
+
+
+@pytest.mark.parametrize("dolls", [
+    ["near", "country", "map"], ["cell", "cell"], ["cell", "map", "near"], ["cell", "ring"],
+    [], "cell", ("cell", 1), None,
+])
+def test_the_dolls_setting_is_checked(dolls):
+    with pytest.raises(ValueError, match="dolls must be"):
+        _model(dolls=dolls)
+
+
+def test_the_catalog_requires_dolls():
+    """ADR-021: no silent default for which dolls are used."""
+    from views_baseline.model.catalog import BaselineModelCatalog
+
+    config = {"regression_targets": ["y"], "n_samples": 8, "seed": 1, "country_column": "c_id",
+              "backtest_cutoffs": 1, "backtest_horizon": 6, "stability_refits": False}
+    catalog = BaselineModelCatalog(config=config, partition_dict=PARTITION, loa="pgm")
+    with pytest.raises(ValueError, match="dolls"):
+        catalog.get_model("MatryoshkaConflictology")
+
+
 def test_fails_loud_on_a_missing_cell_month(planted):
     *_, df = planted
     with pytest.raises(ValueError, match="complete panel"):
@@ -570,19 +793,22 @@ def _encoded(months, n_cells):
         np.float32)
 
 
-@pytest.mark.parametrize("doll", range(len(DOLLS)))
-def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid, doll):
+@pytest.mark.parametrize("on, doll", [(on, d) for on in SUBSETS for d in range(len(DOLLS))
+                                      if on[d]],
+                         ids=[f"{i}-{DOLLS[d]}" for on, i in zip(SUBSETS, SUBSET_IDS)
+                              for d in range(len(DOLLS)) if on[d]])
+def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid, on, doll):
     """With all weight on one doll and values that encode their cell, every draw comes from
     that doll's brute-force shell, in the right proportions (kernel for the neighbourhood,
     uniform for country and map). Checked for a full cell, a corner and a no-country cell."""
     cells, country, geo, months, _ = grid
     length = 1.7
-    shells, pick = brute_force_shells(cells, country, length)
-    weight = np.full(len(DOLLS), 1e-300)
+    shells, pick = brute_force_shells(cells, country, length, on)
+    weight = np.where(on, 1e-300, 0.0)
     weight[doll] = 1.0
     knobs = {"weight": weight, "memory": [10.0] * 4, "length_scale": length}
     values = _encoded(months, cells.size)
-    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
+    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo, on))
     S = 40_000
     no_country = int(np.nonzero(country <= 0)[0][0])
     second_country = int(np.nonzero(country == 9)[0][-1])     # its block does not start at 0
@@ -596,12 +822,34 @@ def test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights(grid
         np.testing.assert_allclose(freq, pick[doll][i], atol=5 / np.sqrt(S))
 
 
+def test_a_non_zero_weight_on_an_off_doll_raises(grid):
+    cells, country, geo, months, values = grid
+    on = np.array([True, True, False, True])
+    knobs = {**_knobs_as_fitted(on), "weight": [1.0, 0.8, 0.4, 0.2]}
+    with pytest.raises(ValueError, match="off must have weight 0"):
+        build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
+                      build_shell_tables(geo, on))
+
+
+@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+def test_an_off_doll_is_never_picked_for_any_cell(grid, on):
+    """Its step-1 probability is exactly 0 for every cell, with NaN knobs as the fit stores."""
+    cells, country, geo, months, values = grid
+    s = build_sampler(values.astype(np.float32), months, months[-1], _knobs_as_fitted(on), geo,
+                      build_shell_tables(geo, on))
+    s.check_drawable(np.array([1, 12, 36]))
+    cdf = s.doll_cdf(np.arange(cells.size), np.array([1, 36]))
+    p = np.diff(np.concatenate([np.zeros(cdf.shape[:2] + (1,)), cdf], axis=2), axis=2)
+    assert np.all(p[..., ~on] == 0.0)
+    assert np.all(np.isfinite(cdf))
+
+
 def test_a_cell_without_a_country_never_picks_the_country_doll(grid):
     cells, country, geo, months, values = grid
     knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
              "length_scale": 1.7}
     s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
-                      build_shell_tables(geo))
+                      build_shell_tables(geo, ALL_ON))
     for i in np.nonzero(country <= 0)[0]:
         p = np.diff(np.r_[0.0, s.doll_cdf(np.array([i]), np.array([1]))[0, 0]])
         assert p[COUNTRY] == 0.0
@@ -663,7 +911,7 @@ def test_rng_order_is_entity_then_time_then_target(planted):
     last = TRAIN_END + k
     hist = months <= last
     geo = build_geometry(cells, country)
-    tables = build_shell_tables(geo)
+    tables = build_shell_tables(geo, ALL_ON)
     panel = {"y": values[hist], "z": values[hist] * 2 + 1}
     samplers = {t: build_sampler(panel[t].astype(np.float32), months[hist], last, m.knobs[t],
                                  geo, tables) for t in m.targets}
@@ -695,7 +943,7 @@ def test_stability_refits_are_searches_without_the_left_out_cutoff(planted):
     m = _model(stability_refits=True).fit(df)
     hist = months <= TRAIN_END
     classes = classify(values[hist])
-    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country))
+    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country), ALL_ON)
     cutoffs = backtest_cutoffs(TRAIN_END, 2, 6)
     outcomes = outcome_classes(classes, months[hist], cutoffs, 6)
     for refit, c in zip(m.knobs["y"]["leave_one_cutoff_out"], cutoffs):
@@ -725,7 +973,7 @@ def test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells():
     months = np.arange(100, 140)
     values = np.random.default_rng(6).choice(VALUES, size=(months.size, cells.size))
     classes = classify(values)
-    dc = build_doll_counts(classes, months, geo)
+    dc = build_doll_counts(classes, months, geo, ALL_ON)
     assert (dc.sizes[MAP] == 0).any() and (dc.sizes[MAP] > 0).any()
     weight, memory, length = np.array([1.0, 0.8, 0.4, 0.2]), np.array([3., 8., 40., 200.]), 1.7
     cutoff, H = 130, 4
@@ -735,7 +983,7 @@ def test_log_score_equals_the_samplers_mix_on_a_grid_with_empty_shells():
     score, _ = log_score(q, dc.sizes, obs, weight, memory)
     s = build_sampler(values[months <= cutoff].astype(np.float32), months[months <= cutoff],
                       cutoff, {"weight": weight, "memory": memory, "length_scale": length},
-                      geo, build_shell_tables(geo))
+                      geo, build_shell_tables(geo, ALL_ON))
     p_doll = np.diff(np.concatenate(
         [np.zeros((cells.size, H, 1)), s.doll_cdf(np.arange(cells.size), np.arange(1, H + 1))],
         axis=2), axis=2)                                                     # (N, H, 4)
@@ -825,7 +1073,7 @@ def test_near_last_is_each_cells_farthest_present_neighbour(grid):
     knobs = {"weight": [1.0, 0.8, 0.4, 0.2], "memory": [3.0, 8.0, 40.0, 200.0],
              "length_scale": 1.7}
     s = build_sampler(values.astype(np.float32), months, months[-1], knobs, geo,
-                      build_shell_tables(geo))
+                      build_shell_tables(geo, ALL_ON))
     present = geo.neighbours >= 0
     expected = np.array([np.nonzero(r)[0][-1] if r.any() else 0 for r in present])
     np.testing.assert_array_equal(s.near_last, expected)
@@ -850,7 +1098,7 @@ def test_start_score_is_the_score_at_the_starting_values(planted, fitted):
     cells, country, months, values, _ = planted
     hist = months <= TRAIN_END
     classes = classify(values[hist])
-    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country))
+    dc = build_doll_counts(classes, months[hist], build_geometry(cells, country), ALL_ON)
     cutoffs = backtest_cutoffs(TRAIN_END, 2, 6)
     obj = Objective(dc, cutoffs, outcome_classes(classes, months[hist], cutoffs, 6))
     expected = obj.score(START_WEIGHT, START_MEMORY, START_LENGTH)[0]
@@ -911,8 +1159,8 @@ def test_fit_logs_the_knobs_and_warns_when_the_search_stops_early(planted, monke
         m = _model().fit(df)
     assert not m.knobs["y"]["converged"]
     messages = [(r.levelno, r.getMessage()) for r in caplog.records]
-    assert any(lv == logging.INFO and "MatryoshkaConflictology y: weight" in s
-               for lv, s in messages)
+    assert any(lv == logging.INFO and "MatryoshkaConflictology y: dolls ['cell', 'near', "
+               "'country', 'map']; weight" in s for lv, s in messages)
     assert any(lv == logging.WARNING and "did not converge" in s for lv, s in messages)
 
 
@@ -921,7 +1169,8 @@ def test_fit_warns_when_probabilities_hit_the_floor(caplog):
 
     from views_baseline.model.models.distributional.matryoshka.model import _log_fit
 
-    knobs = {"weight": [1.0] * 4, "memory": [1.0] * 4, "length_scale": 1.0, "score": -1.0,
+    knobs = {"dolls": DOLLS, "weight": [1.0] * 4, "memory": [1.0] * 4, "length_scale": 1.0,
+             "score": -1.0,
              "start_score": -2.0, "steps": 3, "seconds": 1.0, "converged": True,
              "message": "ok", "floored": 5}
     with caplog.at_level(logging.INFO):
@@ -1017,7 +1266,7 @@ def test_sampler_rejects_knobs_out_of_range(grid, change):
     cells, country, geo, months, values = grid
     with pytest.raises(ValueError, match="knobs out of range"):
         build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
-                      geo, build_shell_tables(geo))
+                      geo, build_shell_tables(geo, ALL_ON))
 
 
 def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
@@ -1026,7 +1275,7 @@ def test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight(grid):
     cells, country, geo, months, _ = grid
     knobs = {**GOOD_KNOBS, "weight": [0.0, 0.8, 0.4, 0.2], "memory": [np.inf] * 4}
     values = _encoded(months, cells.size)
-    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo))
+    s = build_sampler(values, months, months[-1], knobs, geo, build_shell_tables(geo, ALL_ON))
     S = 20_000
     got = s.draw(np.arange(5), np.array([1, 3]),
                  np.random.default_rng(0).random((5, 2, 3, S))).astype(np.int64)
@@ -1046,7 +1295,7 @@ def test_draw_fails_loud_when_no_doll_can_be_drawn(grid, change, h, total):
     map silently (or crash on an empty map shell)."""
     cells, country, geo, months, values = grid
     s = build_sampler(values.astype(np.float32), months, months[-1], {**GOOD_KNOBS, **change},
-                      geo, build_shell_tables(geo))
+                      geo, build_shell_tables(geo, ALL_ON))
     with pytest.raises(ValueError, match=rf"no doll can be drawn.* sums to {total} "):
         h = np.atleast_1d(h)
         s.draw(np.array([5, 7]), h, np.random.default_rng(0).random((2, h.size, 3, 4)))
@@ -1063,7 +1312,7 @@ def test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead(grid):
     ahead 50, 1, 60: bad at 50 and 60. Four bad (cell, month) pairs, off the diagonal: the
     message must name the first, the second cell at 50."""
     cells, country, geo, months, values = grid
-    shells = build_shell_tables(geo)
+    shells = build_shell_tables(geo, ALL_ON)
     s = build_sampler(values.astype(np.float32), months, months[-1], FADES_WITHOUT_A_COUNTRY,
                       geo, shells)
     with_country = int(np.nonzero(country > 0)[0][0])
@@ -1112,7 +1361,7 @@ def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, n
     months = np.arange(100, 130)
     values = np.random.default_rng(4).choice(VALUES, size=(months.size, cells.size))
     s = build_sampler(values.astype(np.float32), months, months[-1], GOOD_KNOBS, geo,
-                      build_shell_tables(geo))
+                      build_shell_tables(geo, ALL_ON))
     seen = []
     real = Sampler.doll_cdf
 
@@ -1131,8 +1380,8 @@ def test_check_drawable_covers_every_pattern_and_every_months_ahead(make_grid, n
 
 
 def test_the_two_grids_have_the_shell_cases_the_coverage_test_needs():
-    block = build_shell_tables(build_geometry(*_block_grid())).sizes
-    sparse = build_shell_tables(build_geometry(*_sparse_grid())).sizes
+    block = build_shell_tables(build_geometry(*_block_grid()), ALL_ON).sizes
+    sparse = build_shell_tables(build_geometry(*_sparse_grid()), ALL_ON).sizes
     assert (block[MAP] == 0).any() and (block[MAP] > 0).any()
     assert (block[COUNTRY] == 0).any() and (block[COUNTRY] > 0).any()
     assert (sparse[COUNTRY] == 1).any() and (sparse[NEAR] == 0).any()
@@ -1148,7 +1397,7 @@ def test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn(monkeypatch)
     geo = build_geometry(cells, country)
     months = np.arange(100, 130)
     values = _encoded(months, cells.size)
-    shells = build_shell_tables(geo)
+    shells = build_shell_tables(geo, ALL_ON)
     sparse = int(np.nonzero(cells == SPARSE_CELL)[0][0])
     assert shells.sizes[NEAR, sparse] > 0, "the sparse cell does have a neighbour"
     knobs = {"weight": [1.0, 1.0, 0.0, 0.0], "memory": [10.0] * 4, "length_scale": 0.002}

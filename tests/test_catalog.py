@@ -10,6 +10,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    PooledConflictology,
     RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -242,6 +243,7 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
         ("MixtureBaseline", MixtureBaseline),
         ("InterpolatedQuantileConflictology", InterpolatedQuantileConflictology),
         ("RollingConflictology", RollingConflictology),
+        ("PooledConflictology", PooledConflictology),
         ("KDEConflictology", KDEConflictology),
         ("EmpiricalKDEMixtureConflictology", EmpiricalKDEMixtureConflictology),
         ("MatryoshkaConflictology", MatryoshkaConflictology),
@@ -260,9 +262,11 @@ def test_catalog_forwards_all_config_params(algo, cls):
         "bandwidth": 2.5,
         "alpha": 0.35,
         "country_column": "country_code",
+        "pool_by": "admin1_code",
         "backtest_cutoffs": 3,
         "backtest_horizon": 24,
         "stability_refits": True,
+        "dolls": ["cell", "near", "map"],
     }
     partition_dict = {"test": (445, 492)}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")

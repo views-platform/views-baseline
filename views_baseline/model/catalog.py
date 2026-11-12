@@ -8,6 +8,7 @@ from views_baseline.model.models.distributional import (
     MixtureBaseline,
     ParametricConflictology,
     ParametricHurdleConflictology,
+    PooledConflictology,
     RollingConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -50,6 +51,7 @@ class BaselineModelCatalog:
             "KDEConflictology": self._get_kde,
             "EmpiricalKDEMixtureConflictology": self._get_empirical_kde_mixture,
             "RollingConflictology": self._get_rolling_conflictology,
+            "PooledConflictology": self._get_pooled_conflictology,
             "MatryoshkaConflictology": self._get_matryoshka,
         }
 
@@ -130,6 +132,18 @@ class BaselineModelCatalog:
             partition_dict=self.partition_dict,
             loa=self.loa,
             n_samples=self.config["n_samples"],
+            seed=self.config["seed"],
+        )
+
+    def _get_pooled_conflictology(self):
+        # #151; pool_by and seed are required, audited genome keys (ADR-021).
+        return PooledConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            pool_by=self.config["pool_by"],
             seed=self.config["seed"],
         )
 
@@ -222,5 +236,6 @@ class BaselineModelCatalog:
             backtest_cutoffs=self.config["backtest_cutoffs"],
             backtest_horizon=self.config["backtest_horizon"],
             stability_refits=self.config["stability_refits"],
+            dolls=self.config["dolls"],
             seed=self.config["seed"],
         )

@@ -1,9 +1,9 @@
 # Class Intent Contract: MatryoshkaConflictology
 
-**Date:** 2026-11-07
+**Date:** 2026-11-07 (dolls setting added 2026-11-12, #153)
 **Owner:** Project maintainers
 **Status:** Active
-**Related ADRs:** ADR-008, ADR-011, ADR-019, ADR-021, ADR-024 (with its amendment of 2026-11-06)
+**Related ADRs:** ADR-008, ADR-011, ADR-019, ADR-021, ADR-024 (with its amendments of 2026-11-06 and 2026-11-12)
 
 ---
 
@@ -26,8 +26,18 @@ observed. It is picked in three steps:
 3. **A cell in that doll:** a neighbour at distance `d` ∝ `exp(−d / ℓ)`; uniform within the country
    and map shells.
 
-There are **8 knobs** per target (3 weights, the cell's fixed at 1; 4 memories; the length scale `ℓ`).
-They are fitted once, by backtest on data up to `train_end`. The data itself runs up to each forecast
+There are **8 knobs** per target (3 weights, the cell's fixed at 1; 4 memories; the length scale `ℓ`)
+when all four dolls are used. They are fitted once, by backtest on data up to `train_end`.
+
+**Which dolls are used is a setting, `dolls`** (#153). The cell is always used. A doll that is off has an
+empty shell, and its cells move outward to the next doll that is on:
+- **without `near`:** the country doll holds the cell's same-country neighbours, and the map the others;
+- **without `country`:** the map doll holds the cell's country;
+- **without `map`:** its cells are in no doll (the map is outermost).
+
+An off doll's knobs are left out of the search (not pinned), so a model with fewer dolls has fewer
+knobs: 2 per doll used, minus the cell's weight, plus `ℓ` if `near` is used. This is how the paper's
+"does adding a level help?" comparisons are fitted with the same code and backtest. The data itself runs up to each forecast
 origin: origin `k` draws from history ending at `c = train_end + k`.
 
 Plain conflictology with a moving window (`RollingConflictology`) is the special case where only the
@@ -53,12 +63,13 @@ cell has weight, nothing fades, and the history is the last 36 months.
   - requires a **complete panel**: every cell in every month from the first month in `df` to
     `train_end`, exactly once, with no NaN;
   - requires each cell's country code to be an integer that never changes (≤ 0 means no country);
-  - per target, searches the 8 knobs with L-BFGS-B on the exact log score over 7 size classes and
+  - per target, searches the knobs of the dolls in use (8 with all four) with L-BFGS-B on the exact log score over 7 size classes and
     its exact slope (`knob_fit.py`). The backtest has `backtest_cutoffs` cutoffs, 12 months apart,
     the last one `backtest_horizon` months before `train_end`. Each is scored on the
     `backtest_horizon` months after it;
   - with `stability_refits`, repeats the search with each cutoff left out in turn;
-  - stores the result in `self.knobs[target]`: `weight`, `memory`, `length_scale`, `score`,
+  - stores the result in `self.knobs[target]`: `dolls` (the names used), `weight`, `memory`,
+    `length_scale` (an off doll: weight 0 and memory NaN; `length_scale` NaN without `near`), `score`,
     `start_score`, `floored`, `converged`, `message`, `steps`, `evaluations`, `seconds`, and
     `leave_one_cutoff_out` (with stability refits). `seconds` is wall-clock time, the one field
     that differs between identical fits. It also stores `self.entity_ids` (ascending priogrid
@@ -92,10 +103,11 @@ cell has weight, nothing fades, and the history is the last 36 months.
 | `country_column` | `str` | The column with each cell's GAUL country code. In views-models' pgm input this is `c_id` (renamed from `gaul0_code`). It must not be a target. |
 | `backtest_cutoffs` | `int ≥ 1` | Number of backtest cutoffs; 4 in the prototype. |
 | `backtest_horizon` | `int ≥ 1` | Months scored after each cutoff; 36 in the prototype. |
+| `dolls` | `list[str]` | The dolls to use: distinct names from `cell`, `near`, `country`, `map`, in that order, including `cell` (its weight is the reference). All four is ADR-024's model. Required, no default (ADR-021). |
 | `stability_refits` | `bool` | Refit with each cutoff left out in turn (needs ≥ 2 cutoffs). This multiplies the fit time by about `backtest_cutoffs + 1`. |
 
 **Fixed by ADR-024, not configured:**
-- the four dolls and the 5-cell radius;
+- the doll definitions and the 5-cell radius (which dolls are used is `dolls`);
 - the seven size classes;
 - the knob limits: weights 1e-6–1e3, memories 1–600 months, `ℓ` 0.25–10 cells;
 - the starting values;
@@ -140,6 +152,10 @@ other load:
 | A cell's country changes over time, or is not an integer | `ValueError` | |
 | Fewer than 120 months before the earliest cutoff | `ValueError` with the months available | ADR-024: at least 10 years. |
 | `stability_refits` with a single cutoff | `ValueError` | |
+| `dolls` not a list of distinct known names in `DOLLS` order, or without `cell` | `ValueError("…dolls must be…")` at construction | No silent reordering. |
+| A config without `dolls` | `ValueError` from the catalog (genome) | ADR-021. |
+| Knobs fitted with other dolls than the model now uses (`self.dolls` changed after fit) | `ValueError` naming the target and both doll lists, before predict draws | Hand-set knobs without a `dolls` key are taken as fitted with the model's dolls. |
+| Hand-set knobs with a non-zero weight on a doll that is off | `ValueError("…off must have weight 0…")` when predict builds its sampler | An off doll's memory and (without `near`) `ℓ` are not checked and may be NaN, as the fit stores them. |
 | `loa` other than `pgm` | `ValueError` at fit | |
 | `predict` before `fit`; `sequence_number < 0`; `output_length < 1`; data ending before `c` | `ValueError` | |
 | Different cells from fit | `ValueError` naming up to 5 unfitted and 5 missing cells | A cell that appears after `train_end` has no fitted country or shells. |
@@ -182,7 +198,7 @@ from views_baseline.model.models.distributional import MatryoshkaConflictology
 m = MatryoshkaConflictology(
     targets=["lr_sb_best", "lr_ns_best", "lr_os_best"], partition_dict={"test": (457, 492)},
     loa="pgm", n_samples=256, country_column="c_id", backtest_cutoffs=4, backtest_horizon=36,
-    stability_refits=True, seed=42,
+    stability_refits=True, dolls=["cell", "near", "country", "map"], seed=42,
 ).fit(df)                      # df: months 121..492 or later, lr_*_best and c_id
 m.knobs["lr_sb_best"]["memory"]
 pf = m.predict(df=df, sequence_number=12, output_length=36)["lr_sb_best"]
@@ -194,6 +210,8 @@ pf = m.predict(df=df, sequence_number=12, output_length=36)["lr_sb_best"]
 ```python
 # The country column is missing: fit cannot build the country doll.
 m.fit(df[["lr_sb_best"]])                                   # ValueError (missing column)
+# No cell doll: the cell's weight is the reference.
+MatryoshkaConflictology(..., dolls=["near", "country", "map"])  # ValueError (dolls)
 # A panel with a gap: no silent filling.
 m.fit(df.drop(df.index[0]))                                 # ValueError (complete panel)
 ```
@@ -232,6 +250,11 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 | `test_each_target_draws_with_its_own_knobs` | With values that encode their cell, a cell-only target draws only from its cell and a neighbourhood target mostly from elsewhere: each target uses its own knobs. |
 | `test_sampler_rejects_knobs_out_of_range` (each doll's weight and memory, the counts, the length scale), `test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight`, `test_draw_fails_loud_when_no_doll_can_be_drawn`, `test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead`, `test_check_drawable_covers_every_pattern_and_every_months_ahead` (two grids), `test_the_two_grids_have_the_shell_cases_the_coverage_test_needs`, `test_predict_checks_the_knobs_for_every_cell_before_drawing`, `test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn`, `test_fails_loud_on_an_infinite_country_code`, `test_a_numpy_bool_is_accepted_for_stability_refits`, `test_row_search_answers_a_chunk_with_a_single_lookup` | The checks added after the reviews of the #147 fixes. |
 | `test_no_committed_graphics.py`: `test_every_tracked_file_follows_the_policy`, `test_the_notebooks_folder_follows_the_policy`, `test_the_scan_finds_each_case_in_a_made_up_repository`, `test_the_made_up_repository_covers_every_scanned_kind`, and the rule tests (`test_the_file_check_knows_each_extension`, `test_the_lists_hold_at_least_the_common_forms`, `test_markdown_embedding_is_caught`, `test_code_that_embeds_an_image_is_caught`, `test_attachments_are_caught_in_any_cell`, `test_names_and_code_are_left_alone`) | No committed graphics (#144), over every file git tracks (the list checked complete): no graphic files, on disk or not; no notebook outputs, execution counts or attachments; no embedded image (markdown image, RST image or figure directive, embedding HTML element, CSS url reference, base64 image URI) in notebook cells or metadata, or in markdown, RST and HTML files. One function holds the policy and is tested on a made-up repository with one example of each case. The scan is strict, so docs name these forms in words. |
+| **Subsets of dolls (#153)** — parametrised over all 8 masks with the cell on: `test_shells_are_disjoint_cover_every_cell_and_have_the_counted_sizes`, `test_doll_shares_equal_a_direct_kernel_weighted_average`, `test_exact_probabilities_match_an_independent_three_step_draw`, `test_sampler_shells_are_exactly_the_brute_force_shells`, `test_sampler_matches_the_exact_probabilities`, `test_each_doll_draws_exactly_from_its_shell_with_the_right_cell_weights`, `test_exact_slope_matches_nudged_differences` | Every exactness guarantee above holds for each subset: shells (with the dropped cells exactly the map's when the map is off), shares, score = draw, uniform shell picks, and the slope of the free knobs (their number checked). |
+| `test_the_brute_force_shells_move_an_off_dolls_cells_outward` | Pins the reference itself: without `near`, the country and map gain its same- and other-country cells; without `country`, the map gains it. |
+| `test_an_off_doll_is_never_picked_for_any_cell`, `test_a_non_zero_weight_on_an_off_doll_raises`, `test_the_doll_mask_needs_four_booleans_with_the_cell_on` | Off dolls have step-1 probability exactly 0 for every cell (with NaN knobs, as stored); the sampler's and the mask's checks. |
+| `test_with_every_doll_on_the_search_fits_all_eight_knobs_from_the_same_start`, `test_each_free_knob_gets_its_own_start_value_and_bounds`, `test_a_search_stores_an_off_dolls_knobs_as_weight_zero_and_memory_nan`, `test_the_search_never_computes_an_off_dolls_shares`, `test_stability_refits_use_the_same_dolls` | The search's free knobs, start values and stored result per subset, and that off dolls cost nothing. |
+| `test_every_subset_of_dolls_fits_and_predicts`, `test_with_the_country_off_the_country_codes_change_nothing`, `test_with_the_country_on_merging_two_countries_changes_the_fit`, `test_the_dolls_setting_is_checked`, `test_the_catalog_requires_dolls`, `test_predict_refuses_knobs_fitted_with_other_dolls` | The setting end to end: each subset fits and predicts; with the country off the country codes do not matter (and with it on they do); validation; no default. |
 | `test_golden_matryoshka` (`test_golden.py`), `test_matryoshka_predict_needs_its_target_columns` (`test_dual_input.py`) | The exact seeded output with set knobs (C-29), and the C-34 exception. |
 | Shared lists in `test_protocol.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_matryoshka_genome_is_exact`), `test_baseline.py`, `test_config_conformance.py` | Protocol, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. The shared dual-input and seed-output lists use a 60-month panel without a country column, so those two checks are in `test_matryoshka.py`. |
 
@@ -240,7 +263,8 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 ## Evolution Notes
 
 - **Evolving** (ADR-004).
-- The conformance fixture is derived (light_strider with `algorithm` swapped and the Matryoshka keys)
-  until views-models ships a config for this model (#127 stage 4).
+- The conformance fixture is derived (light_strider with `algorithm` swapped and the Matryoshka keys,
+  `dolls` all four) until views-models ships a config for this model (#127 stage 4).
+- `dolls` (#153): with all four dolls the output is byte-identical to 1.3.0 (`GOLDEN_MATRYOSHKA`).
 - Known loose knobs (#140, accepted): the one-sided map memory sits at the 600-month ceiling; the
   non-state country weight and memory trade off against each other.

@@ -58,6 +58,7 @@ DERIVED over the dict. ``KDEConflictology`` is derived the same way, plus ``band
 ``EmpiricalKDEMixtureConflictology`` plus ``alpha: 0.5`` and ``bandwidth: "sj"``. Replace all
 three with real copies once views-models ships the models (#109).
 ``RollingConflictology`` (#126) is derived the same way, with only ``algorithm`` swapped.
+``PooledConflictology`` (#151) is derived the same way, plus ``pool_by: "c_id"``.
 ``MatryoshkaConflictology`` (ADR-024) is derived the same way, without ``window_months`` and
 with its own keys.
 
@@ -230,6 +231,28 @@ MERGED_CONFIGS = {
         "time_steps": 36,
         "window_months": 36,
     },
+    # DERIVED, like Rolling: light_strider with `algorithm` swapped and `pool_by` added (#151).
+    # "c_id" is the country column views-models' pgm input already carries.
+    "PooledConflictology": {
+        "algorithm": "PooledConflictology",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "pool_by": "c_id",
+        "prediction_format": "prediction_frame",
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
     # DERIVED: light_strider with `algorithm` swapped, `window_months` removed (Matryoshka has
     # no window), and its own keys added (ADR-024): the prototype's backtest design and the
     # country column views-models' pgm input already carries (gaul0_code → c_id).
@@ -239,6 +262,7 @@ MERGED_CONFIGS = {
         "backtest_horizon": 36,
         "country_column": "c_id",
         "creator": "Simon",
+        "dolls": ["cell", "near", "country", "map"],
         "deployment_status": "shadow",
         "evaluation_profile": "hydranet_ucdp",
         "level": "pgm",

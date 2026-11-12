@@ -58,6 +58,9 @@ class ReproducibilityGate:
             "InterpolatedQuantileConflictology": ["window_months", "n_samples", "seed"],
             # Conflictology with its window ending at each rolling origin (#126, ADR-024).
             "RollingConflictology": ["window_months", "n_samples", "seed"],
+            # Conflictology pooled over an area (#151): `pool_by` names the area column, or
+            # "map" for every cell. Required, no default (ADR-021).
+            "PooledConflictology": ["window_months", "n_samples", "seed", "pool_by"],
             # C: `bandwidth` is a number (count units) or "sj" / "silverman"; no default.
             "KDEConflictology": ["window_months", "n_samples", "seed", "bandwidth"],
             # E: `alpha` in [0, 1] is the weight on C; `bandwidth` is C's.
@@ -65,11 +68,12 @@ class ReproducibilityGate:
                 "window_months", "n_samples", "seed", "alpha", "bandwidth",
             ],
             # ADR-024: no window; the history is all the data passed (at least 120 months
-            # before the earliest backtest cutoff). The dolls, radius, size classes, knob limits
-            # and search settings are fixed by the ADR, not configured.
+            # before the earliest backtest cutoff). The doll definitions, radius, size classes,
+            # knob limits and search settings are fixed by the ADR, not configured.
+            # `dolls` (#153): which dolls to use, e.g. all four; required, no default (ADR-021).
             "MatryoshkaConflictology": [
                 "n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
-                "stability_refits",
+                "stability_refits", "dolls",
             ],
         }
 

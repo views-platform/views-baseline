@@ -103,7 +103,7 @@ def _golden_matryoshka():
     model = MatryoshkaConflictology(
         targets=["y1"], partition_dict=_PARTITION, loa="pgm", n_samples=16,
         country_column="c_id", backtest_cutoffs=1, backtest_horizon=1,
-        stability_refits=False, seed=42)
+        stability_refits=False, dolls=["cell", "near", "country", "map"], seed=42)
     model.knobs = {"y1": {"weight": [1.0, 0.8, 0.6, 0.6], "memory": [3.0, 6.0, 12.0, 24.0],
                           "length_scale": 1.5}}
     model.entity_ids, model.history_start = cells, 481

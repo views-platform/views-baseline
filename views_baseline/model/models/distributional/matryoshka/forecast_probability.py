@@ -96,11 +96,14 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
     ``W`` holds one row of month weights per output row: `time_weights` gives q_doll, and
     `time_weight_slopes` its slope; stacking both reads the counts once. ``length`` is the
     neighbourhood length scale ℓ (cells), needed for doll NEAR only. Shell arithmetic as in
-    doll_counts.py; class 0 is the rest (each row of shares sums to the row sum of W).
+    doll_counts.py, for the on-mask ``dc.on``; an off doll's shares are all 0. Class 0 is the
+    rest (each row of shares sums to the row sum of W, for a non-empty shell).
     """
     W = np.asarray(W, dtype=np.float64)
     R, N = W.shape[0], dc.sizes.shape[1]
     q = np.zeros((R, N, N_CLASSES))
+    if not dc.on[doll]:
+        return q
     size = dc.sizes[doll].astype(np.float64)
     has_country = dc.country_index >= 0
     # Cells without a country index a zero column appended after the countries, so this also
@@ -117,13 +120,21 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(z > 0, num / z, 0.0)
         else:
-            totals = np.concatenate([W @ dc.country_tot[k], np.zeros((R, 1))], axis=1)
-            country_rest = np.where(has_country, totals[:, ci]
-                                    - _weigh(dc.inner_same_country[k], W), 0.0)
+            own = _weigh(dc.own[k], W)
+            if dc.on[NEAR]:
+                inner = own + sum(_weigh(x, W) for x in dc.band[k])
+                inner_same_country = _weigh(dc.inner_same_country[k], W)
+            else:                                # the neighbours moved out: inner is the cell
+                inner = own
+                inner_same_country = np.where(has_country, own, 0.0)
+            if dc.on[COUNTRY]:
+                totals = np.concatenate([W @ dc.country_tot[k], np.zeros((R, 1))], axis=1)
+                country_rest = np.where(has_country, totals[:, ci] - inner_same_country, 0.0)
+            else:                                # the country moved out to the map
+                country_rest = 0.0
             if doll == COUNTRY:
                 q[..., k] = country_rest
             else:
-                inner = _weigh(dc.own[k], W) + sum(_weigh(x, W) for x in dc.band[k])
                 q[..., k] = (W @ dc.global_tot[k])[:, None] - inner - country_rest
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(size > 0, q[..., k] / size, 0.0)

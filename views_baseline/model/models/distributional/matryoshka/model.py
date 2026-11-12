@@ -2,11 +2,11 @@
 
 Data in:   a complete grid-month panel (DataFrame or FeatureFrame) with the targets and the
            country column. fit reads months ≤ train_end; predict reads months ≤ train_end + k.
-Transform: fit finds 8 knobs per target by backtest (`knob_fit`); predict draws past observed
+Transform: fit finds up to 8 knobs per target by backtest (`knob_fit`); predict draws past observed
            values in three steps (`draw`).
 Config:    targets, partition_dict, loa (pgm only), n_samples, seed, country_column,
-           backtest_cutoffs, backtest_horizon, stability_refits. Everything else is fixed by
-           ADR-024.
+           backtest_cutoffs, backtest_horizon, stability_refits, dolls (which dolls to use,
+           #153). Everything else is fixed by ADR-024.
 Out:       dict[str, PredictionFrame], one per target, each (cells × months, n_samples).
 """
 
@@ -25,6 +25,10 @@ from views_baseline.model.grid import (
     build_identifier_arrays,
     build_time_grid,
     train_test_boundary,
+)
+from views_baseline.model.models.distributional.matryoshka.doll_counts import (
+    DOLLS,
+    doll_mask,
 )
 from views_baseline.model.models.distributional.matryoshka.draw import (
     build_sampler,
@@ -101,8 +105,8 @@ def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: i
 def _log_fit(target: str, k: dict) -> None:
     """INFO the knobs; WARN when the search did not converge or probabilities hit the floor
     (ADR-008: the diagnostics must not stay on the model only)."""
-    logger.info("%s %s: weight %s, memory %s months, length scale %.3g cells; score %.6g "
-                "(start %.6g), %d steps, %.0f s.", MODEL_NAME, target,
+    logger.info("%s %s: dolls %s; weight %s, memory %s months, length scale %.3g cells; "
+                "score %.6g (start %.6g), %d steps, %.0f s.", MODEL_NAME, target, k["dolls"],
                 np.round(k["weight"], 4).tolist(), np.round(k["memory"], 1).tolist(),
                 k["length_scale"], k["score"], k["start_score"], k["steps"], k["seconds"])
     searches = [("the knob search", k)] + [
@@ -116,6 +120,16 @@ def _log_fit(target: str, k: dict) -> None:
             logger.warning("%s %s: in %s, %d backtest probabilities fell below the floor and "
                            "score as the floor; the knobs give some observed outcomes (almost) "
                            "no chance.", MODEL_NAME, target, what, r["floored"])
+
+
+def _check_dolls(dolls) -> list[str]:
+    """The dolls in use (#153): known names, in DOLLS order, no duplicates, the cell included."""
+    if (not isinstance(dolls, (list, tuple)) or not all(isinstance(d, str) for d in dolls)
+            or "cell" not in dolls or len(set(dolls)) != len(dolls)
+            or [d for d in DOLLS if d in dolls] != list(dolls)):
+        raise ValueError(f"{MODEL_NAME}: dolls must be a list of distinct names from {DOLLS}, in "
+                         f"that order, including 'cell'; got {dolls!r}.")
+    return list(dolls)
 
 
 class MatryoshkaConflictology:
@@ -133,6 +147,7 @@ class MatryoshkaConflictology:
         backtest_cutoffs: int,
         backtest_horizon: int,
         stability_refits: bool,
+        dolls: list[str],
         seed: int = DEFAULT_SEED,
     ):
         self.targets = list(targets)
@@ -158,10 +173,15 @@ class MatryoshkaConflictology:
                              f"{country_column!r}.")
         if country_column in self.targets:
             raise ValueError(f"country_column {country_column!r} must not be a target.")
+        self.dolls = _check_dolls(dolls)
         self.entity_ids = None        # (N,) priogrid ids, ascending
         self.country = None           # (N,) GAUL country code per cell
         self.history_start = None     # first month of the fit history; predict must match it
         self.knobs = None             # {target: fit result dict}
+
+    def _on(self) -> np.ndarray:
+        """The on-mask for ``self.dolls`` (`doll_counts.doll_mask`)."""
+        return doll_mask(np.isin(DOLLS, self.dolls))
 
     def _check_level(self) -> None:
         from views_frames import SpatialLevel
@@ -171,7 +191,7 @@ class MatryoshkaConflictology:
                              f"loa={self.loa!r} (ADR-024: no country-level version yet).")
 
     def fit(self, df: pd.DataFrame | FeatureFrame) -> MatryoshkaConflictology:
-        """Fit the 8 knobs per target on data ≤ train_end."""
+        """Fit the knobs of the dolls in use (8 with all four) per target on data ≤ train_end."""
         self._check_level()
         _, train_end = train_test_boundary(self.partition_dict)
         columns = self.targets + [self.country_column]
@@ -192,7 +212,7 @@ class MatryoshkaConflictology:
         cutoffs = backtest_cutoffs(train_end, self.backtest_cutoffs, self.backtest_horizon)
         self.knobs = {
             t: fit_knobs(dense[t].astype(np.float64), months, geo, cutoffs,
-                         self.backtest_horizon, self.stability_refits)
+                         self.backtest_horizon, self.stability_refits, self._on())
             for t in self.targets
         }
         for t, k in self.knobs.items():
@@ -242,7 +262,12 @@ class MatryoshkaConflictology:
         level = to_level(df, loa=self.loa)
         del ff, time, unit, values         # only the dense panel is needed from here (memory)
         geo = build_geometry(cells, self.country)
-        shells = build_shell_tables(geo)
+        for t in self.targets:
+            fitted_with = self.knobs[t].get("dolls", self.dolls)   # hand-set knobs may omit it
+            if fitted_with != self.dolls:
+                raise ValueError(f"{MODEL_NAME}: target {t!r} was fitted with dolls "
+                                 f"{fitted_with}, but the model now uses {self.dolls}.")
+        shells = build_shell_tables(geo, self._on())
         samplers = {t: build_sampler(dense[t], months, last, self.knobs[t], geo, shells)
                     for t in self.targets}
 
