@@ -893,3 +893,9 @@ Later the same day, Simon split the question in two. Single levels on their own 
 - **No-area cells (Simon's choice).** Code −1 (76 cells for `c_id`, mostly small islands) draw from their own window, with one warning per fit. Other negative codes are real areas (the Azores admin-1 codes).
 - **Cost, synthetic pgm-sized panel** (65,000 cells, 105 months, window 36, S=64, 12 months ahead): pooled by country, fit 1.1 s and predict 10.9 s; by map, 0.6 s and 12.4 s; plain conflictology, 0.7 s and 13.1 s. Peak memory 0.9 GB for the whole script.
 - **Tests.** 17 new tests in `tests/test_pooled_conflictology.py`; the suite has 765 passing.
+
+**Reviews of aab4ca4 (#151).**
+- **review-diff:** nothing blocking. Fixed: the error message printed `np.float64(nan)` under numpy 2; codes of 2**24 or more are now rejected (float32 storage could merge two areas).
+- **code-review high:** no correctness bugs.
+- **Guard audit:** 21 mutations, 5 survived, three guards weak. Fixed with two no-area cells instead of one, a no-warning case, the `train_end` month itself, and a catalog test that rejects a config without `pool_by`.
+- **Re-audit of e915185:** every guard holds. The remaining survivors cannot change the forecast; the only one that changes anything at all touches the INFO log line.
