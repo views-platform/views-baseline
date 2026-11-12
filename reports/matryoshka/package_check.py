@@ -31,7 +31,7 @@ def main(path: str, out: str, predict: bool) -> None:
     model = MatryoshkaConflictology(
         targets=TARGETS, partition_dict={"test": (457, 492)}, loa="pgm", n_samples=256,
         country_column="c_id", backtest_cutoffs=4, backtest_horizon=36, stability_refits=False,
-        seed=42)
+        dolls=["cell", "near", "country", "map"], seed=42)
     t0 = time.time()
     model.fit(df)
     report = {"fit_seconds": round(time.time() - t0, 1), "targets": {}}

@@ -400,7 +400,7 @@ def test_matryoshka_genome_is_exact():
     """ADR-024: no window; the backtest design and the country column are configured."""
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["MatryoshkaConflictology"]) == {
         "n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
-        "stability_refits"}
+        "stability_refits", "dolls"}
 
 
 def test_pooled_conflictology_genome_is_exact():

@@ -266,6 +266,7 @@ def test_catalog_forwards_all_config_params(algo, cls):
         "backtest_cutoffs": 3,
         "backtest_horizon": 24,
         "stability_refits": True,
+        "dolls": ["cell", "near", "map"],
     }
     partition_dict = {"test": (445, 492)}
     catalog = BaselineModelCatalog(config=config, partition_dict=partition_dict, loa="pgm")
