@@ -18,8 +18,8 @@ TRAIN_END = 499
 WINDOW = 4
 MONTHS = range(480, 540)
 # cells 1-3 in area 10, cells 4-5 in area -3727 (negative, but a real area, like the Azores),
-# cell 6 in no area (-1).
-AREA = {1: 10, 2: 10, 3: 10, 4: -3727, 5: -3727, 6: -1}
+# cells 6 and 7 in no area (-1). Two of them, so pooling them together would show.
+AREA = {1: 10, 2: 10, 3: 10, 4: -3727, 5: -3727, 6: -1, 7: -1}
 KW = dict(targets=["y1"], window_months=WINDOW, partition_dict=PARTITION, loa="pgm",
           n_samples=4000, seed=3)
 
@@ -65,12 +65,19 @@ def test_each_cell_draws_from_all_of_its_areas_window_and_nothing_else():
         assert drawn[cell] == _window(same_area), cell
 
 
-def test_a_cell_without_an_area_draws_from_its_own_window_and_is_warned_about(caplog):
+def test_cells_without_an_area_draw_from_their_own_window_and_are_warned_about(caplog):
     with caplog.at_level(logging.WARNING):
         m = PooledConflictology(**KW, pool_by="area").fit(_df())
-    assert "1 of 6 cells have no area" in caplog.text
-    pf = m.predict(_df(), sequence_number=0, output_length=1)["y1"]
-    assert _drawn_from(pf)[6] == _window([6])
+    assert "2 of 7 cells have no area" in caplog.text
+    drawn = _drawn_from(m.predict(_df(), sequence_number=0, output_length=1)["y1"])
+    assert drawn[6] == _window([6])
+    assert drawn[7] == _window([7])
+
+
+def test_no_warning_when_every_cell_has_an_area(caplog):
+    with caplog.at_level(logging.WARNING):
+        PooledConflictology(**KW, pool_by="area").fit(_df(area={1: 10, 2: 10, 3: 20}))
+    assert "no area" not in caplog.text
 
 
 def test_map_pools_every_cell_and_needs_no_area_column():
@@ -124,27 +131,42 @@ def test_dataframe_and_featureframe_give_the_same_draws():
 
 
 @pytest.mark.parametrize("bad, match", [
-    (np.nan, r"cell 2 has nan"),
-    (10.5, r"cell 2 has 10\.5"),
+    (np.nan, r"cell 2 has nan "),
+    (10.5, r"cell 2 has 10\.5 "),
+    (2.0**24, r"cell 2 has 16777216\.0 "),       # beyond float32's exact integers
 ])
-def test_an_area_code_that_is_not_an_integer_raises_naming_the_cell(bad, match):
+@pytest.mark.parametrize("month", [490, TRAIN_END])
+def test_an_area_code_that_is_not_an_integer_raises_naming_the_cell(bad, match, month):
     df = _df()
-    df.loc[(490, 2), "area"] = bad
+    df.loc[(month, 2), "area"] = bad
     with pytest.raises(ValueError, match=match):
         PooledConflictology(**KW, pool_by="area").fit(df)
 
 
-def test_a_cell_that_changes_area_raises():
+@pytest.mark.parametrize("month", [490, TRAIN_END])
+def test_a_cell_that_changes_area_raises(month):
     df = _df()
-    df.loc[(470 + 20, 2), "area"] = 20.0
+    df.loc[(month, 2), "area"] = 20.0
     with pytest.raises(ValueError, match=r"changes over time for 1 cells \(first: cell 2\)"):
         PooledConflictology(**KW, pool_by="area").fit(df)
 
 
 def test_area_changes_after_train_end_are_ignored():
+    """Passes by not raising: months after train_end are never read."""
     df = _df()
     df.loc[(TRAIN_END + 1, 2), "area"] = 20.0
+    df.loc[(TRAIN_END + 2, 2), "area"] = np.nan
     PooledConflictology(**KW, pool_by="area").fit(df)
+
+
+def test_the_catalog_requires_pool_by():
+    """ADR-021: no silent default for the area column."""
+    from views_baseline.model.catalog import BaselineModelCatalog
+
+    config = {"regression_targets": ["y1"], "window_months": WINDOW, "n_samples": 8, "seed": 1}
+    catalog = BaselineModelCatalog(config=config, partition_dict=PARTITION, loa="pgm")
+    with pytest.raises(ValueError, match="pool_by"):
+        catalog.get_model("PooledConflictology")
 
 
 def test_a_missing_area_column_raises():

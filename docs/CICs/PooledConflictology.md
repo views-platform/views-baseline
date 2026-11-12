@@ -76,9 +76,9 @@ in views-models' pgm input. **The admin-1 column is not**; it has to be added th
 |---|---|---|
 | `pool_by` empty, not a string, or a target | `ValueError` at construction | |
 | The `pool_by` column is missing from the input | `ValueError` from `panel` naming the column | |
-| An area code is NaN or not an integer, up to `train_end` | `ValueError` naming the column, a cell, its value and the number of rows | |
+| An area code is NaN, not an integer, or 2**24 or more in size, up to `train_end` | `ValueError` naming the column, a cell, its value and the number of rows | The input is stored as float32, which holds integers exactly only below 2**24; larger codes could merge two areas silently. Real codes are far below (GAUL admin-1: −3730 to 4109). |
 | A cell's area code changes up to `train_end` | `ValueError` naming the count and the first cell | A cell must belong to one area. Changes after `train_end` are not read. |
-| A cell has no area (−1) | WARNING with the count; the cell draws from its own window | Agreed with Simon (2026-11-12): mostly small islands, 76 cells for `c_id`. |
+| A cell has no area (−1) | WARNING with the count; the cell draws from its own window | Simon's decision, recorded on #151 (comment of 2026-11-12): mostly small islands, 76 cells for `c_id`. |
 | NaN in a target in the window, `window_months <= 0`, bad input | `ValueError` | As `ConflictologyModel` (`tail_pools`, `to_feature_frame`). |
 
 ---
@@ -122,16 +122,17 @@ All in `tests/test_pooled_conflictology.py` unless noted. The test input encodes
 | Test | What it verifies |
 |---|---|
 | `test_each_cell_draws_from_all_of_its_areas_window_and_nothing_else` | Every cell draws from exactly its area's window, all of it; a negative code (−3727) is a real area. |
-| `test_a_cell_without_an_area_draws_from_its_own_window_and_is_warned_about` | A −1 cell draws only from its own window; one WARNING with the count. |
+| `test_cells_without_an_area_draw_from_their_own_window_and_are_warned_about`, `test_no_warning_when_every_cell_has_an_area` | Two −1 cells each draw only from their own window (not pooled together); one WARNING with the count, and none when every cell has an area. |
 | `test_map_pools_every_cell_and_needs_no_area_column` | `"map"` pools every cell and reads no area column. |
 | `test_window_stays_at_train_end_for_later_origins` | Later origins still draw from the window ending at `train_end`. |
 | `test_cells_of_one_area_share_one_pool_not_copies` | One array per area, shared; the pool size is cells × window. |
 | `test_a_cell_absent_at_train_end_is_neither_forecast_nor_pooled` | Only forecast cells enter a pool. |
 | `test_a_one_cell_area_is_conflictology` | With one cell per area, the output equals `ConflictologyModel`'s exactly. |
 | `test_dataframe_and_featureframe_give_the_same_draws` | Both input types give the same draws, with an area column. |
-| `test_an_area_code_that_is_not_an_integer_raises_naming_the_cell` (NaN, 10.5) | Bad codes raise and name the cell. |
+| `test_an_area_code_that_is_not_an_integer_raises_naming_the_cell` (NaN, 10.5, 2**24; month 490 and `train_end`) | Bad codes raise and name the cell, up to and including `train_end`. |
 | `test_a_cell_that_changes_area_raises`, `test_area_changes_after_train_end_are_ignored` | One area per cell, up to `train_end` only. |
 | `test_a_missing_area_column_raises`, `test_pool_by_must_be_a_column_that_is_not_a_target` | Bad `pool_by`. |
+| `test_the_catalog_requires_pool_by` | A config without `pool_by` is rejected; no silent default (ADR-021). |
 | Shared lists in `test_protocol.py`, `test_dual_input.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_pooled_conflictology_genome_is_exact`), `test_config_conformance.py`, `test_baseline.py` | Protocol, both input types, catalog forwarding, seed wiring, exact genome, a derived conformance fixture. |
 
 ---

@@ -28,6 +28,9 @@ POOL_MAP = "map"
 #: Azores admin-1 codes are -3727 to -3730 (views-datafactory ADR-043).
 NO_AREA = -1
 
+#: Area codes must be below this in absolute value: float32 holds integers exactly up to 2**24.
+FLOAT32_EXACT = 2**24
+
 
 class PooledConflictology(ConflictologyModel):
     """Conflictology that pools the window over an area (#151).
@@ -112,11 +115,14 @@ class PooledConflictology(ConflictologyModel):
         time, unit, codes = np.asarray(time), np.asarray(unit), np.asarray(codes)
         rows = (time <= train_end) & np.isin(unit, cells)
         unit, codes = unit[rows], codes[rows]
-        bad = ~np.isfinite(codes) | (codes != np.round(codes))
+        # A FeatureFrame stores float32, which holds integers exactly only below 2**24: larger
+        # codes could merge two areas silently.
+        bad = ~np.isfinite(codes) | (codes != np.round(codes)) | (np.abs(codes) >= FLOAT32_EXACT)
         if bad.any():
             cid = int(unit[bad][0])
-            raise ValueError(f"{MODEL_NAME}: {self.pool_by!r} must hold integer area codes up to "
-                             f"train_end {train_end}; cell {cid} has {codes[bad][0]!r} "
+            raise ValueError(f"{MODEL_NAME}: {self.pool_by!r} must hold integer area codes, "
+                             f"below {FLOAT32_EXACT} in size, up to train_end {train_end}; "
+                             f"cell {cid} has {float(codes[bad][0])} "
                              f"({int(bad.sum())} rows affected).")
         index = np.searchsorted(cells, unit)
         low = np.full(cells.size, np.inf)
