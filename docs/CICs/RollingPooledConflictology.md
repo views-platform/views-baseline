@@ -119,6 +119,7 @@ All in `tests/test_rolling_pooled_conflictology.py` unless noted. The input enco
 | `test_a_gap_after_train_end_inside_the_window_raises_naming_the_cell` | A missing row and a NaN each raise, and only once inside the window. |
 | `test_negative_sequence_number_raises`, `test_dataframe_and_featureframe_give_the_same_draws` | Bad origin; both input types. |
 | `test_the_catalog_requires_pool_by_and_forwards_every_key` | No silent default; every key forwarded. |
+| `test_every_model_in_the_family_names_itself_in_its_output_errors`, `test_rolling_conflictology_names_itself_in_its_origin_errors`, `test_pooled_conflictology_names_itself_in_its_errors_and_logs` | `model_name` reaches every error, log line and output path of the four conflictology models. |
 | `test_the_shared_window_read_finds_a_gap_even_with_unsorted_entity_ids` | `rolling_window_pools` does not depend on the order of `entity_ids`. |
 | `test_forecasts_are_labelled_with_the_origins_months` | Origin k's forecasts carry months `test_start + k ...`, not origin 0's. |
 | `test_a_cell_that_first_appears_after_train_end_is_neither_forecast_nor_pooled` | The forecast cells are fixed at `fit`, at every origin. |

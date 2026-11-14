@@ -998,4 +998,8 @@ The suite has 927 passing.
     - the name passed to `sample_prediction_grid`, which only appears in one of its internal errors;
     - a `.get` default in the catalog getter, which the reproducibility gate's required-key check would catch first, as for every other getter.
 
-The suite has 929 passing.
+- **Guard audit (on 075b921):** 33 mutations, 26 caught, 7 survived.
+  - The window read, `rolling_window_pools`, holds: all 17 of its mutations were caught.
+  - The 7 survivors were all model names in messages, for `RollingConflictology` and `PooledConflictology` and in `predict`. Three tests were added, and all 7 were re-run against the full suite: all caught.
+
+The suite has 935 passing.

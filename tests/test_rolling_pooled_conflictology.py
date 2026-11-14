@@ -9,7 +9,11 @@ import pytest
 from test_pooled_conflictology import AREA, KW, TRAIN_END, WINDOW, _df, _drawn_from, _sources
 
 from views_baseline.model.frames.input import to_feature_frame
-from views_baseline.model.models.distributional import PooledConflictology, RollingConflictology
+from views_baseline.model.models.distributional import (
+    ConflictologyModel,
+    PooledConflictology,
+    RollingConflictology,
+)
 from views_baseline.model.models.distributional.rolling_pooled_conflictology import (
     RollingPooledConflictology,
 )
@@ -201,3 +205,40 @@ def test_the_shared_window_read_finds_a_gap_even_with_unsorted_entity_ids():
         rolling_window_pools(df, loa="pgm", targets=["y1"], entity_ids=[7, 2, 1],
                              window_months=WINDOW, train_end=TRAIN_END, sequence_number=1,
                              model_name="X")
+
+
+_FAMILY = [
+    ("ConflictologyModel", lambda: ConflictologyModel(**KW)),
+    ("RollingConflictology", lambda: RollingConflictology(**KW)),
+    ("PooledConflictology", lambda: PooledConflictology(**KW, pool_by="area")),
+    ("RollingPooledConflictology", lambda: RollingPooledConflictology(**KW, pool_by="area")),
+]
+
+
+@pytest.mark.parametrize("name, make", _FAMILY)
+def test_every_model_in_the_family_names_itself_in_its_output_errors(name, make):
+    """model_name reaches sample_prediction_grid: an empty forecast names the model that ran."""
+    m = make().fit(_df())
+    m.entity_ids = []
+    with pytest.raises(ValueError, match=rf"^{name}: no entities to predict"):
+        m.predict(_df(), sequence_number=0, output_length=1)
+
+
+def test_rolling_conflictology_names_itself_in_its_origin_errors():
+    m = RollingConflictology(**KW).fit(_df())
+    with pytest.raises(ValueError, match=r"^RollingConflictology: sequence_number must be >= 0"):
+        m.predict(_df(), sequence_number=-1, output_length=1)
+    df = _df().drop(index=[(TRAIN_END + 1, 4)])
+    with pytest.raises(ValueError, match=r"^RollingConflictology needs every month"):
+        m.predict(df, sequence_number=1, output_length=1)
+
+
+def test_pooled_conflictology_names_itself_in_its_errors_and_logs(caplog):
+    import logging
+
+    with pytest.raises(ValueError, match=r"^PooledConflictology: pool_by 'y1'"):
+        PooledConflictology(**KW, pool_by="y1")
+    with caplog.at_level(logging.INFO):
+        PooledConflictology(**KW, pool_by="area").fit(_df())
+    assert "PooledConflictology: pooled 5 cells into 2 areas" in caplog.text
+    assert "RollingPooledConflictology" not in caplog.text
