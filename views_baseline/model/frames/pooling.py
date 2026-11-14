@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from views_baseline.model.frames.input import panel
+from views_baseline.model.frames.input import panel, to_feature_frame
 
 if TYPE_CHECKING:
     from views_frames import FeatureFrame
@@ -160,3 +160,74 @@ def tail_pools(
             pool[t] = vals
         pools[cid] = pool
     return pools
+
+
+def rolling_window_pools(
+    df, *, loa: str, targets: list[str], entity_ids, window_months: int, train_end: int,
+    sequence_number: int, model_name: str,
+) -> dict:
+    """The windows of the forecast cells ending at ``train_end + k`` (``k = sequence_number``).
+
+    The information rule of the moving-window models (`RollingConflictology`,
+    `RollingPooledConflictology`; ADR-024): origin ``k`` draws from the last ``window_months``
+    rows up to ``train_end + k``. Only the forecast cells (``entity_ids``, fixed at fit) are read,
+    so a cell that is never forecast cannot stop the run. Fails loud on a missing or NaN month
+    after ``train_end`` inside the window (`_check_months_after_train_end`).
+
+    Returns ``pools[cid][target]``, as `window_pool_arrays`.
+    """
+    anchor = train_end + sequence_number
+    ff = to_feature_frame(df, loa=loa, targets=targets)
+    time, unit, values = panel(ff, targets)
+    time, unit = np.asarray(time), np.asarray(unit)
+    fitted = np.isin(unit, np.asarray(entity_ids))
+    time, unit = time[fitted], unit[fitted]
+    values = {t: values[t][fitted] for t in targets}
+    _check_months_after_train_end(
+        time, unit, values, targets=targets, entity_ids=entity_ids, window_months=window_months,
+        train_end=train_end, anchor=anchor, sequence_number=sequence_number,
+        model_name=model_name,
+    )
+    _, pools = window_pool_arrays(time, unit, values, targets, window_months, anchor)
+    return pools
+
+
+def _check_months_after_train_end(
+    time, unit, values, *, targets, entity_ids, window_months: int, train_end: int, anchor: int,
+    sequence_number: int, model_name: str,
+) -> None:
+    """Every forecast cell must have every month after train_end that lies inside the window,
+    none NaN: months ``max(train_end + 1, anchor - window_months + 1) .. anchor``. Those are the
+    months a fixed-window model never sees; a gap there would silently pull older months back
+    into the window. ``unit`` holds rows of ``entity_ids`` only (`rolling_window_pools` filters).
+    """
+    start = max(train_end + 1, anchor - window_months + 1)
+    cells = np.sort(np.asarray(entity_ids))          # searchsorted needs ascending ids
+    after = (time >= start) & (time <= anchor)
+    row = np.searchsorted(cells, unit[after])
+    col = time[after] - start
+    present = np.zeros((cells.size, anchor - start + 1), dtype=bool)
+    present[row, col] = True
+    incomplete = ~present.all(axis=1)
+    if incomplete.any():
+        examples = [
+            (int(cells[i]), [int(start + m) for m in np.nonzero(~present[i])[0][:3]])
+            for i in np.nonzero(incomplete)[0][:3]
+        ]
+        raise ValueError(
+            f"{model_name} needs every month {start}..{anchor} (after "
+            f"train_end {train_end} and inside the window for sequence_number "
+            f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
+            f"{cells.size} cells are missing months (cell, first missing months: "
+            f"{examples}). Refusing to fall back to an older window."
+        )
+    for t in targets:
+        nan = np.isnan(values[t][after])
+        if nan.any():
+            cids = unit[after][nan]
+            months = sorted({int(m) for m in time[after][nan][cids == cids[0]]})[:3]
+            raise ValueError(
+                f"{model_name}: NaN in target {t!r} for cell {int(cids[0])} in "
+                f"month(s) {months}, after train_end {train_end} and inside the window for "
+                f"sequence_number {sequence_number}. {np.unique(cids).size} cell(s) affected."
+            )

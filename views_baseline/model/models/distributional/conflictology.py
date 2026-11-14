@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 class ConflictologyModel:
     distributional = True
 
+    #: The name in errors, logs and output frames; each subclass sets its own.
+    model_name = "ConflictologyModel"
+
     def __init__(
         self,
         targets: list[str],
@@ -66,7 +69,7 @@ class ConflictologyModel:
         test_start, _ = train_test_boundary(self.partition_dict)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
-            model_name="ConflictologyModel", targets=self.targets, n_samples=self.n_samples,
+            model_name=self.model_name, targets=self.targets, n_samples=self.n_samples,
             level=level, test_start=test_start,
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=lambda cid, t, rng: rng.choice(
