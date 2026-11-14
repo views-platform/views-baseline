@@ -49,6 +49,9 @@ class PooledConflictology(ConflictologyModel):
     belongs to one area. An area's pool is one array per target, shared by its cells, not copied.
     """
 
+    #: The name in errors and logs; a subclass sets its own, so a failure names the model that ran.
+    model_name = MODEL_NAME
+
     def __init__(
         self,
         targets: list[str],
@@ -64,10 +67,10 @@ class PooledConflictology(ConflictologyModel):
             loa=loa, n_samples=n_samples, seed=seed,
         )
         if not isinstance(pool_by, str) or not pool_by:
-            raise ValueError(f"{MODEL_NAME}: pool_by must be a column name or {POOL_MAP!r}, "
+            raise ValueError(f"{self.model_name}: pool_by must be a column name or {POOL_MAP!r}, "
                              f"got {pool_by!r}.")
         if pool_by in self.targets:
-            raise ValueError(f"{MODEL_NAME}: pool_by {pool_by!r} must not be a target.")
+            raise ValueError(f"{self.model_name}: pool_by {pool_by!r} must not be a target.")
         self.pool_by = pool_by
         self.area = None              # {cell id: area code}, NO_AREA for a cell without one
 
@@ -86,6 +89,24 @@ class PooledConflictology(ConflictologyModel):
         else:
             area = self._area_per_cell(time, unit, codes, cells, train_end)
 
+        self.entity_ids = cells
+        self.area = area
+        self.hist_per_entity = self._pools(own, cells, area)
+
+        alone = sum(1 for cid in cells if area[cid] == NO_AREA)
+        n_areas = len({area[cid] for cid in cells if area[cid] != NO_AREA})
+        logger.info("%s: pooled %d cells into %d areas by %r.", self.model_name,
+                    len(cells) - alone, n_areas, self.pool_by)
+        if alone:
+            logger.warning("%s: %d of %d cells have no area (%r = %d) and draw from their own "
+                           "window, as ConflictologyModel does.", self.model_name, alone,
+                           len(cells), self.pool_by, NO_AREA)
+        return self
+
+    def _pools(self, own: dict, cells, area: dict) -> dict:
+        """Each cell's pool: the windows of every cell in its area, concatenated in ascending
+        cell order, one array per area and target shared by its cells. A cell coded `NO_AREA`
+        keeps its own window."""
         members: dict[int, list] = {}
         for cid in cells:
             if area[cid] != NO_AREA:
@@ -94,20 +115,7 @@ class PooledConflictology(ConflictologyModel):
             a: {t: np.concatenate([own[cid][t] for cid in cs]) for t in self.targets}
             for a, cs in members.items()
         }
-        self.entity_ids = cells
-        self.area = area
-        self.hist_per_entity = {
-            cid: own[cid] if area[cid] == NO_AREA else area_pool[area[cid]] for cid in cells
-        }
-
-        alone = sum(1 for cid in cells if area[cid] == NO_AREA)
-        logger.info("%s: pooled %d cells into %d areas by %r.", MODEL_NAME,
-                    len(cells) - alone, len(area_pool), self.pool_by)
-        if alone:
-            logger.warning("%s: %d of %d cells have no area (%r = %d) and draw from their own "
-                           "window, as ConflictologyModel does.", MODEL_NAME, alone, len(cells),
-                           self.pool_by, NO_AREA)
-        return self
+        return {cid: own[cid] if area[cid] == NO_AREA else area_pool[area[cid]] for cid in cells}
 
     def _area_per_cell(self, time, unit, codes, cells, train_end: int) -> dict:
         """Each forecast cell's area code. Raises unless it is a finite integer, the same in
@@ -120,7 +128,7 @@ class PooledConflictology(ConflictologyModel):
         bad = ~np.isfinite(codes) | (codes != np.round(codes)) | (np.abs(codes) >= FLOAT32_EXACT)
         if bad.any():
             cid = int(unit[bad][0])
-            raise ValueError(f"{MODEL_NAME}: {self.pool_by!r} must hold integer area codes, "
+            raise ValueError(f"{self.model_name}: {self.pool_by!r} must hold integer area codes, "
                              f"below {FLOAT32_EXACT} in size, up to train_end {train_end}; "
                              f"cell {cid} has {float(codes[bad][0])} "
                              f"({int(bad.sum())} rows affected).")
@@ -131,7 +139,7 @@ class PooledConflictology(ConflictologyModel):
         np.maximum.at(high, index, codes)
         changes = low != high
         if changes.any():
-            raise ValueError(f"{MODEL_NAME}: {self.pool_by!r} changes over time for "
+            raise ValueError(f"{self.model_name}: {self.pool_by!r} changes over time for "
                              f"{int(changes.sum())} cells (first: cell {int(cells[changes][0])}); "
                              f"a cell must belong to one area.")
         return {cid: int(code) for cid, code in zip(cells, low)}

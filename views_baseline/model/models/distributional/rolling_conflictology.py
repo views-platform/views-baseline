@@ -15,6 +15,48 @@ if TYPE_CHECKING:
     from views_frames import FeatureFrame
 
 
+def check_months_after_train_end(
+    time, unit, values, *, targets, entity_ids, window_months: int, train_end: int, anchor: int,
+    sequence_number: int, model_name: str,
+) -> None:
+    """Every forecast cell must have every month after train_end that lies inside the window,
+    none NaN: months ``max(train_end + 1, anchor - window_months + 1) .. anchor``.
+
+    ``unit`` must already be restricted to ``entity_ids``. Those are the months a fixed-window
+    model never sees; a gap there would silently pull older months back into the window.
+    """
+    start = max(train_end + 1, anchor - window_months + 1)
+    cells = np.asarray(entity_ids)
+    after = (time >= start) & (time <= anchor)
+    row = np.searchsorted(cells, unit[after])
+    col = time[after] - start
+    present = np.zeros((cells.size, anchor - start + 1), dtype=bool)
+    present[row, col] = True
+    incomplete = ~present.all(axis=1)
+    if incomplete.any():
+        examples = [
+            (int(cells[i]), [int(start + m) for m in np.nonzero(~present[i])[0][:3]])
+            for i in np.nonzero(incomplete)[0][:3]
+        ]
+        raise ValueError(
+            f"{model_name} needs every month {start}..{anchor} (after "
+            f"train_end {train_end} and inside the window for sequence_number "
+            f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
+            f"{cells.size} cells are missing months (cell, first missing months: "
+            f"{examples}). Refusing to fall back to an older window."
+        )
+    for t in targets:
+        nan = np.isnan(values[t][after])
+        if nan.any():
+            cids = unit[after][nan]
+            months = sorted({int(m) for m in time[after][nan][cids == cids[0]]})[:3]
+            raise ValueError(
+                f"{model_name}: NaN in target {t!r} for cell {int(cids[0])} in "
+                f"month(s) {months}, after train_end {train_end} and inside the window for "
+                f"sequence_number {sequence_number}. {np.unique(cids).size} cell(s) affected."
+            )
+
+
 class RollingConflictology(ConflictologyModel):
     """Conflictology whose window moves with each rolling origin (#126, #82; ADR-024's control).
 
@@ -55,48 +97,16 @@ class RollingConflictology(ConflictologyModel):
         fitted = np.isin(unit, np.asarray(self.entity_ids))
         time, unit = time[fitted], unit[fitted]
         values = {t: values[t][fitted] for t in self.targets}
-        self._check_months_after_train_end(time, unit, values, train_end, anchor, sequence_number)
+        check_months_after_train_end(
+            time, unit, values, targets=self.targets, entity_ids=self.entity_ids,
+            window_months=self.window_months, train_end=train_end, anchor=anchor,
+            sequence_number=sequence_number, model_name="RollingConflictology",
+        )
 
         _, pools = window_pool_arrays(
             time, unit, values, self.targets, self.window_months, anchor
         )
         return pools
-
-    def _check_months_after_train_end(
-        self, time, unit, values, train_end: int, anchor: int, sequence_number: int
-    ) -> None:
-        """Every forecast cell must have every month after train_end that lies inside the window,
-        none NaN: months ``max(train_end + 1, anchor - window_months + 1) .. anchor``."""
-        start = max(train_end + 1, anchor - self.window_months + 1)
-        cells = np.asarray(self.entity_ids)
-        after = (time >= start) & (time <= anchor)
-        row = np.searchsorted(cells, unit[after])          # unit is already restricted to cells
-        col = time[after] - start
-        present = np.zeros((cells.size, anchor - start + 1), dtype=bool)
-        present[row, col] = True
-        incomplete = ~present.all(axis=1)
-        if incomplete.any():
-            examples = [
-                (int(cells[i]), [int(start + m) for m in np.nonzero(~present[i])[0][:3]])
-                for i in np.nonzero(incomplete)[0][:3]
-            ]
-            raise ValueError(
-                f"RollingConflictology needs every month {start}..{anchor} (after "
-                f"train_end {train_end} and inside the window for sequence_number "
-                f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
-                f"{cells.size} cells are missing months (cell, first missing months: "
-                f"{examples}). Refusing to fall back to an older window."
-            )
-        for t in self.targets:
-            nan = np.isnan(values[t][after])
-            if nan.any():
-                cids = unit[after][nan]
-                months = sorted({int(m) for m in time[after][nan][cids == cids[0]]})[:3]
-                raise ValueError(
-                    f"RollingConflictology: NaN in target {t!r} for cell {int(cids[0])} in "
-                    f"month(s) {months}, after train_end {train_end} and inside the window for "
-                    f"sequence_number {sequence_number}. {np.unique(cids).size} cell(s) affected."
-                )
 
     def predict(
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int

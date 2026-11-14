@@ -944,3 +944,41 @@ The suite has 879 passing.
   - Added a test for stability refits with a subset.
 - **Guard audit:** 42 mutations, 33 caught, 6 equivalent, and 3 real survivors. All three are in the search setup: the start values and bounds mapped to the wrong knob when a doll is off. Added `test_each_free_knob_gets_its_own_start_value_and_bounds`, which builds the expected values knob by knob from the names.
 - **Re-audit after the fixes:** 20 mutations, 18 caught. The 2 survivors are equivalent: reversing the free mask selects the same bounds for all 8 masks, and an off doll's internal memory of 1 instead of inf changes nothing. Every guard holds.
+
+## 2026-11-14: single levels with a moving window (epic #165, S1–S4: #166–#169)
+
+**Why.** The views-models run of 2026-11-13 (views-models#728) compared Matryoshka, which reads data up to `train_end + k` at origin k, with `PooledConflictology`, which draws every origin from `train_end`. At every later origin Matryoshka saw newer data. Simon decided to keep the fixed-window results and to add the moving window.
+
+**What.**
+- S1: two seams, with no behaviour change and no test edited.
+  - `PooledConflictology._pools` builds the area pools.
+  - `rolling_conflictology.check_months_after_train_end` is the month check, now shared and with its messages unchanged.
+- S2: `RollingPooledConflictology` and 17 tests.
+  - Areas stay as fitted at `train_end`. Only the window moves (decided on #165, after a question from the models session).
+- S3: wiring (exports, genome, catalog, shared test lists).
+- S4: the CIC, the ADR-024 amendment, ADR-001, ADR-004, the README.
+
+The suite had 921 passing before the reviews.
+
+**Timing**, on a synthetic panel of 65,000 cells × 105 months, 3 targets, window 36, S = 64, output length 36 (`scratchpad` script, not committed):
+
+| pool_by | fit | predict, origin 0 | origin 1 | origin 12 |
+|---|---|---|---|---|
+| `"map"` | 0.6 s | 56.0 s | 56.0 s | 56.2 s |
+| country (400 cells each) | 0.7 s | 52.1 s | 52.2 s | 52.2 s |
+
+The drawing dominates. Rebuilding the pools at each origin costs well under a second.
+
+**Reviews**, run in clean subagents on scratch copies; the working tree was never touched by them.
+- **review-diff:** 2 warnings, 3 suggestions.
+  - Done: inherited errors and logs now name the model that ran (`model_name`, with a test); ADR-001 lists the file; `__all__` is in order; the shared check takes keyword-only arguments.
+  - Not done: merging the two copies of the per-origin read in `RollingConflictology` and `RollingPooledConflictology`. Two copies of about 15 lines are cheaper than a shared function.
+- **code-review high:** no correctness bugs. Byte-identity with 1.4.0 was checked on 40 random panels. A brute-force pandas reference matched in 800 cases. The gap errors matched RollingConflictology's in all 240 cases.
+- **Guard audit:** 23 mutations, 18 caught, 1 equivalent, 4 survived:
+  - the output months at origin k > 0 (a real defect);
+  - a cell that first appears after `train_end` (a real defect: IndexError);
+  - the pool order;
+  - which cell the NaN error names.
+  Four tests were added, and each of the four mutations now fails at least one test (re-run on the copy).
+
+The suite has 927 passing.

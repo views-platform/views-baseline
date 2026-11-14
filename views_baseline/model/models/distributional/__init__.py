@@ -16,6 +16,9 @@ from views_baseline.model.models.distributional.pooled_conflictology import Pool
 from views_baseline.model.models.distributional.rolling_conflictology import (
     RollingConflictology,
 )
+from views_baseline.model.models.distributional.rolling_pooled_conflictology import (
+    RollingPooledConflictology,
+)
 
 __all__ = [
     "ConflictologyModel",
@@ -28,4 +31,5 @@ __all__ = [
     "ParametricHurdleConflictology",
     "PooledConflictology",
     "RollingConflictology",
+    "RollingPooledConflictology",
 ]

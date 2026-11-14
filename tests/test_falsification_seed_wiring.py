@@ -56,7 +56,7 @@ def _catalog(seed):
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
-        "PooledConflictology",
+        "PooledConflictology", "RollingPooledConflictology",
         "MatryoshkaConflictology",
     ]
 )
@@ -73,7 +73,7 @@ def test_catalog_forwards_seed(algo):
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
-        "PooledConflictology",
+        "PooledConflictology", "RollingPooledConflictology",
         # Not MatryoshkaConflictology: its fit needs 120 months of history and a country
         # column, which _df() does not have; its seed-changes-output test is in
         # test_matryoshka.py (test_same_seed_same_output_and_seed_matters).
@@ -98,7 +98,7 @@ def test_different_seed_produces_different_output(algo):
     "algo", [
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
-        "PooledConflictology",
+        "PooledConflictology", "RollingPooledConflictology",
         "MatryoshkaConflictology",
     ]
 )
