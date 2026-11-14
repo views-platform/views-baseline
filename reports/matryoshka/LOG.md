@@ -982,3 +982,20 @@ The drawing dominates. Rebuilding the pools at each origin costs well under a se
   Four tests were added, and each of the four mutations now fails at least one test (re-run on the copy).
 
 The suite has 927 passing.
+
+**PR #174 ritual** (code-review medium, review-diff, guard audit). Changes from the first two:
+- The per-origin read of the moving-window models is one function, `frames.pooling.rolling_window_pools`. It filters to the forecast cells itself and checks the months after `train_end`. `RollingConflictology` and `RollingPooledConflictology` both call it.
+  - This reverses the earlier "two copies" choice: two reviews pointed out that both models must follow the same information rule (ADR-024), so a change to one must change the other. That is real duplication.
+- The month check sorts `entity_ids` before its row lookup, so the order of the ids cannot move one cell's months onto another. There is a test for this, and it fails without the sort.
+- `model_name` is a class attribute on `ConflictologyModel`, overridden by each subclass. Every error, log line and output frame uses it, including the `sequence_number < 0` error.
+- Not changed: re-reading the panel at every origin. It costs well under a second per origin at pgm size (timing above).
+
+- **Guard audit (on 1cbbabe):** 41 mutations, 30 caught, 1 equivalent, 10 survived.
+  - The one that mattered: checking only the anchor month let a gap at `train_end + 1` fall back to an older month silently. It is now covered by `test_a_gap_earlier_in_the_window_raises`.
+  - Message-only survivors (the inherited errors, the info log, the NaN cell count and months) are now covered too.
+  - The six that were fixable were re-run on the current code: all caught.
+  - Not changed:
+    - the name passed to `sample_prediction_grid`, which only appears in one of its internal errors;
+    - a `.get` default in the catalog getter, which the reproducibility gate's required-key check would catch first, as for every other getter.
+
+The suite has 929 passing.

@@ -130,9 +130,18 @@ def test_inherited_errors_and_warnings_name_this_model(caplog):
     df.loc[(490, 2), "area"] = 10.5
     with pytest.raises(ValueError, match=r"^RollingPooledConflictology: 'area' must hold integer"):
         RollingPooledConflictology(**KW, pool_by="area").fit(df)
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(ValueError, match=r"^RollingPooledConflictology: pool_by must be a column"):
+        RollingPooledConflictology(**KW, pool_by="")
+    df = _df()
+    df.loc[(490, 2), "area"] = 20.0
+    with pytest.raises(ValueError, match=r"^RollingPooledConflictology: 'area' changes over time"):
+        RollingPooledConflictology(**KW, pool_by="area").fit(df)
+    with caplog.at_level(logging.INFO):
         RollingPooledConflictology(**KW, pool_by="area").fit(_df())
     assert "RollingPooledConflictology: 2 of 7 cells have no area" in caplog.text
+    assert "RollingPooledConflictology: pooled 5 cells into 2 areas" in caplog.text
+    with pytest.raises(ValueError, match=r"^RollingPooledConflictology: sequence_number"):
+        RollingPooledConflictology(**KW, pool_by="area").fit(_df()).predict(_df(), -1, 1)
 
 
 @pytest.mark.parametrize("k", [3, 12])
@@ -164,9 +173,31 @@ def test_the_area_pool_is_its_cells_windows_in_ascending_cell_order():
         np.testing.assert_array_equal(pools[2]["y1"], expected)
 
 
-def test_a_nan_after_train_end_names_the_first_cell():
+def test_a_nan_after_train_end_names_the_first_cell_its_months_and_the_cell_count():
     df = _df()
-    df.loc[(TRAIN_END + 1, 5), "y1"] = np.nan
-    df.loc[(TRAIN_END + 1, 2), "y1"] = np.nan
-    with pytest.raises(ValueError, match=r"for cell 2 in month\(s\) \[500\].* 2 cell\(s\)"):
-        RollingPooledConflictology(**KW, pool_by="area").fit(df).predict(df, 1, 1)
+    df.loc[(TRAIN_END + 1, 2), "y1"] = np.nan          # cell 2: two NaN months
+    df.loc[(TRAIN_END + 2, 2), "y1"] = np.nan
+    df.loc[(TRAIN_END + 3, 5), "y1"] = np.nan          # cell 5: another month
+    with pytest.raises(ValueError,
+                       match=r"for cell 2 in month\(s\) \[500, 501\],.* 2 cell\(s\) affected"):
+        RollingPooledConflictology(**KW, pool_by="area").fit(df).predict(df, 3, 1)
+
+
+def test_a_gap_earlier_in_the_window_raises():
+    """The whole stretch after train_end inside the window is checked, not only the anchor."""
+    df = _df().drop(index=[(TRAIN_END + 1, 4)])
+    m = RollingPooledConflictology(**KW, pool_by="area").fit(df)
+    with pytest.raises(ValueError, match=r"needs every month 500\.\.502 .*\(4, \[500\]\)"):
+        m.predict(df, sequence_number=3, output_length=1)
+
+
+def test_the_shared_window_read_finds_a_gap_even_with_unsorted_entity_ids():
+    """`rolling_window_pools` maps rows to cells by sorted lookup; ids given in another order
+    must not move one cell's months onto another and hide a gap."""
+    from views_baseline.model.frames.pooling import rolling_window_pools
+
+    df = _df().drop(index=[(TRAIN_END + 1, 2)])
+    with pytest.raises(ValueError, match=r"X needs every month .*\(2, \[500\]\)"):
+        rolling_window_pools(df, loa="pgm", targets=["y1"], entity_ids=[7, 2, 1],
+                             window_months=WINDOW, train_end=TRAIN_END, sequence_number=1,
+                             model_name="X")

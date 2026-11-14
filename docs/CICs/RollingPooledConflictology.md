@@ -34,9 +34,9 @@ draws every origin from `train_end`, so it compares with Matryoshka only at orig
   codes, `NO_AREA`, and the WARNING.
 - `predict(df, sequence_number=k, output_length)`:
   - `k == 0`: draws from the fitted pools. The output is **byte-identical** to `PooledConflictology`'s.
-  - `k > 0`: reads the targets of the forecast cells from `df`, checks the months after `train_end`
-    (below), takes each cell's last `window_months` rows up to `train_end + k` (`window_pool_arrays`), and
-    pools them by the fitted areas (`PooledConflictology._pools`).
+  - `k > 0`: takes each forecast cell's last `window_months` rows up to `train_end + k`, after checking
+    the months after `train_end` (below), with `frames.pooling.rolling_window_pools`, the function
+    `RollingConflictology` uses too. It then pools them by the fitted areas (`PooledConflictology._pools`).
   - Draws as `PooledConflictology` does (`rng.choice` through `sample_prediction_grid`, seeded by `seed`)
     and returns `dict[str, PredictionFrame]` of shape `(N · output_length, n_samples)`.
 - With every cell in its own area, the output equals `RollingConflictology`'s at every origin.
@@ -65,17 +65,17 @@ second (#167; laptop timing, 2026-11-14).
 
 | Failure | Loudness | Notes |
 |---|---|---|
-| A forecast cell is missing a month after `train_end` inside the window, `max(train_end+1, train_end+k−window_months+1) .. train_end+k` | `ValueError` naming the model, the cells and the first missing months | Shared with `RollingConflictology` (`check_months_after_train_end`). A gap would silently pull older months back into the window. |
+| A forecast cell is missing a month after `train_end` inside the window, `max(train_end+1, train_end+k−window_months+1) .. train_end+k` | `ValueError` naming the model, the cells and the first missing months | Shared with `RollingConflictology` (`rolling_window_pools`). A gap would silently pull older months back into the window. |
 | NaN in a target in those months | `ValueError` naming the target, the cell and the months | The same check. |
-| `sequence_number < 0` | `ValueError` | |
+| `sequence_number < 0` | `ValueError` naming the model | |
 | Everything `PooledConflictology` refuses | As `PooledConflictology` | Inherited; the messages and the log lines name `RollingPooledConflictology` (`model_name`). |
 
 ---
 
 ## Boundaries and Interactions
 
-- **Depends on:** `PooledConflictology` (subclass; `_pools`), `rolling_conflictology.check_months_after_train_end`,
-  `frames.pooling.window_pool_arrays`, `frames.input`, `frames.output.sample_prediction_grid`.
+- **Depends on:** `PooledConflictology` (subclass; `_pools`), `frames.pooling.rolling_window_pools`,
+  `frames.input.to_level`, `frames.output.sample_prediction_grid`.
 - **Instantiated by:** `BaselineModelCatalog._get_rolling_pooled_conflictology()`.
 - **Genome:** `["window_months", "n_samples", "seed", "pool_by"]`, the same as `PooledConflictology`'s.
   The moving window is the class, not a key, so the existing `PooledConflictology` configs are unchanged.
@@ -119,10 +119,11 @@ All in `tests/test_rolling_pooled_conflictology.py` unless noted. The input enco
 | `test_a_gap_after_train_end_inside_the_window_raises_naming_the_cell` | A missing row and a NaN each raise, and only once inside the window. |
 | `test_negative_sequence_number_raises`, `test_dataframe_and_featureframe_give_the_same_draws` | Bad origin; both input types. |
 | `test_the_catalog_requires_pool_by_and_forwards_every_key` | No silent default; every key forwarded. |
+| `test_the_shared_window_read_finds_a_gap_even_with_unsorted_entity_ids` | `rolling_window_pools` does not depend on the order of `entity_ids`. |
 | `test_forecasts_are_labelled_with_the_origins_months` | Origin k's forecasts carry months `test_start + k ...`, not origin 0's. |
 | `test_a_cell_that_first_appears_after_train_end_is_neither_forecast_nor_pooled` | The forecast cells are fixed at `fit`, at every origin. |
 | `test_the_area_pool_is_its_cells_windows_in_ascending_cell_order` | The exact pool array, so a seed draws the same values. |
-| `test_a_nan_after_train_end_names_the_first_cell`, `test_inherited_errors_and_warnings_name_this_model` | The errors name the first bad cell and this model. |
+| `test_a_nan_after_train_end_names_the_first_cell_its_months_and_the_cell_count`, `test_a_gap_earlier_in_the_window_raises`, `test_inherited_errors_and_warnings_name_this_model` | The errors name the first bad cell and this model. |
 | Shared lists in `test_protocol.py`, `test_dual_input.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py` (incl. `test_rolling_pooled_conflictology_genome_is_exact`), `test_config_conformance.py`, `test_baseline.py` | Protocol, input types, catalog, seed wiring, exact genome, a derived conformance fixture. |
 
 ---

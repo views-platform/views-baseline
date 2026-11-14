@@ -45,7 +45,7 @@ that ages within one forecast as it looks further ahead (which it does not).
   - **origin 0** uses the fitted pools, so its output is byte-identical to `ConflictologyModel`'s;
   - **origin k > 0** uses conflictology's own window definition, only anchored later: the last
     `window_months` rows per forecast cell up to `train_end + k`, from the shared
-    `window_pool_arrays`. Only the forecast cells (present at `train_end`) are pooled, so a cell that
+    `frames.pooling.rolling_window_pools` (which `RollingPooledConflictology` also uses, #165). Only the forecast cells (present at `train_end`) are pooled, so a cell that
     is never forecast cannot affect or stop the run;
   - before that, it checks that **every month after `train_end` that lies inside the window**
     (`max(train_end + 1, train_end + k − window_months + 1)` to `train_end + k`) is present and not
@@ -101,9 +101,8 @@ only in the months after it.
 
 ## Boundaries and Interactions
 
-- **Depends on:** `frames.pooling` (`window_pool` via the inherited `fit`; `window_pool_arrays` per
-  origin), `frames.input` (`panel`,
-  `to_feature_frame`, `to_level`), `frames.output.sample_prediction_grid`, `grid.train_test_boundary`.
+- **Depends on:** `frames.pooling` (`window_pool` via the inherited `fit`; `rolling_window_pools` per
+  origin), `frames.input` (`to_level`), `frames.output.sample_prediction_grid`, `grid.train_test_boundary`.
 - **Instantiated by:** `BaselineModelCatalog._get_rolling_conflictology()`.
 - **Genome:** `["window_months", "n_samples", "seed"]`.
 - It reads observed months after `train_end`, as `MatryoshkaConflictology` does; no other baseline does.
