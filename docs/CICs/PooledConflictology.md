@@ -61,9 +61,10 @@ different `pool_by`.
 | `targets`, `window_months`, `partition_dict`, `loa`, `n_samples`, `seed` | | As `ConflictologyModel`. |
 | `pool_by` | `str` | The area column, or `"map"` (no column needed). Must not be a target. No default (ADR-021). |
 
-**Assumption:** the `pool_by` column is in the input that `fit` gets. The country column (`c_id`) is already
-in views-models' pgm input. **The admin-1 column is not**; it has to be added there before an admin-1 run
-(see #151).
+**Assumption:** the `pool_by` column is in the input that `fit` gets. The country column (`c_id`, from
+views-datafactory's `gaul0_code`) is already in views-models' pgm input. For admin 1, views-datafactory
+already provides `gaul1_code`; a views-models queryset adds it in one line, next to `gaul0_code`
+(views-models#728).
 
 **Cost:** one pool per area. With `"map"` the pool holds every forecast cell's window: at pgm `land`, about
 65,000 × 36 values per target, about 19 MB in float64. Drawing costs the same as `ConflictologyModel`.

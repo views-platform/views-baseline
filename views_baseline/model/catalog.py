@@ -10,6 +10,7 @@ from views_baseline.model.models.distributional import (
     ParametricHurdleConflictology,
     PooledConflictology,
     RollingConflictology,
+    RollingPooledConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
@@ -52,6 +53,7 @@ class BaselineModelCatalog:
             "EmpiricalKDEMixtureConflictology": self._get_empirical_kde_mixture,
             "RollingConflictology": self._get_rolling_conflictology,
             "PooledConflictology": self._get_pooled_conflictology,
+            "RollingPooledConflictology": self._get_rolling_pooled_conflictology,
             "MatryoshkaConflictology": self._get_matryoshka,
         }
 
@@ -138,6 +140,19 @@ class BaselineModelCatalog:
     def _get_pooled_conflictology(self):
         # #151; pool_by and seed are required, audited genome keys (ADR-021).
         return PooledConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            pool_by=self.config["pool_by"],
+            seed=self.config["seed"],
+        )
+
+    def _get_rolling_pooled_conflictology(self):
+        # #165; the moving-window single level. pool_by and seed are required, audited genome
+        # keys (ADR-021).
+        return RollingPooledConflictology(
             targets=self.targets,
             window_months=self.config["window_months"],
             partition_dict=self.partition_dict,
