@@ -614,7 +614,7 @@ def test_catalog_list_models(partition_dict, targets):
         "ParametricConflictology", "ParametricHurdleConflictology",
         "InterpolatedQuantileConflictology", "KDEConflictology",
         "EmpiricalKDEMixtureConflictology", "RollingConflictology", "PooledConflictology",
-        "MatryoshkaConflictology",
+        "RollingPooledConflictology", "MatryoshkaConflictology",
     }
     assert set(names) == expected
 

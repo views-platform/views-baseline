@@ -416,6 +416,25 @@ does as well. `PooledConflictology` answers that: conflictology whose window is 
 in the cell's area (`pool_by`). Whether *adding* a level to the others helps is the other question; that
 needs Matryoshka with dolls switched off (#150).
 
+### Single levels with a moving window (amendment 2026-11-14, #165)
+
+`PooledConflictology` draws every rolling origin from the window ending at `train_end`; Matryoshka reads
+data up to `train_end + k`. So at every later origin Matryoshka saw newer data, and the views-models run of
+2026-11-13 (views-models#728) could not separate the level from the newer data.
+
+`RollingPooledConflictology` is `PooledConflictology` with the window ending at `train_end + k`, as
+`RollingConflictology` is to `ConflictologyModel`. A cell keeps the area it had at `train_end`, so the
+window is the only thing that moves. Which model compares with Matryoshka:
+
+| Model | Compares with Matryoshka at |
+|---|---|
+| `RollingPooledConflictology`, `RollingConflictology` | every origin |
+| `PooledConflictology`, `ConflictologyModel` | origin 0 only; at later origins the difference includes newer data |
+
+The fixed-window single levels from 2026-11-13 (`narrow_canvas`, `middle_canvas`, `broad_canvas`) stay as
+the fixed-window variants (Simon, 2026-11-14). At origin 0 each rolling model must score exactly like its
+fixed-window counterpart; that check (#172) shows the window is the only difference.
+
 ---
 
 ## Why this design

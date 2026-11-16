@@ -40,6 +40,7 @@ Each component carries one of two stability labels:
 | `EmpiricalKDEMixtureConflictology` | Evolving | Smoothed climatology E (ADR-023); `alpha`/`bandwidth` audited genome keys; common-random-number coupling across α is tested |
 | `RollingConflictology` | Evolving | Moving-window control for ADR-024 (#126); conflictology's genome; reads observed months up to `train_end + k` |
 | `PooledConflictology` | Evolving | Single-level comparison for ADR-024 (#151); conflictology's genome plus `pool_by` |
+| `RollingPooledConflictology` | Evolving | `PooledConflictology` with a moving window (#165); the same genome |
 | `MatryoshkaConflictology` | Evolving | ADR-024; the only baseline with fitted knobs (up to 8 per target, stored on the model; `dolls` chooses the dolls, #153); reads observed months up to `train_end + k` |
 | `KDEConflictology` | Evolving | Smoothed climatology C (ADR-023); `bandwidth` audited genome key; SJ stability on small windows is an open question |
 | `BaselineModel` (protocol) | Stable | Universal contract — all models return `dict[str, PredictionFrame]`; changes ripple to all implementing classes |

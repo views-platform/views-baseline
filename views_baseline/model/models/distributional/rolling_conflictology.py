@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
-
-from views_baseline.model.frames.input import panel, to_feature_frame, to_level
+from views_baseline.model.frames.input import to_level
 from views_baseline.model.frames.output import sample_prediction_grid
-from views_baseline.model.frames.pooling import window_pool_arrays
+from views_baseline.model.frames.pooling import rolling_window_pools
 from views_baseline.model.grid import train_test_boundary
 from views_baseline.model.models.distributional.conflictology import ConflictologyModel
 
@@ -39,64 +37,21 @@ class RollingConflictology(ConflictologyModel):
     months back into the window and turn this control back into conflictology.
     """
 
+    model_name = "RollingConflictology"
+
     def _pools_for_origin(self, df, sequence_number: int) -> dict:
         """The pools for one origin: conflictology's window, anchored at ``train_end + k``."""
         if sequence_number < 0:
-            raise ValueError(f"sequence_number must be >= 0, got {sequence_number}.")
+            raise ValueError(f"{self.model_name}: sequence_number must be >= 0, "
+                             f"got {sequence_number}.")
         if sequence_number == 0:
             return self.hist_per_entity
         _, train_end = train_test_boundary(self.partition_dict)
-        anchor = train_end + sequence_number
-        ff = to_feature_frame(df, loa=self.loa, targets=self.targets)
-        time, unit, values = panel(ff, self.targets)
-        time, unit = np.asarray(time), np.asarray(unit)
-
-        # Only the forecast cells are pooled, so a cell that is never forecast cannot stop the run.
-        fitted = np.isin(unit, np.asarray(self.entity_ids))
-        time, unit = time[fitted], unit[fitted]
-        values = {t: values[t][fitted] for t in self.targets}
-        self._check_months_after_train_end(time, unit, values, train_end, anchor, sequence_number)
-
-        _, pools = window_pool_arrays(
-            time, unit, values, self.targets, self.window_months, anchor
+        return rolling_window_pools(
+            df, loa=self.loa, targets=self.targets, entity_ids=self.entity_ids,
+            window_months=self.window_months, train_end=train_end,
+            sequence_number=sequence_number, model_name=self.model_name,
         )
-        return pools
-
-    def _check_months_after_train_end(
-        self, time, unit, values, train_end: int, anchor: int, sequence_number: int
-    ) -> None:
-        """Every forecast cell must have every month after train_end that lies inside the window,
-        none NaN: months ``max(train_end + 1, anchor - window_months + 1) .. anchor``."""
-        start = max(train_end + 1, anchor - self.window_months + 1)
-        cells = np.asarray(self.entity_ids)
-        after = (time >= start) & (time <= anchor)
-        row = np.searchsorted(cells, unit[after])          # unit is already restricted to cells
-        col = time[after] - start
-        present = np.zeros((cells.size, anchor - start + 1), dtype=bool)
-        present[row, col] = True
-        incomplete = ~present.all(axis=1)
-        if incomplete.any():
-            examples = [
-                (int(cells[i]), [int(start + m) for m in np.nonzero(~present[i])[0][:3]])
-                for i in np.nonzero(incomplete)[0][:3]
-            ]
-            raise ValueError(
-                f"RollingConflictology needs every month {start}..{anchor} (after "
-                f"train_end {train_end} and inside the window for sequence_number "
-                f"{sequence_number}) for every forecast cell, but {int(incomplete.sum())} of "
-                f"{cells.size} cells are missing months (cell, first missing months: "
-                f"{examples}). Refusing to fall back to an older window."
-            )
-        for t in self.targets:
-            nan = np.isnan(values[t][after])
-            if nan.any():
-                cids = unit[after][nan]
-                months = sorted({int(m) for m in time[after][nan][cids == cids[0]]})[:3]
-                raise ValueError(
-                    f"RollingConflictology: NaN in target {t!r} for cell {int(cids[0])} in "
-                    f"month(s) {months}, after train_end {train_end} and inside the window for "
-                    f"sequence_number {sequence_number}. {np.unique(cids).size} cell(s) affected."
-                )
 
     def predict(
         self, df: pd.DataFrame | FeatureFrame, sequence_number: int, output_length: int
@@ -107,7 +62,7 @@ class RollingConflictology(ConflictologyModel):
         test_start, _ = train_test_boundary(self.partition_dict)
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=pools,
-            model_name="RollingConflictology", targets=self.targets, n_samples=self.n_samples,
+            model_name=self.model_name, targets=self.targets, n_samples=self.n_samples,
             level=level, test_start=test_start,
             sequence_number=sequence_number, output_length=output_length, seed=self.seed,
             draw_cell=lambda cid, t, rng: rng.choice(

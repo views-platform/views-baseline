@@ -12,6 +12,7 @@ from views_baseline.model.models.distributional import (
     ParametricHurdleConflictology,
     PooledConflictology,
     RollingConflictology,
+    RollingPooledConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
 
@@ -244,6 +245,7 @@ def test_catalog_count_family_rejected_by_hurdle_via_catalog():
         ("InterpolatedQuantileConflictology", InterpolatedQuantileConflictology),
         ("RollingConflictology", RollingConflictology),
         ("PooledConflictology", PooledConflictology),
+        ("RollingPooledConflictology", RollingPooledConflictology),
         ("KDEConflictology", KDEConflictology),
         ("EmpiricalKDEMixtureConflictology", EmpiricalKDEMixtureConflictology),
         ("MatryoshkaConflictology", MatryoshkaConflictology),

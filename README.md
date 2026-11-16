@@ -124,6 +124,14 @@ RollingConflictology(targets, window_months, partition_dict, loa, n_samples, see
 PooledConflictology(targets, window_months, partition_dict, loa, n_samples, pool_by, seed=42)
 ```
 
+#### RollingPooledConflictology — pooled over an area, with a moving window
+
+`PooledConflictology` whose area windows end at `train_end + k` at rolling origin `k` (#165), the information rule of `RollingConflictology` and Matryoshka. Use this one to compare a single level with Matryoshka: `PooledConflictology` draws every origin from `train_end`, so Matryoshka would see newer data at every later origin. A cell keeps the area it had at `train_end`. At origin 0 it is identical to `PooledConflictology`. It stops with an error if the data does not reach `train_end + k` for every cell.
+
+```python
+RollingPooledConflictology(targets, window_months, partition_dict, loa, n_samples, pool_by, seed=42)
+```
+
 #### MatryoshkaConflictology — conflictology that also draws from a cell's surroundings
 
 Conflictology that chooses *which past observations to draw from* (ADR-024). Each draw is a value that was really observed, picked in three steps:
@@ -186,7 +194,7 @@ catalog.list_models()
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
 #  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'PooledConflictology',
-#  'MatryoshkaConflictology']
+#  'RollingPooledConflictology', 'MatryoshkaConflictology']
 ```
 
 ---
