@@ -108,16 +108,19 @@ class NeighbourhoodConflictology(ConflictologyModel):
         """Dict[str, PredictionFrame], one per target, each (N · output_length, n_samples)."""
         windows = self._windows_for_origin(df, sequence_number)
         values, length = windows["values"], windows["length"]
-        row = {cid: i for i, cid in enumerate(self.entity_ids)}
+        # Per cell, once per origin: its disc members and where each member's months end in the
+        # concatenated pool. Every (month, target) draw of the cell reuses them.
+        disc = {}
+        for i, cid in enumerate(self.entity_ids):
+            members = self.disc[i][self.disc[i] >= 0]
+            end = np.cumsum(length[members])
+            disc[cid] = (members, end, end - length[members])
 
         def draw_cell(cid, t, rng):
-            members = self.disc[row[cid]]
-            members = members[members >= 0]
-            end = np.cumsum(length[members])
+            members, end, start = disc[cid]
             j = rng.choice(end[-1], size=self.n_samples, replace=True)
             k = np.searchsorted(end, j, side="right")
-            month = j - (end[k] - length[members[k]])
-            return values[t][members[k], month]
+            return values[t][members[k], j - start[k]]
 
         level = to_level(df, loa=self.loa)
         test_start, _ = train_test_boundary(self.partition_dict)
