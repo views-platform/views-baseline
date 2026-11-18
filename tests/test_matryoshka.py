@@ -1008,6 +1008,53 @@ def test_geometry_wraps_columns_at_the_date_line():
     assert (geo.neighbours >= 0).sum() == 2
 
 
+def _brute_force_disc(cells, radius):
+    """Every (cell index, neighbour index) pair with 0 < distance <= radius, by brute force
+    over the cells: columns wrap at the date line, rows do not."""
+    row, col = (cells - 1) // N_COLS, (cells - 1) % N_COLS
+    pairs = set()
+    for i in range(cells.size):
+        for j in range(cells.size):
+            dr = row[j] - row[i]
+            dc = (col[j] - col[i] + N_COLS // 2) % N_COLS - N_COLS // 2    # shortest way round
+            d = np.hypot(dr, dc)
+            if 0 < d <= radius:
+                pairs.add((i, j))
+    return pairs
+
+
+@pytest.mark.parametrize("radius", [1, 2, 5])
+def test_neighbour_table_is_the_brute_force_disc_at_any_radius(radius):
+    """Cells clustered at the date line, at the south pole row and at the north pole row, plus
+    scattered ones: the table holds exactly the cells within the radius (#178, S1)."""
+    from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+
+    rng = np.random.default_rng(3)
+    rows = np.concatenate([np.full(6, 100), np.zeros(6, int), np.full(6, 359),
+                           rng.integers(0, 360, 30)])
+    cols = np.concatenate([[0, 1, 2, 717, 718, 719], [0, 1, 4, 300, 301, 719],
+                           [5, 6, 7, 8, 718, 719], rng.integers(0, 720, 30)])
+    cells = np.unique(rows * N_COLS + cols + 1)
+    table = neighbour_table(cells, radius)
+    got = {(i, int(j)) for i in range(cells.size) for j in table[i] if j >= 0}
+    assert got == _brute_force_disc(cells, radius)
+    assert all(len(set(r[r >= 0])) == (r >= 0).sum() for r in table)     # no cell twice
+
+
+def test_neighbour_table_at_near_radius_is_the_geometrys_table():
+    from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+
+    cells = np.arange(1, N_COLS * 12 + 1, 7)
+    geo = build_geometry(cells, np.ones(cells.size, int))
+    assert np.array_equal(neighbour_table(cells, NEAR_RADIUS), geo.neighbours)
+
+
+def test_neighbour_table_at_radius_zero_is_empty():
+    from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+
+    assert neighbour_table(np.array([1, 2, 3]), 0).shape == (3, 0)
+
+
 def test_geometry_rejects_unsorted_cells():
     with pytest.raises(ValueError, match="ascending"):
         build_geometry(np.array([5, 3]), np.array([1, 1]))

@@ -6,6 +6,9 @@ a cell is every cell in the data whose centre lies at straight-line grid distanc
 0 < d ≤ NEAR_RADIUS (in cells; no latitude correction, #141). Neighbours are grouped into distance
 bands (all offsets with the same d), so that the smooth distance kernel can be applied band by
 band. Columns wrap around the date line, rows do not.
+
+`neighbour_table` builds the same table for any radius; the single-level neighbourhood control
+(`NeighbourhoodConflictology`, #178) uses it, so its disc is this one, not a copy.
 """
 
 from __future__ import annotations
@@ -58,18 +61,29 @@ def build_geometry(cells: np.ndarray, country: np.ndarray) -> Geometry:
     cells, country = np.asarray(cells, dtype=np.int64), np.asarray(country, dtype=np.int64)
     if cells.shape != country.shape:
         raise ValueError(f"cells {cells.shape} and country {country.shape} differ in shape.")
+    return Geometry(cells=cells, country=country, neighbours=neighbour_table(cells, NEAR_RADIUS))
+
+
+def neighbour_table(cells: np.ndarray, radius: int) -> np.ndarray:
+    """(N, n_offsets): the index (into ``cells``) of each cell's neighbour at each offset with
+    0 < distance ≤ ``radius`` (in `_offsets` order), or -1 if that cell is not in ``cells``.
+
+    ``cells`` must be strictly ascending priogrid ids. Columns wrap around the date line; rows
+    stop at the poles. ``radius`` 0 gives no offsets, an (N, 0) table.
+    """
+    cells = np.asarray(cells, dtype=np.int64)
     if np.any(np.diff(cells) <= 0):
         raise ValueError("cells must be strictly ascending priogrid ids.")
     if cells.size and (cells[0] < 1 or cells[-1] > N_ROWS * N_COLS):
         raise ValueError(f"priogrid ids must lie in 1..{N_ROWS * N_COLS}.")
+    drow, dcol, _ = _offsets(radius)
     row = (cells - 1) // N_COLS          # 0-based
     col = (cells - 1) % N_COLS
-    nr = row[:, None] + OFFSET_DROW[None, :]
-    nc = (col[:, None] + OFFSET_DCOL[None, :]) % N_COLS
+    nr = row[:, None] + drow[None, :]
+    nc = (col[:, None] + dcol[None, :]) % N_COLS
     on_grid = (nr >= 0) & (nr < N_ROWS)
     nid = nr * N_COLS + nc + 1
     pos = np.searchsorted(cells, nid)
     found = on_grid & (pos < cells.size)
     found[found] = cells[pos[found]] == nid[found]
-    neighbours = np.where(found, pos, -1)
-    return Geometry(cells=cells, country=country, neighbours=neighbours)
+    return np.where(found, pos, -1)
