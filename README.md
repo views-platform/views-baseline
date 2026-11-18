@@ -132,6 +132,15 @@ PooledConflictology(targets, window_months, partition_dict, loa, n_samples, pool
 RollingPooledConflictology(targets, window_months, partition_dict, loa, n_samples, pool_by, seed=42)
 ```
 
+#### NeighbourhoodConflictology and RollingNeighbourhoodConflictology — pooled over a disc of cells
+
+Conflictology whose window is pooled over every cell within grid distance `radius` of the cell, itself included, all with equal weight (#178). It is the single level for Matryoshka's neighbourhood: with `radius=5` the disc is Matryoshka's `near` doll plus the cell, taken from the same code. `radius` is required (an integer ≥ 0); `radius=0` is plain conflictology. `RollingNeighbourhoodConflictology` moves the windows to `train_end + k`, as `RollingPooledConflictology` does; use it to compare with Matryoshka. Grid-month (pgm) only.
+
+```python
+NeighbourhoodConflictology(targets, window_months, partition_dict, loa, n_samples, radius, seed=42)
+RollingNeighbourhoodConflictology(targets, window_months, partition_dict, loa, n_samples, radius, seed=42)
+```
+
 #### MatryoshkaConflictology — conflictology that also draws from a cell's surroundings
 
 Conflictology that chooses *which past observations to draw from* (ADR-024). Each draw is a value that was really observed, picked in three steps:
@@ -194,7 +203,8 @@ catalog.list_models()
 #  'ParametricConflictology', 'ParametricHurdleConflictology',
 #  'InterpolatedQuantileConflictology', 'KDEConflictology',
 #  'EmpiricalKDEMixtureConflictology', 'RollingConflictology', 'PooledConflictology',
-#  'RollingPooledConflictology', 'MatryoshkaConflictology']
+#  'RollingPooledConflictology', 'NeighbourhoodConflictology',
+#  'RollingNeighbourhoodConflictology', 'MatryoshkaConflictology']
 ```
 
 ---
