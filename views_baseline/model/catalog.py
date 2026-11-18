@@ -6,10 +6,12 @@ from views_baseline.model.models.distributional import (
     KDEConflictology,
     MatryoshkaConflictology,
     MixtureBaseline,
+    NeighbourhoodConflictology,
     ParametricConflictology,
     ParametricHurdleConflictology,
     PooledConflictology,
     RollingConflictology,
+    RollingNeighbourhoodConflictology,
     RollingPooledConflictology,
 )
 from views_baseline.model.models.point import AverageModel, LocfModel, ZeroModel
@@ -54,6 +56,8 @@ class BaselineModelCatalog:
             "RollingConflictology": self._get_rolling_conflictology,
             "PooledConflictology": self._get_pooled_conflictology,
             "RollingPooledConflictology": self._get_rolling_pooled_conflictology,
+            "NeighbourhoodConflictology": self._get_neighbourhood_conflictology,
+            "RollingNeighbourhoodConflictology": self._get_rolling_neighbourhood_conflictology,
             "MatryoshkaConflictology": self._get_matryoshka,
         }
 
@@ -159,6 +163,31 @@ class BaselineModelCatalog:
             loa=self.loa,
             n_samples=self.config["n_samples"],
             pool_by=self.config["pool_by"],
+            seed=self.config["seed"],
+        )
+
+    def _get_neighbourhood_conflictology(self):
+        # #178; the single level for Matryoshka's near doll. radius and seed are required,
+        # audited genome keys (ADR-021).
+        return NeighbourhoodConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            radius=self.config["radius"],
+            seed=self.config["seed"],
+        )
+
+    def _get_rolling_neighbourhood_conflictology(self):
+        # #178; the same with the window ending at each rolling origin.
+        return RollingNeighbourhoodConflictology(
+            targets=self.targets,
+            window_months=self.config["window_months"],
+            partition_dict=self.partition_dict,
+            loa=self.loa,
+            n_samples=self.config["n_samples"],
+            radius=self.config["radius"],
             seed=self.config["seed"],
         )
 

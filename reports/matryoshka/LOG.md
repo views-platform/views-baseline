@@ -1003,3 +1003,47 @@ The suite has 927 passing.
   - The 7 survivors were all model names in messages, for `RollingConflictology` and `PooledConflictology` and in `predict`. Three tests were added, and all 7 were re-run against the full suite: all caught.
 
 The suite has 935 passing.
+
+## 2026-11-18 — A single level for the neighbourhood (#178)
+
+**Why.** Every doll should have a single level of its own. The neighbourhood (`near`) had none: #151 took
+its list from a reviewer question (admin 1, country, map), not from the dolls. views-models found the gap
+on 2026-11-17 (soft finding S1) and it was deferred. Simon decided on 2026-11-18 to build it, with the
+radius as a setting.
+
+**What.** `NeighbourhoodConflictology` and `RollingNeighbourhoodConflictology`: conflictology whose window
+is pooled over every cell within grid distance `radius`, the cell included, with equal weights. The disc
+comes from Matryoshka's own `neighbour_table` (#179), so at radius 5 it is the `near` doll plus the cell.
+No pool is built per cell: a draw is `rng.choice(total)` mapped to (cell, month), which gives the same
+draws as `rng.choice` over the concatenated pool (tested against that reference).
+
+**Timing (#182).** Synthetic pgm panel: 64,800 cells (rows 100–189, every column), 3 targets, Poisson(0.05),
+`window_months` 36, S = 64, radius 5 (81 cells per disc). `RollingNeighbourhoodConflictology`, laptop,
+2026-11-18:
+
+| fit | origin 0 | origin 1 | origin 12 | peak RSS |
+|---|---|---|---|---|
+| 1.0 s | 92.6 s | 111.7 s | 100.6 s | 2.5 GiB |
+
+The first version recomputed each cell's disc offsets for every (month, target) draw and took
+138–165 s per origin. They are now computed once per origin per cell. The draws are unchanged (the
+exact-draw test passes). That leaves it at about 1.8× `PooledConflictology`'s ~56 s. On 13 origins that is
+about 22 minutes of drawing per model on this laptop (estimate); views-models will measure one origin on
+the rented machine first (#186).
+
+**PR #189 reviews**, each in a fresh session on its own copy:
+- **Correctness review:** no bugs.
+  - A separate pandas reference matched both models byte for byte on 60 random panels. The panels covered ragged histories, both poles, both sides of the date line, radius 0–7, one or two targets, and float32 FeatureFrame and DataFrame input.
+  - `build_geometry` was unchanged on 20 random cell sets.
+  - One edge case: from radius 360 on, the offsets ±360 reach the same column round the date line and count a cell twice. Now both `neighbour_table` and the model reject radius ≥ 360, with tests.
+- **Diff review:** 1 warning and 6 suggestions.
+  - Kept, and documented why: the rolling class overrides only `_windows_for_origin`. Its siblings copy `predict` instead, but here `predict` holds the disc draw, which should exist once.
+  - Done:
+    - a local variable that shadowed `self.disc` is renamed;
+    - `fitted_state`'s role is commented;
+    - `neighbour_table` checks its radius;
+    - the common-random-numbers caveat is added to the rolling docstring and CIC;
+    - Matryoshka's CIC notes that `neighbour_table` has a second user.
+- **Guard audit:** 36 mutations, 31 caught. 4 survivors were equivalent (padding position; catalog `.get` defaults that the genome check rejects first; `__all__`).
+  - The real survivor: no test had two targets, so drawing every target from the first target's column went unnoticed.
+  - `test_each_target_draws_only_from_its_own_column` now catches both forms of that mutation (re-run on the working tree).
