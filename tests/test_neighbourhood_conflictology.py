@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from views_baseline.model.frames.input import to_feature_frame
-from views_baseline.model.models.distributional import ConflictologyModel
+from views_baseline.model.models.distributional import ConflictologyModel, RollingConflictology
 from views_baseline.model.models.distributional.matryoshka.geometry import (
     N_COLS,
     NEAR_RADIUS,
@@ -19,6 +19,9 @@ from views_baseline.model.models.distributional.matryoshka.geometry import (
 )
 from views_baseline.model.models.distributional.neighbourhood_conflictology import (
     NeighbourhoodConflictology,
+)
+from views_baseline.model.models.distributional.rolling_neighbourhood_conflictology import (
+    RollingNeighbourhoodConflictology,
 )
 
 PARTITION = {"test": (500, 535)}           # train_end = 499
@@ -162,3 +165,67 @@ def test_a_short_history_cell_is_pooled_with_only_the_months_it_has():
     neighbour = _id(100, 1)
     assert {(young, TRAIN_END - 1), (young, TRAIN_END)} <= drawn[neighbour]
     assert not any(c == young and m < TRAIN_END - 1 for c, m in drawn[neighbour])
+
+
+# --- RollingNeighbourhoodConflictology (#181) -------------------------------------------------
+
+@pytest.mark.parametrize("k", [1, 3, 12])
+def test_rolling_each_cell_draws_from_its_discs_window_ending_at_the_origin(k):
+    pf = RollingNeighbourhoodConflictology(**KW, radius=2).fit(_df()).predict(
+        _df(), sequence_number=k, output_length=1)["y1"]
+    drawn = _drawn_from(pf)
+    for cell in CELLS:
+        disc = [c for c in CELLS if _distance(cell, c) <= 2]
+        assert drawn[cell] == _window(disc, end=TRAIN_END + k), (cell, k)
+
+
+def test_rolling_origin_zero_is_the_fixed_window_model_byte_for_byte():
+    a = RollingNeighbourhoodConflictology(**KW, radius=2).fit(_df()).predict(_df(), 0, 4)["y1"]
+    b = NeighbourhoodConflictology(**KW, radius=2).fit(_df()).predict(_df(), 0, 4)["y1"]
+    assert np.array_equal(np.asarray(a.values), np.asarray(b.values))
+
+
+@pytest.mark.parametrize("k", [0, 1, 5, 12])
+def test_rolling_radius_zero_is_rolling_conflictology_byte_for_byte(k):
+    df = _df()
+    df["y1"] = np.random.default_rng(1).poisson(2.0, len(df)).astype(float)
+    got = RollingNeighbourhoodConflictology(**KW, radius=0).fit(df).predict(df, k, 3)["y1"]
+    want = RollingConflictology(**KW).fit(df).predict(df, k, 3)["y1"]
+    assert np.array_equal(np.asarray(got.values), np.asarray(want.values))
+
+
+@pytest.mark.parametrize("bad", ["missing", "nan"])
+def test_rolling_a_gap_inside_the_window_raises_naming_the_model(bad):
+    df = _df()
+    hole = (df.index.get_level_values("priogrid_id") == _id(100, 1)) & (
+        df.index.get_level_values("month_id") == TRAIN_END + 2)
+    df = df[~hole] if bad == "missing" else df.assign(y1=np.where(hole, np.nan, df["y1"]))
+    m = RollingNeighbourhoodConflictology(**KW, radius=2).fit(df)
+    m.predict(df, sequence_number=1, output_length=1)              # the gap is not in this window
+    with pytest.raises(ValueError, match="RollingNeighbourhoodConflictology"):
+        m.predict(df, sequence_number=2, output_length=1)
+
+
+def test_rolling_negative_sequence_number_raises():
+    m = RollingNeighbourhoodConflictology(**KW, radius=1).fit(_df())
+    with pytest.raises(ValueError, match="RollingNeighbourhoodConflictology"):
+        m.predict(_df(), sequence_number=-1, output_length=1)
+
+
+@pytest.mark.parametrize("k", [0, 4])
+def test_rolling_forecasts_are_labelled_with_the_origins_months(k):
+    pf = RollingNeighbourhoodConflictology(**KW, radius=1).fit(_df()).predict(_df(), k, 3)["y1"]
+    assert set(np.asarray(pf.index.time)) == {500 + k, 501 + k, 502 + k}
+
+
+def test_rolling_the_disc_stays_as_fitted():
+    """A cell that first appears after train_end is neither forecast nor pooled."""
+    df = _df()
+    late = pd.DataFrame({"y1": [float(m * 100 + 99) for m in range(TRAIN_END + 1, 540)]},
+                        index=pd.MultiIndex.from_product([range(TRAIN_END + 1, 540),
+                                                          [_id(100, 2)]],
+                                                         names=["month_id", "priogrid_id"]))
+    df = pd.concat([df, late]).sort_index()
+    pf = RollingNeighbourhoodConflictology(**KW, radius=2).fit(df).predict(df, 5, 1)["y1"]
+    assert _id(100, 2) not in set(np.asarray(pf.index.unit))
+    assert not (np.asarray(pf.values).astype(np.int64) % 100 == 99).any()
