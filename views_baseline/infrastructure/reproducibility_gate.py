@@ -62,6 +62,10 @@ class ReproducibilityGate:
             # "map" for every cell. Required, no default (ADR-021).
             "PooledConflictology": ["window_months", "n_samples", "seed", "pool_by"],
             "RollingPooledConflictology": ["window_months", "n_samples", "seed", "pool_by"],
+            # Conflictology pooled over a disc of cells (#178): `radius` in grid cells, an
+            # integer >= 0 (5 is Matryoshka's near doll). Required, no default (ADR-021).
+            "NeighbourhoodConflictology": ["window_months", "n_samples", "seed", "radius"],
+            "RollingNeighbourhoodConflictology": ["window_months", "n_samples", "seed", "radius"],
             # C: `bandwidth` is a number (count units) or "sj" / "silverman"; no default.
             "KDEConflictology": ["window_months", "n_samples", "seed", "bandwidth"],
             # E: `alpha` in [0, 1] is the weight on C; `bandwidth` is C's.

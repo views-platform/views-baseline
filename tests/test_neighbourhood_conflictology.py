@@ -138,12 +138,16 @@ def test_a_cell_with_no_neighbours_draws_from_its_own_window():
     assert drawn[lone] == _window([lone])
 
 
-@pytest.mark.parametrize("bad", [dict(loa="cm"), dict(radius=-1), dict(radius=1.5),
-                                 dict(radius=True), dict(radius="5")])
-def test_bad_settings_raise_naming_the_model(bad):
-    kw = {**KW, "radius": 2, **bad}
+@pytest.mark.parametrize("bad", [-1, 1.5, True, "5", None])
+def test_a_bad_radius_raises_naming_the_model(bad):
     with pytest.raises(ValueError, match="NeighbourhoodConflictology"):
-        NeighbourhoodConflictology(**kw)
+        NeighbourhoodConflictology(**KW, radius=bad)
+
+
+def test_fit_at_country_level_raises_naming_the_model():
+    df = _df().rename_axis(["month_id", "country_id"])
+    with pytest.raises(ValueError, match="NeighbourhoodConflictology.*pgm"):
+        NeighbourhoodConflictology(**{**KW, "loa": "cm"}, radius=2).fit(df)
 
 
 def test_dataframe_and_featureframe_give_the_same_draws():
@@ -229,3 +233,17 @@ def test_rolling_the_disc_stays_as_fitted():
     pf = RollingNeighbourhoodConflictology(**KW, radius=2).fit(df).predict(df, 5, 1)["y1"]
     assert _id(100, 2) not in set(np.asarray(pf.index.unit))
     assert not (np.asarray(pf.values).astype(np.int64) % 100 == 99).any()
+
+
+def test_the_catalog_requires_radius_and_forwards_every_key():
+    from views_baseline.model.catalog import BaselineModelCatalog
+
+    cfg = {"regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "seed": 5}
+    for algo, cls in [("NeighbourhoodConflictology", NeighbourhoodConflictology),
+                      ("RollingNeighbourhoodConflictology", RollingNeighbourhoodConflictology)]:
+        with pytest.raises((KeyError, ValueError), match="radius"):
+            BaselineModelCatalog(config=cfg, partition_dict=PARTITION, loa="pgm").get_model(algo)
+        m = BaselineModelCatalog(config={**cfg, "radius": 3}, partition_dict=PARTITION,
+                                 loa="pgm").get_model(algo)
+        assert type(m) is cls
+        assert (m.radius, m.window_months, m.n_samples, m.seed) == (3, 6, 8, 5)

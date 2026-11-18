@@ -94,6 +94,7 @@ def test_algorithm_genomes_covers_all_catalog_models():
         "InterpolatedQuantileConflictology", "KDEConflictology",
         "EmpiricalKDEMixtureConflictology", "RollingConflictology", "PooledConflictology",
         "RollingPooledConflictology", "MatryoshkaConflictology",
+        "NeighbourhoodConflictology", "RollingNeighbourhoodConflictology",
     }
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES.keys()) == expected
 
@@ -413,6 +414,15 @@ def test_rolling_pooled_conflictology_genome_is_exact():
     """#165: the same keys as PooledConflictology; the moving window is the class, not a key."""
     assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES["RollingPooledConflictology"]) == {
         "window_months", "n_samples", "seed", "pool_by"}
+
+
+@pytest.mark.parametrize("algo", ["NeighbourhoodConflictology",
+                                  "RollingNeighbourhoodConflictology"])
+def test_neighbourhood_conflictology_genome_is_exact(algo):
+    """#178: conflictology's keys plus the disc radius, with no default (ADR-021); the moving
+    window is the class, not a key."""
+    assert set(ReproducibilityGate.Config.ALGORITHM_GENOMES[algo]) == {
+        "window_months", "n_samples", "seed", "radius"}
 
 
 def test_rolling_conflictology_genome_is_exact():

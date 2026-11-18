@@ -10,6 +10,7 @@ from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.grid import train_test_boundary
 from views_baseline.model.models.distributional.conflictology import ConflictologyModel
 from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+from views_baseline.model.spatial import spatial_level
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -54,9 +55,6 @@ class NeighbourhoodConflictology(ConflictologyModel):
             targets=targets, window_months=window_months, partition_dict=partition_dict,
             loa=loa, n_samples=n_samples, seed=seed,
         )
-        if loa != "pgm":
-            raise ValueError(f"{self.model_name}: loa must be 'pgm' (the disc comes from the "
-                             f"priogrid ids), got {loa!r}.")
         if isinstance(radius, bool) or not isinstance(radius, (int, np.integer)) or radius < 0:
             raise ValueError(f"{self.model_name}: radius must be an integer >= 0 (grid cells), "
                              f"got {radius!r}.")
@@ -66,6 +64,11 @@ class NeighbourhoodConflictology(ConflictologyModel):
 
     def fit(self, df: pd.DataFrame | FeatureFrame) -> NeighbourhoodConflictology:
         """Each forecast cell's window (conflictology's) and its disc of forecast cells."""
+        from views_frames import SpatialLevel
+
+        if spatial_level(self.loa) != SpatialLevel.PGM:
+            raise ValueError(f"{self.model_name} is defined at grid-month (pgm) only: the disc "
+                             f"comes from the priogrid ids; got loa={self.loa!r}.")
         super().fit(df)
         self.disc = self._disc(np.asarray(self.entity_ids))
         self.windows = self._windows(self.hist_per_entity)
