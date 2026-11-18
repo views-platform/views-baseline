@@ -29,7 +29,9 @@ disc is that doll's neighbourhood plus the cell, because both come from `matryos
 
 ## Responsibilities and Guarantees
 
-- `__init__` requires `radius`, an integer ≥ 0. A bool, float, string, None or negative value raises.
+- `__init__` requires `radius`, an integer in 0..359. A bool, float, string, None, negative value or
+  360 and above raises. From 360 on, the disc would reach round the date line onto itself and count a
+  cell twice.
 - `fit(df)`:
   - raises unless `loa` is pgm;
   - takes conflictology's windows (`ConflictologyModel.fit`, `window_pool`);
@@ -58,7 +60,7 @@ disc is that doll's neighbourhood plus the cell, because both come from `matryos
 
 | Failure | Loudness | Notes |
 |---|---|---|
-| `radius` not an integer ≥ 0 | `ValueError` naming the model | At construction. |
+| `radius` not an integer in 0..359 | `ValueError` naming the model | At construction. `neighbour_table` checks it too. |
 | `loa` not pgm | `ValueError` naming the model | At `fit`, as in `MatryoshkaConflictology`, so the shared protocol tests can construct it. |
 | Everything `ConflictologyModel` refuses | As `ConflictologyModel` | |
 
@@ -109,6 +111,7 @@ All in `tests/test_neighbourhood_conflictology.py` unless noted. The input encod
 | `test_a_cell_with_no_neighbours_draws_from_its_own_window`, `test_a_short_history_cell_is_pooled_with_only_the_months_it_has` | Edge cases. |
 | `test_a_bad_radius_raises_naming_the_model`, `test_fit_at_country_level_raises_naming_the_model` | Settings. |
 | `test_dataframe_and_featureframe_give_the_same_draws`, `test_the_catalog_requires_radius_and_forwards_every_key` | Input types; catalog. |
+| `test_each_target_draws_only_from_its_own_column` (both classes) | Two targets never mix (PR #189 guard audit). |
 | `tests/test_matryoshka.py::test_neighbour_table_*` | The disc itself, against brute force at radius 1, 2, 5. |
 | Shared lists in `test_protocol.py`, `test_dual_input.py`, `test_catalog.py`, `test_falsification_seed_wiring.py`, `test_reproducibility_gate.py`, `test_config_conformance.py`, `test_baseline.py` | Protocol, input types, catalog, seed wiring, exact genome, a derived conformance fixture. |
 

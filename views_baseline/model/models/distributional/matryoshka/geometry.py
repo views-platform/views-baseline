@@ -69,8 +69,13 @@ def neighbour_table(cells: np.ndarray, radius: int) -> np.ndarray:
     0 < distance ≤ ``radius`` (in `_offsets` order), or -1 if that cell is not in ``cells``.
 
     ``cells`` must be strictly ascending priogrid ids. Columns wrap around the date line; rows
-    stop at the poles. ``radius`` 0 gives no offsets, an (N, 0) table.
+    stop at the poles. ``radius`` 0 gives no offsets, an (N, 0) table. ``radius`` must be an
+    integer with 0 ≤ radius < N_COLS / 2: from N_COLS / 2 on, the offsets ±N_COLS / 2 reach the
+    same column round the date line and a neighbour would be counted twice.
     """
+    if (isinstance(radius, bool) or not isinstance(radius, (int, np.integer))
+            or not 0 <= radius < N_COLS // 2):
+        raise ValueError(f"radius must be an integer in 0..{N_COLS // 2 - 1}, got {radius!r}.")
     cells = np.asarray(cells, dtype=np.int64)
     if np.any(np.diff(cells) <= 0):
         raise ValueError("cells must be strictly ascending priogrid ids.")

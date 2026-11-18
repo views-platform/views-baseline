@@ -170,7 +170,8 @@ other load:
 ## Boundaries and Interactions
 
 - **Package:** `views_baseline/model/models/distributional/matryoshka/`, one idea per module:
-  - `geometry` (the grid, neighbours, country);
+  - `geometry` (the grid, neighbours, country). Its `neighbour_table(cells, radius)` is also used by
+    `NeighbourhoodConflictology` (#178), so a change to the neighbourhood changes that control too;
   - `size_classes`;
   - `doll_counts` (sparse per-month class counts, shell sizes);
   - `forecast_probability` (the exact probabilities, the score and its slope);

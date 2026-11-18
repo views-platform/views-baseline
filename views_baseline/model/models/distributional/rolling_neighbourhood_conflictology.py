@@ -19,7 +19,9 @@ class RollingNeighbourhoodConflictology(NeighbourhoodConflictology):
     data is.
 
     The disc is the one ``fit`` built from the cells present at ``train_end``. Origin 0 is
-    byte-identical to `NeighbourhoodConflictology`.
+    byte-identical to `NeighbourhoodConflictology`. The common-random-numbers caveat of
+    `RollingConflictology` applies: the same seed picks the same pool positions at every origin
+    only while every disc keeps its total length, i.e. every forecast cell has a full window.
 
     **Fails loud** if, for any forecast cell, a month after ``train_end`` inside the window is
     missing or NaN (`rolling_window_pools`): a gap would silently pull older months back into

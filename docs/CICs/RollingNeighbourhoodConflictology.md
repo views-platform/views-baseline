@@ -33,6 +33,10 @@ to compare with Matryoshka at every origin (ADR-024, amendment 2026-11-18).
     `frames.pooling.rolling_window_pools` (the reader `RollingConflictology` and
     `RollingPooledConflictology` use), then draws over the same discs.
 - `radius` 0 is `RollingConflictology` byte for byte at every origin.
+- **Common random numbers:** the same seed picks the same pool positions at every origin, as long as every
+  disc keeps its total length, which means every forecast cell has a full window.
+- It overrides only `_windows_for_origin`. The siblings copy `predict` instead; here `predict` holds the
+  disc draw, which should exist once.
 
 ---
 

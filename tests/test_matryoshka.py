@@ -1049,6 +1049,16 @@ def test_neighbour_table_at_near_radius_is_the_geometrys_table():
     assert np.array_equal(neighbour_table(cells, NEAR_RADIUS), geo.neighbours)
 
 
+@pytest.mark.parametrize("bad", [-1, 1.5, True, 360])
+def test_neighbour_table_rejects_a_radius_it_cannot_build(bad):
+    """From radius 360 on, offsets -360 and +360 reach the same column round the date line, so
+    a neighbour would be counted twice (PR #189 review)."""
+    from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+
+    with pytest.raises(ValueError, match="radius"):
+        neighbour_table(np.array([1, 2, 3]), bad)
+
+
 def test_neighbour_table_at_radius_zero_is_empty():
     from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
 

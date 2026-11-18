@@ -9,7 +9,10 @@ from views_baseline.model.frames.input import to_level
 from views_baseline.model.frames.output import sample_prediction_grid
 from views_baseline.model.grid import train_test_boundary
 from views_baseline.model.models.distributional.conflictology import ConflictologyModel
-from views_baseline.model.models.distributional.matryoshka.geometry import neighbour_table
+from views_baseline.model.models.distributional.matryoshka.geometry import (
+    N_COLS,
+    neighbour_table,
+)
 from views_baseline.model.spatial import spatial_level
 
 if TYPE_CHECKING:
@@ -55,9 +58,11 @@ class NeighbourhoodConflictology(ConflictologyModel):
             targets=targets, window_months=window_months, partition_dict=partition_dict,
             loa=loa, n_samples=n_samples, seed=seed,
         )
-        if isinstance(radius, bool) or not isinstance(radius, (int, np.integer)) or radius < 0:
-            raise ValueError(f"{self.model_name}: radius must be an integer >= 0 (grid cells), "
-                             f"got {radius!r}.")
+        if (isinstance(radius, bool) or not isinstance(radius, (int, np.integer))
+                or not 0 <= radius < N_COLS // 2):
+            raise ValueError(f"{self.model_name}: radius must be an integer in "
+                             f"0..{N_COLS // 2 - 1} (grid cells; from {N_COLS // 2} on, the disc "
+                             f"would reach round the date line onto itself), got {radius!r}.")
         self.radius = int(radius)
         self.disc = None      # (N, 1 + n_offsets) indices into entity_ids, ascending, -1 padded
         self.windows = None   # the fitted windows, see `_windows`
@@ -99,7 +104,11 @@ class NeighbourhoodConflictology(ConflictologyModel):
 
     def _windows_for_origin(self, df, sequence_number: int) -> dict:
         """The windows to draw from at this origin: the fitted ones (the window ends at
-        ``train_end`` at every origin, as in `ConflictologyModel`)."""
+        ``train_end`` at every origin, as in `ConflictologyModel`).
+
+        `RollingNeighbourhoodConflictology` overrides only this. The siblings
+        (`RollingConflictology`, `RollingPooledConflictology`) copy ``predict`` instead; here
+        ``predict`` holds the disc draw, which should exist once."""
         return self.windows
 
     def predict(
@@ -108,22 +117,24 @@ class NeighbourhoodConflictology(ConflictologyModel):
         """Dict[str, PredictionFrame], one per target, each (N · output_length, n_samples)."""
         windows = self._windows_for_origin(df, sequence_number)
         values, length = windows["values"], windows["length"]
-        # Per cell, once per origin: its disc members and where each member's months end in the
-        # concatenated pool. Every (month, target) draw of the cell reuses them.
-        disc = {}
+        # Per cell, once per origin: its disc members and where each member's months start and
+        # end in the concatenated pool. Every (month, target) draw of the cell reuses them.
+        spans = {}
         for i, cid in enumerate(self.entity_ids):
             members = self.disc[i][self.disc[i] >= 0]
             end = np.cumsum(length[members])
-            disc[cid] = (members, end, end - length[members])
+            spans[cid] = (members, end, end - length[members])
 
         def draw_cell(cid, t, rng):
-            members, end, start = disc[cid]
+            members, end, start = spans[cid]
             j = rng.choice(end[-1], size=self.n_samples, replace=True)
             k = np.searchsorted(end, j, side="right")
             return values[t][members[k], j - start[k]]
 
         level = to_level(df, loa=self.loa)
         test_start, _ = train_test_boundary(self.partition_dict)
+        # fitted_state only selects which cells are forecast (every fitted cell); the draws come
+        # from `windows`, which at a later rolling origin are not the fitted ones.
         return sample_prediction_grid(
             entity_ids=self.entity_ids, fitted_state=self.hist_per_entity,
             model_name=self.model_name, targets=self.targets, n_samples=self.n_samples,

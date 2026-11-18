@@ -138,7 +138,7 @@ def test_a_cell_with_no_neighbours_draws_from_its_own_window():
     assert drawn[lone] == _window([lone])
 
 
-@pytest.mark.parametrize("bad", [-1, 1.5, True, "5", None])
+@pytest.mark.parametrize("bad", [-1, 1.5, True, "5", None, 360])
 def test_a_bad_radius_raises_naming_the_model(bad):
     with pytest.raises(ValueError, match="NeighbourhoodConflictology"):
         NeighbourhoodConflictology(**KW, radius=bad)
@@ -247,3 +247,15 @@ def test_the_catalog_requires_radius_and_forwards_every_key():
                                  loa="pgm").get_model(algo)
         assert type(m) is cls
         assert (m.radius, m.window_months, m.n_samples, m.seed) == (3, 6, 8, 5)
+
+
+@pytest.mark.parametrize("cls", [NeighbourhoodConflictology, RollingNeighbourhoodConflictology])
+def test_each_target_draws_only_from_its_own_column(cls):
+    """Two targets with disjoint values: y2 = y1 + 100000. A mix-up of the targets' windows
+    would put one target's values into the other's forecast (PR #189 guard audit)."""
+    df = _df()
+    df["y2"] = df["y1"] + 100_000
+    m = cls(**{**KW, "targets": ["y1", "y2"]}, radius=2).fit(df)
+    out = m.predict(df, sequence_number=3, output_length=2)
+    y1, y2 = np.asarray(out["y1"].values), np.asarray(out["y2"].values)
+    assert (y1 < 100_000).all() and (y2 >= 100_000).all()

@@ -1030,3 +1030,20 @@ The first version recomputed each cell's disc offsets for every (month, target) 
 exact-draw test passes). That leaves it at about 1.8× `PooledConflictology`'s ~56 s. On 13 origins that is
 about 22 minutes of drawing per model on this laptop (estimate); views-models will measure one origin on
 the rented machine first (#186).
+
+**PR #189 reviews**, each in a fresh session on its own copy:
+- **Correctness review:** no bugs.
+  - A separate pandas reference matched both models byte for byte on 60 random panels. The panels covered ragged histories, both poles, both sides of the date line, radius 0–7, one or two targets, and float32 FeatureFrame and DataFrame input.
+  - `build_geometry` was unchanged on 20 random cell sets.
+  - One edge case: from radius 360 on, the offsets ±360 reach the same column round the date line and count a cell twice. Now both `neighbour_table` and the model reject radius ≥ 360, with tests.
+- **Diff review:** 1 warning and 6 suggestions.
+  - Kept, and documented why: the rolling class overrides only `_windows_for_origin`. Its siblings copy `predict` instead, but here `predict` holds the disc draw, which should exist once.
+  - Done:
+    - a local variable that shadowed `self.disc` is renamed;
+    - `fitted_state`'s role is commented;
+    - `neighbour_table` checks its radius;
+    - the common-random-numbers caveat is added to the rolling docstring and CIC;
+    - Matryoshka's CIC notes that `neighbour_table` has a second user.
+- **Guard audit:** 36 mutations, 31 caught. 4 survivors were equivalent (padding position; catalog `.get` defaults that the genome check rejects first; `__all__`).
+  - The real survivor: no test had two targets, so drawing every target from the first target's column went unnoticed.
+  - `test_each_target_draws_only_from_its_own_column` now catches both forms of that mutation (re-run on the working tree).
