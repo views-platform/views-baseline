@@ -43,6 +43,7 @@ def _catalog(seed):
         "alpha": 0.5,
         "country_column": "c_id",
         "pool_by": "map",
+        "radius": 1,
         "backtest_cutoffs": 1,
         "backtest_horizon": 6,
         "stability_refits": False,
@@ -57,6 +58,7 @@ def _catalog(seed):
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
         "PooledConflictology", "RollingPooledConflictology",
+        "NeighbourhoodConflictology", "RollingNeighbourhoodConflictology",
         "MatryoshkaConflictology",
     ]
 )
@@ -74,6 +76,7 @@ def test_catalog_forwards_seed(algo):
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
         "PooledConflictology", "RollingPooledConflictology",
+        "NeighbourhoodConflictology", "RollingNeighbourhoodConflictology",
         # Not MatryoshkaConflictology: its fit needs 120 months of history and a country
         # column, which _df() does not have; its seed-changes-output test is in
         # test_matryoshka.py (test_same_seed_same_output_and_seed_matters).
@@ -99,6 +102,7 @@ def test_different_seed_produces_different_output(algo):
         "ConflictologyModel", "MixtureBaseline", "InterpolatedQuantileConflictology",
         "KDEConflictology", "EmpiricalKDEMixtureConflictology", "RollingConflictology",
         "PooledConflictology", "RollingPooledConflictology",
+        "NeighbourhoodConflictology", "RollingNeighbourhoodConflictology",
         "MatryoshkaConflictology",
     ]
 )
@@ -108,7 +112,8 @@ def test_catalog_requires_seed(algo):
         "regression_targets": ["y1"], "window_months": 6, "n_samples": 8, "lambda_mix": 0.5,
         "bandwidth": 1.0,
         "alpha": 0.5,
-        "country_column": "c_id", "pool_by": "map", "backtest_cutoffs": 1, "backtest_horizon": 6,
+        "country_column": "c_id", "pool_by": "map", "radius": 1, "backtest_cutoffs": 1,
+        "backtest_horizon": 6,
         "stability_refits": False,
         "dolls": ["cell", "near", "country", "map"],
     }

@@ -8,6 +8,9 @@ from views_baseline.model.models.distributional.interpolated_quantile import (
 from views_baseline.model.models.distributional.kde import KDEConflictology
 from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
 from views_baseline.model.models.distributional.mixture import MixtureBaseline
+from views_baseline.model.models.distributional.neighbourhood_conflictology import (
+    NeighbourhoodConflictology,
+)
 from views_baseline.model.models.distributional.parametric import ParametricConflictology
 from views_baseline.model.models.distributional.parametric_hurdle import (
     ParametricHurdleConflictology,
@@ -15,6 +18,9 @@ from views_baseline.model.models.distributional.parametric_hurdle import (
 from views_baseline.model.models.distributional.pooled_conflictology import PooledConflictology
 from views_baseline.model.models.distributional.rolling_conflictology import (
     RollingConflictology,
+)
+from views_baseline.model.models.distributional.rolling_neighbourhood_conflictology import (
+    RollingNeighbourhoodConflictology,
 )
 from views_baseline.model.models.distributional.rolling_pooled_conflictology import (
     RollingPooledConflictology,
@@ -27,9 +33,11 @@ __all__ = [
     "KDEConflictology",
     "MatryoshkaConflictology",
     "MixtureBaseline",
+    "NeighbourhoodConflictology",
     "ParametricConflictology",
     "ParametricHurdleConflictology",
     "PooledConflictology",
     "RollingConflictology",
+    "RollingNeighbourhoodConflictology",
     "RollingPooledConflictology",
 ]

@@ -274,6 +274,50 @@ MERGED_CONFIGS = {
         "time_steps": 36,
         "window_months": 36,
     },
+    # DERIVED, like Pooled: light_strider with `algorithm` swapped and `radius` added (#178).
+    # 5 is Matryoshka's near doll; views-models' tight_canvas / tight_sailcloth (#186).
+    "NeighbourhoodConflictology": {
+        "algorithm": "NeighbourhoodConflictology",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "radius": 5,
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
+    # DERIVED, like Pooled: light_strider with `algorithm` swapped and `radius` added (#178).
+    # 5 is Matryoshka's near doll; views-models' tight_canvas / tight_sailcloth (#186).
+    "RollingNeighbourhoodConflictology": {
+        "algorithm": "RollingNeighbourhoodConflictology",
+        "creator": "Simon",
+        "deployment_status": "shadow",
+        "evaluation_profile": "hydranet_ucdp",
+        "level": "pgm",
+        "n_posterior_samples": 64,
+        "n_samples": 64,
+        "name": "light_strider",
+        "prediction_format": "prediction_frame",
+        "radius": 5,
+        "regression_sample_metrics": ["CRPS", "QS_sample", "MCR_sample", "Brier_rgs_sample"],
+        "regression_targets": ["lr_sb_best", "lr_ns_best", "lr_os_best"],
+        "rolling_origin_stride": 1,
+        "seed": 42,
+        "skip_predictions_delivery": True,
+        "steps": [*range(1, 37)],
+        "time_steps": 36,
+        "window_months": 36,
+    },
     # DERIVED: light_strider with `algorithm` swapped, `window_months` removed (Matryoshka has
     # no window), and its own keys added (ADR-024): the prototype's backtest design and the
     # country column views-models' pgm input already carries (gaul0_code → c_id).

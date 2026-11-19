@@ -435,6 +435,32 @@ The fixed-window single levels from 2026-11-13 (`narrow_canvas`, `middle_canvas`
 the fixed-window variants (Simon, 2026-11-14). At origin 0 each rolling model must score exactly like its
 fixed-window counterpart; that check (#172) shows the window is the only difference.
 
+### A single level for the neighbourhood (amendment 2026-11-18, #178)
+
+Every doll should have a single level of its own. The neighbourhood had none. #151 took its list of
+single levels from a reviewer's question (admin 1, country, map), not from the dolls, and no reason for
+leaving the neighbourhood out was recorded. views-models found the gap on 2026-11-17 (soft finding S1,
+views-models `366e9ba0`) and it was deferred past that run. Simon decided on 2026-11-18 to build it.
+
+It needs its own class. `PooledConflictology` pools over areas that do not overlap, coded by a column;
+neighbourhoods overlap. A Matryoshka with only `near` cannot be configured: `dolls` must include the cell.
+
+`NeighbourhoodConflictology` draws each cell's forecast from the windows of every cell within grid
+distance `radius` of it, itself included, all with equal weight. That is the plain analogue of the area
+pools, which also include the cell and weight uniformly; the distance kernel belongs to Matryoshka's
+method, not to the level. The disc comes from Matryoshka's `neighbour_table`, so at `radius` 5 it is the
+`near` doll plus the cell, by construction and by test. `radius` is a required setting (Simon, 2026-11-18),
+so other sizes can be run without new code. `RollingNeighbourhoodConflictology` moves the windows to
+`train_end + k`.
+
+| Doll | Single level, fixed window | Single level, moving window |
+|---|---|---|
+| cell | `ConflictologyModel` | `RollingConflictology` |
+| neighbourhood | `NeighbourhoodConflictology`, `radius` 5 | `RollingNeighbourhoodConflictology`, `radius` 5 |
+| country | `PooledConflictology`, country column | `RollingPooledConflictology`, country column |
+| map | `PooledConflictology`, `"map"` | `RollingPooledConflictology`, `"map"` |
+| (no doll: admin 1, dropped in #136) | `PooledConflictology`, admin-1 column | `RollingPooledConflictology`, admin-1 column |
+
 ---
 
 ## Why this design
