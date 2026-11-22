@@ -1047,3 +1047,17 @@ the rented machine first (#186).
 - **Guard audit:** 36 mutations, 31 caught. 4 survivors were equivalent (padding position; catalog `.get` defaults that the genome check rejects first; `__all__`).
   - The real survivor: no test had two targets, so drawing every target from the first target's column went unnoticed.
   - `test_each_target_draws_only_from_its_own_column` now catches both forms of that mutation (re-run on the working tree).
+
+## 2026-11-22 — One-doll Matryoshkas: single levels with fitted memory (#193)
+
+**Why.** Simon decided (relayed by the Matryoshka paper session, 2026-11-22) that the next run needs near-only, country-only and map-only Matryoshkas. The fixed-window single levels use 36 equal-weight months, so nested-vs-single mixes nesting with fitted memory.
+
+**What.** `dolls` may now be exactly one doll without the cell. The cell joins that doll (the existing "off doll's cells move outward" rule):
+- near-only: the cell at distance 0 (kernel weight 1) plus its neighbours within radius 5;
+- country-only: the whole country; a cell without a country draws from itself, as `PooledConflictology`;
+- map-only: every cell.
+The weight is 1 and not fitted (`free_knobs` leaves it out). Two or more dolls without the cell are refused.
+
+**Checked.** Full suite 1041 passed, ruff clean. The existing exactness tests (shells, shares, score = draw, slope, fit and predict) now run over the three one-doll sets too; the probability tests include a cell without a country. The near-only disc equals `NeighbourhoodConflictology._disc` at radius 5 on the synthetic grid. `GOLDEN_MATRYOSHKA` passes, so the sets with the cell are unchanged.
+
+**Not measured.** Fit and predict time at pgm size. A one-doll model computes the shares of one doll instead of four, so it should not be slower than the nested model (estimate, not timed).

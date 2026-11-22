@@ -18,6 +18,9 @@ stretches" (the country: its block minus the cell and its same-country neighbour
 everything minus the country block and the other inner cells). The shells follow the on-mask
 (`doll_counts.doll_mask`, #153): without the neighbourhood, the inner set is the cell alone;
 without the country, the map excludes the inner cells only; an off doll's shell is empty.
+Without the cell doll there is one doll and the cell is in it (#193): the neighbourhood gets the
+cell as an extra neighbour at distance 0, the country and map shells exclude nothing, and in
+country-only a cell without a country is a block of its own.
 The j-th kept position is ``j + (total length of the excluded stretches that come before it)``,
 found with one sorted search per cell. The tables of excluded stretches depend only on the
 geometry and the on-mask, not on the knobs.
@@ -30,6 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
+    CELL,
     COUNTRY,
     DOLLS,
     MAP,
@@ -111,8 +115,12 @@ def build_shell_tables(geo: Geometry, on: np.ndarray) -> ShellTables:
     start = np.where(has_country, first[np.maximum(country_index, 0)], 0)
     length = np.where(has_country, block_len[np.maximum(country_index, 0)], 0)
 
+    if not on[CELL]:                              # one doll, and the cell is in it (#193)
+        alone = ~has_country
+        start, length = np.where(alone, position, start), np.where(alone, 1, length)
     inner = np.concatenate([np.arange(N)[:, None], nbr], axis=1)          # (N, 1 + n_offsets)
     present = inner >= 0
+    present[:, 0] = on[CELL]
     inner_pos = np.where(present, position[np.where(present, inner, 0)], 0)
     same_country = present & has_country[:, None] & (
         country_index[np.where(present, inner, 0)] == country_index[:, None])
@@ -277,8 +285,8 @@ class Sampler:
         """Raise (as `doll_cdf`) unless every cell has a doll to draw at every months ahead h.
 
         A cell's doll mix depends only on h and on which of its dolls are drawable, so one cell
-        per pattern of drawable dolls checks them all: at most 2^3 patterns, since a cell's own
-        doll is always drawable. Predict calls this before drawing anything.
+        per pattern of drawable dolls checks them all: at most 2^4 patterns (2^3 with the cell
+        doll on, which is always drawable). Predict calls this before drawing anything.
         """
         _, one_per_pattern = np.unique(self.drawable.T, axis=0, return_index=True)
         self.doll_cdf(np.sort(one_per_pattern), h)
@@ -352,8 +360,11 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     # Step 2 is the fit's time weighting at the one cutoff c: the same function, so the draw and
     # the score cannot drift apart (code review #147, finding 9).
     month_w = np.stack([time_weights(months, np.array([last_month]), m)[0] for m in memory])
-    near_w = np.where(geo.neighbours >= 0,
-                      _kernel_weights(length)[None, :] if on[NEAR] else 0.0, 0.0)
+    neighbours, kernel = geo.neighbours, _kernel_weights(length)
+    if on[NEAR] and not on[CELL]:     # near-only: the cell is its own neighbour at distance 0
+        neighbours = np.concatenate([np.arange(geo.cells.size)[:, None], neighbours], axis=1)
+        kernel = np.r_[1.0, kernel]
+    near_w = np.where(neighbours >= 0, kernel[None, :] if on[NEAR] else 0.0, 0.0)
     has_near = near_w > 0
     drawable = shells.sizes > 0
     drawable[NEAR] = has_near.any(axis=1)
@@ -362,5 +373,5 @@ def build_sampler(values: np.ndarray, months: np.ndarray, last_month: int, knobs
     return Sampler(values=values, weight=weight, memory=memory,
                    month_grid=_cdf_on_grid(_cdf(month_w)),
                    near_grid=_cdf_on_grid(_cdf(near_w)), near_last=near_last,
-                   neighbours=geo.neighbours, shells=shells, length_scale=length,
+                   neighbours=neighbours, shells=shells, length_scale=length,
                    drawable=drawable, cell_ids=geo.cells)
