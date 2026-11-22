@@ -16,6 +16,7 @@ import pytest
 from views_baseline.model.models.distributional.matryoshka import MatryoshkaConflictology
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
     ALL_ON,
+    CELL,
     COUNTRY,
     DOLLS,
     MAP,
@@ -80,15 +81,19 @@ def brute_force_shells(cells, country, length, on=ALL_ON):
 
     An off doll's shell is empty and its cells move outward to the next doll that is on (#153):
     without the neighbourhood the inner set is the cell alone; without the country, the map holds
-    it; without the map, its cells are in no shell."""
+    it; without the map, its cells are in no shell. Without the cell doll (one doll on, #193) the
+    cell joins that doll: near-only holds it at distance 0, and in country-only a cell without a
+    country holds only itself."""
     r, c = (cells - 1) // N_COLS, (cells - 1) % N_COLS
     dist = np.hypot(r[:, None] - r[None, :], c[:, None] - c[None, :])
-    near = (dist > 0) & (dist <= NEAR_RADIUS) & on[NEAR]
+    itself, nbr = dist == 0, (dist > 0) & (dist <= NEAR_RADIUS)
+    joins = itself & ~on[CELL]                            # the cell, in the one doll that is on
+    near = (nbr | joins) & on[NEAR]
     same_c = (country[:, None] == country[None, :]) & (country[:, None] > 0)
-    inner = (dist == 0) | near
-    country_shell = same_c & ~inner & on[COUNTRY]
+    inner = (itself & on[CELL]) | (nbr & on[NEAR])
+    country_shell = ((same_c & ~inner) | (joins & (country[:, None] <= 0))) & on[COUNTRY]
     map_shell = ~inner & ~(same_c & on[COUNTRY]) & on[MAP]
-    shells = np.stack([dist == 0, near, country_shell, map_shell])
+    shells = np.stack([itself & on[CELL], near, country_shell, map_shell])
     pick = np.stack([shells[0], np.where(near, np.exp(-dist / length), 0.0), shells[2],
                      shells[3]]).astype(float)
     pick = pick / np.maximum(pick.sum(axis=2, keepdims=True), 1e-300)
@@ -99,6 +104,14 @@ def brute_force_shells(cells, country, length, on=ALL_ON):
 SUBSETS = [np.array([True, n, c, m]) for n in (False, True) for c in (False, True)
            for m in (False, True)]
 SUBSET_IDS = ["+".join(d for d, o in zip(DOLLS, on) if o) for on in SUBSETS]
+#: The one-doll sets without the cell (#193): the cell joins the doll.
+ONE_DOLL = [np.array([False, n, c, m], dtype=bool)
+            for n, c, m in ((1, 0, 0), (0, 1, 0), (0, 0, 1))]
+ONE_DOLL_IDS = [DOLLS[int(np.argmax(on))] + "-only" for on in ONE_DOLL]
+MASKS, MASK_IDS = SUBSETS + ONE_DOLL, SUBSET_IDS + ONE_DOLL_IDS
+#: Cells the probability tests look at: most and fewest neighbours (by geometry, not mask),
+#: and cell 3, which has no country (`synthetic_grid`).
+NO_COUNTRY_CELL = 3
 
 
 @pytest.fixture(scope="module")
@@ -141,7 +154,44 @@ def test_the_brute_force_shells_move_an_off_dolls_cells_outward(grid):
     assert full[NEAR].any() and (full[NEAR] & same_c).any() and (full[NEAR] & ~same_c).any()
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", ONE_DOLL, ids=ONE_DOLL_IDS)
+def test_a_single_doll_holds_the_cell_and_has_the_counted_sizes(grid, on):
+    """#193, pinned directly rather than through the reference: near-only is the cell and every
+    cell within the radius; country-only is the cell's country (itself if it has none);
+    map-only is every cell."""
+    cells, country, geo, _, _ = grid
+    shells, _ = brute_force_shells(cells, country, 1.0, on)
+    r, c = (cells - 1) // N_COLS, (cells - 1) % N_COLS
+    dist = np.hypot(r[:, None] - r[None, :], c[:, None] - c[None, :])
+    same_c = (country[:, None] == country[None, :]) & (country[:, None] > 0)
+    doll = int(np.argmax(on))
+    alone = (dist == 0) & (country[:, None] <= 0)
+    expected = {NEAR: dist <= NEAR_RADIUS, COUNTRY: same_c | alone,
+                MAP: np.ones_like(same_c)}[doll]
+    np.testing.assert_array_equal(shells[doll], expected)
+    assert not np.delete(shells, doll, axis=0).any()
+    _, sizes = shell_sizes(geo, on)
+    np.testing.assert_array_equal(sizes, shells.sum(axis=2))
+
+
+def test_the_near_only_disc_is_neighbourhood_conflictologys_radius_5_disc(grid):
+    """The near-only control and NeighbourhoodConflictology(radius=5) pool the same cells."""
+    from views_baseline.model.models.distributional import NeighbourhoodConflictology
+
+    cells, country, geo, _, _ = grid
+    shells, _ = brute_force_shells(cells, country, 1.0, ONE_DOLL[0])
+    tables = build_shell_tables(geo, ONE_DOLL[0])
+    nc = NeighbourhoodConflictology(targets=["y"], window_months=12, partition_dict=PARTITION,
+                                    loa="pgm", n_samples=4, radius=NEAR_RADIUS)
+    nc.entity_ids = cells
+    disc = nc._disc(cells)
+    for i in range(cells.size):
+        members = np.sort(disc[i][disc[i] >= 0])
+        np.testing.assert_array_equal(members, np.nonzero(shells[NEAR][i])[0])
+        assert tables.sizes[NEAR, i] == members.size
+
+
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_doll_shares_equal_a_direct_kernel_weighted_average(grid, on):
     """An off doll's shares are all 0 (its shell is empty)."""
     cells, country, geo, months, values = grid
@@ -158,14 +208,14 @@ def test_doll_shares_equal_a_direct_kernel_weighted_average(grid, on):
         np.testing.assert_allclose(q, direct, atol=1e-10, err_msg=DOLLS[k])
 
 
-@pytest.mark.parametrize("on", [np.array([0, 1, 1, 1], bool), np.ones(3, bool),
-                                np.array([1, 1, 1, 1])])
-def test_the_doll_mask_needs_four_booleans_with_the_cell_on(on):
+@pytest.mark.parametrize("on", [np.array([0, 1, 1, 1], bool), np.array([0, 1, 0, 1], bool),
+                                np.zeros(4, bool), np.ones(3, bool), np.array([1, 1, 1, 1])])
+def test_the_doll_mask_needs_four_booleans_with_the_cell_on_or_one_doll(on):
     with pytest.raises(ValueError, match="doll"):
         doll_mask(on)
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_exact_probabilities_match_an_independent_three_step_draw(grid, on):
     """The closed form against ADR-024's draw, sampled from the brute-force shells."""
     cells, country, geo, months, values = grid
@@ -180,7 +230,7 @@ def test_exact_probabilities_match_an_independent_three_step_draw(grid, on):
     rng = np.random.default_rng(1)
     hist = months[months <= cutoff]
     near_sizes = shell_sizes(geo, ALL_ON)[1][NEAR]          # cells picked by geometry, not mask
-    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes))):
+    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes)), NO_COUNTRY_CELL):
         a = np.array([weight[k] * np.exp(-h / memory[k]) if shells[k][i].any() else 0.0
                       for k in range(len(DOLLS))])
         dolls = rng.choice(len(DOLLS), size=S, p=a / a.sum())
@@ -197,7 +247,7 @@ def test_exact_probabilities_match_an_independent_three_step_draw(grid, on):
         np.testing.assert_allclose(freq, (a / a.sum()) @ q[:, i, :], atol=4 / np.sqrt(S))
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_exact_slope_matches_nudged_differences(on):
     """Strict: relative tolerance 1e-6, no absolute slack (the prototype's check_slope.py).
     The search fits only the free knobs: 2 per on doll, minus the cell's fixed weight, plus ℓ
@@ -231,14 +281,14 @@ def test_with_every_doll_on_the_search_fits_all_eight_knobs_from_the_same_start(
         [np.log(START_WEIGHT[1:]), np.log(START_MEMORY), [np.log(START_LENGTH)]]))
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_each_free_knob_gets_its_own_start_value_and_bounds(on, monkeypatch):
     """Built knob by knob from the names, not from the code's own mask: a weight for each on doll
     after the cell, a memory for each on doll, then ℓ if near is on."""
     from views_baseline.model.models.distributional.matryoshka import knob_fit
 
     expected = ([(f"weight {d}", START_WEIGHT[i], knob_fit.WEIGHT_BOUNDS)
-                 for i, d in enumerate(DOLLS) if i > 0 and on[i]]
+                 for i, d in enumerate(DOLLS) if i > 0 and on[i] and on[CELL]]
                 + [(f"memory {d}", START_MEMORY[i], knob_fit.MEMORY_BOUNDS)
                    for i, d in enumerate(DOLLS) if on[i]]
                 + ([("length", START_LENGTH, knob_fit.LENGTH_BOUNDS)] if on[NEAR] else []))
@@ -260,7 +310,7 @@ def test_each_free_knob_gets_its_own_start_value_and_bounds(on, monkeypatch):
     assert seen["bounds"] == [tuple(np.log(b)) for _, _, b in expected]
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_a_search_stores_an_off_dolls_knobs_as_weight_zero_and_memory_nan(on):
     """And the length scale as NaN when the neighbourhood is off; on dolls get fitted values."""
     cells, country = synthetic_grid(n_rows=10, n_cols=12, holes=())
@@ -273,7 +323,8 @@ def test_a_search_stores_an_off_dolls_knobs_as_weight_zero_and_memory_nan(on):
     assert r["dolls"] == [d for d, o in zip(DOLLS, on) if o]
     weight, memory = np.array(r["weight"]), np.array(r["memory"])
     assert np.all(weight[~on] == 0) and np.all(np.isnan(memory[~on]))
-    assert np.all(weight[on] > 0) and np.all(np.isfinite(memory[on])) and weight[0] == 1.0
+    assert np.all(weight[on] > 0) and np.all(np.isfinite(memory[on]))
+    assert weight[on][0] == 1.0, "the cell's weight, or a single doll's, is 1"
     assert np.isnan(r["length_scale"]) != on[NEAR]
     assert np.isfinite(r["score"]) and r["score"] >= r["start_score"]
 
@@ -305,7 +356,7 @@ def test_kept_positions_skip_excluded_stretches():
     np.testing.assert_array_equal(got, [[0, 1, 4, 5, 7, 8, 9], [5, 6, 7, 8, 9, 10, 11]])
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_sampler_shells_are_exactly_the_brute_force_shells(grid, on):
     """Every uniform pick j = 0..size−1 of the country and map shells lands on a distinct cell
     of that shell, and together they are the whole shell."""
@@ -335,7 +386,7 @@ def _knobs_as_fitted(on):
 
 
 @pytest.mark.parametrize("h", [1, 12])
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_sampler_matches_the_exact_probabilities(grid, h, on):
     """What predict draws equals what the fit scores: class frequencies of many draws against
     the closed form, for a cell with a full neighbourhood and a corner cell."""
@@ -353,7 +404,7 @@ def test_sampler_matches_the_exact_probabilities(grid, h, on):
     rng = np.random.default_rng(2)
     S = 200_000
     near_sizes = shell_sizes(geo, ALL_ON)[1][NEAR]          # cells picked by geometry, not mask
-    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes))):
+    for i in (int(np.argmax(near_sizes)), int(np.argmin(near_sizes)), NO_COUNTRY_CELL):
         p_doll = np.diff(np.r_[0.0, sampler.doll_cdf(np.array([i]), np.array([h]))[0, 0]])
         assert np.all(p_doll[~on] == 0.0), "an off doll must never be picked"
         draws = sampler.draw(np.array([i]), np.array([h]), rng.random((1, 1, 3, S)))[0, 0]
@@ -624,7 +675,7 @@ def _model(**overrides):
 # ── the dolls setting (#153) ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("on", SUBSETS, ids=SUBSET_IDS)
+@pytest.mark.parametrize("on", MASKS, ids=MASK_IDS)
 def test_every_subset_of_dolls_fits_and_predicts(planted, on):
     """The fitted knobs say which dolls were used, an off doll is stored as weight 0 and memory
     NaN, and predict draws (finite, from the history) with the off dolls never picked."""
@@ -685,7 +736,8 @@ def test_predict_refuses_knobs_fitted_with_other_dolls(planted):
 
 
 @pytest.mark.parametrize("dolls", [
-    ["near", "country", "map"], ["cell", "cell"], ["cell", "map", "near"], ["cell", "ring"],
+    ["near", "country", "map"], ["near", "map"], ["cell", "cell"], ["cell", "map", "near"],
+    ["cell", "ring"],
     [], "cell", ("cell", 1), None,
 ])
 def test_the_dolls_setting_is_checked(dolls):

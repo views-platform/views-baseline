@@ -123,12 +123,13 @@ def _log_fit(target: str, k: dict) -> None:
 
 
 def _check_dolls(dolls) -> list[str]:
-    """The dolls in use (#153): known names, in DOLLS order, no duplicates, the cell included."""
+    """The dolls in use (#153): known names, in DOLLS order, no duplicates, the cell included,
+    or exactly one doll (#193: the cell then joins it)."""
     if (not isinstance(dolls, (list, tuple)) or not all(isinstance(d, str) for d in dolls)
-            or "cell" not in dolls or len(set(dolls)) != len(dolls)
+            or not ("cell" in dolls or len(dolls) == 1) or len(set(dolls)) != len(dolls)
             or [d for d in DOLLS if d in dolls] != list(dolls)):
         raise ValueError(f"{MODEL_NAME}: dolls must be a list of distinct names from {DOLLS}, in "
-                         f"that order, including 'cell'; got {dolls!r}.")
+                         f"that order, including 'cell', or exactly one of them; got {dolls!r}.")
     return list(dolls)
 
 

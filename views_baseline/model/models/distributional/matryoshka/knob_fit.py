@@ -19,6 +19,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from views_baseline.model.models.distributional.matryoshka.doll_counts import (
+    CELL,
     DOLLS,
     NEAR,
     DollCounts,
@@ -67,8 +68,9 @@ def backtest_cutoffs(train_end: int, n_cutoffs: int, horizon: int) -> np.ndarray
 def free_knobs(on: np.ndarray) -> np.ndarray:
     """(2D,) bool: which entries of the full knob vector (log weight[1..D−1], log memory[0..D−1],
     log length scale) the search fits for the on-mask. An off doll's knobs are left out, not
-    pinned: its shell is empty, so it adds nothing to the score (#153)."""
-    return np.concatenate([on[1:], on, [on[NEAR]]])
+    pinned: its shell is empty, so it adds nothing to the score (#153). Without the cell there is
+    one doll (#193): no weight is fitted, and `Objective.unpack` gives it weight 1."""
+    return np.concatenate([on[1:] & on[CELL], on, [on[NEAR]]])
 
 
 class Objective:
@@ -111,7 +113,7 @@ class Objective:
         """(weight, memory, length) from the free knobs. An off doll: weight 0, memory inf; the
         length scale is NaN with the neighbourhood off."""
         D = len(DOLLS)
-        full = np.zeros(2 * D)
+        full = np.zeros(2 * D)              # an unfitted log weight is 0: weight 1 (one doll)
         full[self.free] = theta
         weight = np.where(self.on, np.concatenate([[1.0], np.exp(full[:D - 1])]), 0.0)
         memory = np.where(self.on, np.exp(full[D - 1:2 * D - 1]), np.inf)

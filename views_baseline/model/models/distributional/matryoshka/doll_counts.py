@@ -10,8 +10,13 @@ For cell i in month s, the four dolls are disjoint shells (ADR-024, amendment 20
 Which dolls are used is an explicit on-mask (`doll_mask`; #153). An off doll's shell is empty,
 and its cells move outward to the next doll that is on: without the neighbourhood, the country
 holds the same-country neighbours and the map the others; without the country, the map holds
-the country. The map is outermost, so without it its cells are in no shell. The cell is always
-on. With "inner" = the cell + (its neighbourhood, if near is on):
+the country. The map is outermost, so without it its cells are in no shell.
+
+The cell is on, or exactly one doll is on (#193). Without the cell doll, the cell follows the
+same rule and joins the one doll: near-only is the cell and its neighbours (the cell at distance
+0), country-only the whole country, map-only every cell. A cell without a country is its own
+country shell in country-only, as `PooledConflictology` draws a cell without an area from its
+own window. With "inner" = the cell (if the cell doll is on) + (its neighbourhood, if near is on):
   country rest = country total − inner cells in the same country            (if country is on)
   map rest     = global total − inner cells − (country rest, if country is on)  (if map is on)
 
@@ -45,13 +50,15 @@ ALL_ON = np.ones(len(DOLLS), dtype=bool)
 
 def doll_mask(on) -> np.ndarray:
     """The on-mask as a (D,) bool array in DOLLS order. Raises unless it has D booleans and the
-    cell is on (the cell's weight is the reference the others are measured against)."""
+    cell is on, or exactly one doll is on (#193). The cell's weight is the reference the others
+    are measured against; a single doll needs no reference."""
     on = np.asarray(on)
     if on.shape != (len(DOLLS),) or on.dtype != bool:
         raise ValueError(f"the doll mask must be {len(DOLLS)} booleans in the order {DOLLS}, "
                          f"got {on!r}.")
-    if not on[CELL]:
-        raise ValueError("the cell doll must be on: its weight is the reference.")
+    if not on[CELL] and on.sum() != 1:
+        raise ValueError(f"without the cell doll exactly one doll must be on (the cell's weight "
+                         f"is the reference for the others), got {on!r}.")
     return on.copy()
 
 
@@ -160,17 +167,21 @@ def shell_sizes(geo: Geometry, on: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     country_index, n_countries = group_index(geo.country, has_country)
     band_sizes = np.stack([((nbr >= 0) & (OFFSET_BAND[None, :] == b)).sum(axis=1)
                            for b in range(BAND_DISTANCE.size)])
+    # Without the cell doll, the cell is in the one doll that is on (#193): it counts in that
+    # doll's shell and is not inner to it.
+    cell = int(on[CELL])
     # With near off, the inner set is the cell alone: its neighbours move outward.
-    n_near = (nbr >= 0).sum(axis=1) if on[NEAR] else np.zeros(N, int)
+    n_nbr = (nbr >= 0).sum(axis=1) if on[NEAR] else np.zeros(N, int)
+    n_near = n_nbr + (1 - cell) * on[NEAR]
     same_country_nbr = (nbr >= 0) & has_country[:, None] & (
         country_index[np.where(nbr >= 0, nbr, 0)] == country_index[:, None])
-    inner_same_country = 1 + (same_country_nbr.sum(axis=1) if on[NEAR] else 0)
+    inner_same_country = cell + (same_country_nbr.sum(axis=1) if on[NEAR] else 0)
     # One extra zero entry for the cells without a country (also when no cell has one).
     country_size = np.r_[np.bincount(country_index[has_country], minlength=n_countries), 0]
     n_country = np.where(has_country,
                          country_size[np.where(has_country, country_index, n_countries)]
-                         - inner_same_country, 0)
+                         - inner_same_country, 1 - cell)    # country-only: no country, itself
     if not on[COUNTRY]:
         n_country = np.zeros(N, int)             # its cells move out to the map
-    n_map = N - 1 - n_near - n_country if on[MAP] else np.zeros(N, int)
-    return band_sizes, np.stack([np.ones(N, int), n_near, n_country, n_map])
+    n_map = N - cell - n_nbr - n_country if on[MAP] else np.zeros(N, int)
+    return band_sizes, np.stack([np.full(N, cell), n_near, n_country, n_map])
