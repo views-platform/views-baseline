@@ -124,10 +124,10 @@ class BaselineForecastingModelManager(ForecastingModelManager):
     def _write_fit_diagnostics(self, model) -> None:
         """Save a `MatryoshkaConflictology`'s fit results to ``data/generated`` (#197).
 
-        Every fit writes its own file, ``fit_diagnostics_<run_type>_model_<timestamp>.json``,
-        named like the model artifact. Every stage refits, so a run that trains and evaluates
-        leaves two. ``data/generated`` is the only folder a pod run keeps. Other models fit no
-        knobs and write nothing.
+        Every fit writes its own file, ``fit_diagnostics_<run_type>_model_<timestamp>.json``:
+        the model artifact's name pattern, stamped at fit time. Every stage refits, so a run
+        that trains and evaluates leaves two. ``data/generated`` is the only folder a pod run
+        keeps. Other models fit no knobs and write nothing.
 
         The file is ``model.knobs`` as JSON, unrounded: per target, the fit's knobs, score,
         convergence flag and message, steps and seconds, and with ``stability_refits`` a
@@ -144,8 +144,9 @@ class BaselineForecastingModelManager(ForecastingModelManager):
             self.config["run_type"], file_extension=".json")
         path = self._model_path.data_generated / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "x") as f:   # "x": never overwrite another fit's file
-            json.dump(_nan_to_null(model.knobs), f, indent=2, allow_nan=False)
+        text = json.dumps(_nan_to_null(model.knobs), indent=2, allow_nan=False)  # before open:
+        with open(path, "x") as f:   # no half-written file; "x": never overwrite another fit's
+            f.write(text)
         logger.info(f"Saved fit diagnostics: {path}")
 
     def _iter_predictions(self, model, df, eval_type: str):

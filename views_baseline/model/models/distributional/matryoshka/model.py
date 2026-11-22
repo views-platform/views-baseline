@@ -115,7 +115,7 @@ def _log_fit(target: str, k: dict) -> None:
                     "cells; score %.6g, %d steps.", MODEL_NAME, target, r["left_out"],
                     np.round(r["weight"], 4).tolist(), np.round(r["memory"], 1).tolist(),
                     r["length_scale"], r["score"], r["steps"])
-    searches =[("the knob search", k)] + [
+    searches = [("the knob search", k)] + [
         (f"the stability refit without cutoff {r['left_out']}", r)
         for r in k.get("leave_one_cutoff_out", [])]
     for what, r in searches:

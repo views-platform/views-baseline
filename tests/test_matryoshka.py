@@ -1607,9 +1607,15 @@ def test_fit_logs_each_refits_knobs_at_info(caplog):
     fit = {"dolls": DOLLS, "weight": [1.0, 0.5, 0.25, 0.125], "memory": [1.0, 2.0, 3.0, 4.0],
            "length_scale": 1.5, "score": -1.0, "start_score": -2.0, "steps": 3,
            "seconds": 1.0, "converged": True, "message": "ok", "floored": 0}
-    refit = {**fit, "left_out": 396, "memory": [7.0, 2.0, 3.0, 4.0], "score": -1.25}
+    refits = [{**fit, "left_out": 396, "weight": [1.0, 0.75, 0.25, 0.125],
+               "memory": [7.0, 2.0, 3.0, 4.0], "length_scale": 2.5, "score": -1.25, "steps": 9},
+              {**fit, "left_out": 408, "weight": [1.0, 0.5, 0.375, 0.125],
+               "memory": [1.0, 8.0, 3.0, 4.0], "length_scale": 3.5, "score": -1.5, "steps": 11}]
     with caplog.at_level(logging.INFO):
-        _log_fit("y", {**fit, "leave_one_cutoff_out": [refit]})
+        _log_fit("y", {**fit, "leave_one_cutoff_out": refits})
     info = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-    assert any("without cutoff 396" in s and "memory [7.0, 2.0, 3.0, 4.0]" in s
-               and "score -1.25" in s for s in info), info
+    for r in refits:
+        assert any(f"without cutoff {r['left_out']}:" in s and f"weight {r['weight']}" in s
+                   and f"memory {r['memory']}" in s
+                   and f"length scale {r['length_scale']:.3g} cells" in s
+                   and f"score {r['score']:.6g}, {r['steps']} steps" in s for s in info), info

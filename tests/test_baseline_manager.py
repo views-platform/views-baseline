@@ -712,15 +712,18 @@ def _setup_with(model, monkeypatch, manager_df, manager_partition_dict, tmp_path
     return manager
 
 
+@pytest.mark.parametrize("run_type", ["calibration", "forecasting"])
 def test_every_matryoshka_fit_saves_its_own_diagnostics_file(
-    monkeypatch, manager_df, manager_partition_dict, tmp_path
+    monkeypatch, manager_df, manager_partition_dict, tmp_path, run_type
 ):
     import json
 
     knobs = {"y": {"dolls": ["cell"], "memory": [3.0, float("nan"), float("nan"),
-                                                 float("nan")], "score": -0.5}}
+                                                 float("nan")], "score": -0.5},
+             "z": {"dolls": ["cell"], "memory": [5.0, float("nan"), float("nan"),
+                                                 float("nan")], "score": -0.75}}
     manager = _setup_with(_matryoshka(knobs), monkeypatch, manager_df,
-                          manager_partition_dict, tmp_path, "calibration")
+                          manager_partition_dict, tmp_path, run_type)
     stamps = iter(["20261122_120000", "20261122_120100"])
     monkeypatch.setattr(bm, "generate_model_file_name",
                         lambda run_type, file_extension: f"{run_type}_model_{next(stamps)}"
@@ -729,11 +732,13 @@ def test_every_matryoshka_fit_saves_its_own_diagnostics_file(
     manager._setup_model_and_data()     # the evaluation stage refits
 
     files = sorted(p.name for p in tmp_path.iterdir())
-    assert files == ["fit_diagnostics_calibration_model_20261122_120000.json",
-                     "fit_diagnostics_calibration_model_20261122_120100.json"]
+    assert files == [f"fit_diagnostics_{run_type}_model_20261122_120000.json",
+                     f"fit_diagnostics_{run_type}_model_20261122_120100.json"]
     saved = json.loads((tmp_path / files[0]).read_text())
     assert saved == {"y": {"dolls": ["cell"], "memory": [3.0, None, None, None],
-                           "score": -0.5}}
+                           "score": -0.5},
+                     "z": {"dolls": ["cell"], "memory": [5.0, None, None, None],
+                           "score": -0.75}}
 
 
 def test_a_diagnostics_file_is_never_overwritten(
