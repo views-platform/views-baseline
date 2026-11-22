@@ -109,27 +109,33 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
     # Cells without a country index a zero column appended after the countries, so this also
     # works when no cell has a country (code review of 702f17d).
     ci = np.where(has_country, dc.country_index, dc.country_tot.shape[2])
+    # Without the cell doll, the cell is in the one doll that is on (#193; doll_counts.py).
+    cell_in_doll = not dc.on[CELL]
     if doll == NEAR:
         a, _ = _kernel(length)
-        z = a @ dc.band_sizes                                                    # (N,)
+        z = a @ dc.band_sizes + cell_in_doll                 # (N,); the cell: distance 0, weight 1
     for k in range(1, N_CLASSES):
+        own = _weigh(dc.own[k], W)
         if doll == CELL:
-            q[..., k] = _weigh(dc.own[k], W)
+            q[..., k] = own
         elif doll == NEAR:
             num = sum(a[b] * _weigh(dc.band[k][b], W) for b in range(a.size))
+            num = num + own if cell_in_doll else num
             with np.errstate(invalid="ignore", divide="ignore"):
                 q[..., k] = np.where(z > 0, num / z, 0.0)
         else:
-            own = _weigh(dc.own[k], W)
-            if dc.on[NEAR]:
+            inner_own = 0.0 if cell_in_doll else own
+            if dc.on[NEAR]:                      # only with the cell on: one doll otherwise
                 inner = own + sum(_weigh(x, W) for x in dc.band[k])
                 inner_same_country = _weigh(dc.inner_same_country[k], W)
             else:                                # the neighbours moved out: inner is the cell
-                inner = own
-                inner_same_country = np.where(has_country, own, 0.0)
+                inner = inner_own
+                inner_same_country = np.where(has_country, inner_own, 0.0)
             if dc.on[COUNTRY]:
                 totals = np.concatenate([W @ dc.country_tot[k], np.zeros((R, 1))], axis=1)
-                country_rest = np.where(has_country, totals[:, ci] - inner_same_country, 0.0)
+                # A cell without a country: an empty shell, or itself in country-only.
+                alone = own if cell_in_doll else 0.0
+                country_rest = np.where(has_country, totals[:, ci] - inner_same_country, alone)
             else:                                # the country moved out to the map
                 country_rest = 0.0
             if doll == COUNTRY:
@@ -146,7 +152,8 @@ def near_length_slope(dc: DollCounts, W: np.ndarray, length: float) -> np.ndarra
     """(R, N, K): ∂ doll_shares(NEAR) / ∂ log ℓ, for time-weight rows W."""
     W = np.asarray(W, dtype=np.float64)
     a, da = _kernel(length)
-    z, dz = a @ dc.band_sizes, da @ dc.band_sizes
+    # Without the cell doll the cell is in the neighbourhood at distance 0: weight 1, slope 0.
+    z, dz = a @ dc.band_sizes + (not dc.on[CELL]), da @ dc.band_sizes
     q = doll_shares(dc, W, NEAR, length)
     out = np.zeros_like(q)
     with np.errstate(invalid="ignore", divide="ignore"):

@@ -461,6 +461,41 @@ so other sizes can be run without new code. `RollingNeighbourhoodConflictology` 
 | map | `PooledConflictology`, `"map"` | `RollingPooledConflictology`, `"map"` |
 | (no doll: admin 1, dropped in #136) | `PooledConflictology`, admin-1 column | `RollingPooledConflictology`, admin-1 column |
 
+### One-doll Matryoshkas: single levels with fitted memory (amendment 2026-11-22, #193)
+
+**Why.** The single levels above use a fixed 36-month window with equal weights. The nested Matryoshka
+fits its memory. Comparing the two therefore mixes nesting with fitted memory. A Matryoshka with one doll
+fits its memory with the same search and backtest, so nested against one-doll measures nesting alone.
+Simon decided on 2026-11-22 that the next run needs these controls; the cell-only Matryoshka exists
+already.
+
+**Decision.** `dolls` may be the cell plus any other dolls (as before), or **exactly one doll**:
+`["near"]`, `["country"]` or `["map"]`. Two or more dolls without the cell are refused; nothing needs
+them, and they would need a reference weight of their own.
+
+- **The cell joins the one doll.** It follows the rule above that an off doll's cells move outward:
+  - near-only: the cell and its neighbours within radius 5; the cell has distance 0, kernel weight 1;
+  - country-only: the whole country, the cell included. A cell without a country (76 cells, mostly
+    small islands) draws from itself, as `PooledConflictology` does for a cell without an area;
+  - map-only: every cell.
+
+  This matches the single levels above, which all include the cell. A near-only model without the
+  cell would be a spatial-lag model, a different comparison. The near-only disc is exactly
+  `NeighbourhoodConflictology`'s at `radius` 5 (tested).
+- **The weight is 1 and is not fitted.** With one doll, step 1 always picks it. The search fits its
+  memory, and the length scale for near-only.
+
+**What it guarantees.** For each one-doll set, the tests show the shells and their sizes, that the draw
+samples exactly the distribution the search scores, and that the slope is exact. Every model that
+includes the cell is unchanged: the goldens pass.
+
+| Doll | Single level, fixed window | Single level, fitted memory |
+|---|---|---|
+| cell | `ConflictologyModel` | Matryoshka, `["cell"]` |
+| neighbourhood | `NeighbourhoodConflictology`, `radius` 5 | Matryoshka, `["near"]` |
+| country | `PooledConflictology`, country column | Matryoshka, `["country"]` |
+| map | `PooledConflictology`, `"map"` | Matryoshka, `["map"]` |
+
 ---
 
 ## Why this design
