@@ -1561,3 +1561,55 @@ def test_fails_loud_on_an_infinite_country_code(planted):
 
 def test_a_numpy_bool_is_accepted_for_stability_refits():
     assert _model(stability_refits=np.False_).stability_refits is False
+
+
+# ── fit diagnostics saved to data/generated (#197) ──────────────────────────────────────
+
+
+def test_a_real_fit_with_refits_is_saved_as_strict_json_with_null_for_off_dolls(planted,
+                                                                                 tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from views_baseline.manager.baseline_manager import BaselineForecastingModelManager
+
+    *_, df = planted
+    m = _model(dolls=["country"], stability_refits=True).fit(df)
+    manager = SimpleNamespace(config={"run_type": "calibration"},
+                              _model_path=SimpleNamespace(data_generated=tmp_path / "gen"))
+    BaselineForecastingModelManager._write_fit_diagnostics(manager, m)
+    (path,) = (tmp_path / "gen").glob("fit_diagnostics_calibration_model_*.json")
+
+    def strict(token):
+        raise ValueError(f"not strict JSON: {token}")
+
+    saved = json.loads(path.read_text(), parse_constant=strict)
+    k = m.knobs["y"]
+    assert saved["y"]["dolls"] == ["country"]
+    assert saved["y"]["memory"] == [None, None, k["memory"][2], None]   # off dolls: null
+    assert saved["y"]["weight"] == k["weight"]
+    assert saved["y"]["length_scale"] is None      # no near doll: no length scale
+    for key in ("score", "start_score", "floored", "converged", "message",
+                "evaluations", "steps", "seconds"):
+        assert saved["y"][key] == k[key], key
+    assert len(saved["y"]["leave_one_cutoff_out"]) == CONFIG["backtest_cutoffs"]
+    for got, want in zip(saved["y"]["leave_one_cutoff_out"], k["leave_one_cutoff_out"]):
+        assert got["left_out"] == want["left_out"]
+        assert got["memory"][2] == want["memory"][2]
+        assert got["score"] == want["score"] and got["converged"] == want["converged"]
+
+
+def test_fit_logs_each_refits_knobs_at_info(caplog):
+    import logging
+
+    from views_baseline.model.models.distributional.matryoshka.model import _log_fit
+
+    fit = {"dolls": DOLLS, "weight": [1.0, 0.5, 0.25, 0.125], "memory": [1.0, 2.0, 3.0, 4.0],
+           "length_scale": 1.5, "score": -1.0, "start_score": -2.0, "steps": 3,
+           "seconds": 1.0, "converged": True, "message": "ok", "floored": 0}
+    refit = {**fit, "left_out": 396, "memory": [7.0, 2.0, 3.0, 4.0], "score": -1.25}
+    with caplog.at_level(logging.INFO):
+        _log_fit("y", {**fit, "leave_one_cutoff_out": [refit]})
+    info = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+    assert any("without cutoff 396" in s and "memory [7.0, 2.0, 3.0, 4.0]" in s
+               and "score -1.25" in s for s in info), info

@@ -1061,3 +1061,15 @@ The weight is 1 and not fitted (`free_knobs` leaves it out). Two or more dolls w
 **Checked.** Full suite 1041 passed, ruff clean. The existing exactness tests (shells, shares, score = draw, slope, fit and predict) now run over the three one-doll sets too; the probability tests include a cell without a country. The near-only disc equals `NeighbourhoodConflictology._disc` at radius 5 on the synthetic grid. `GOLDEN_MATRYOSHKA` passes, so the sets with the cell are unchanged.
 
 **Not measured.** Fit and predict time at pgm size. A one-doll model computes the shares of one doll instead of four, so it should not be slower than the nested model (estimate, not timed).
+
+## 2026-11-22 — Fit diagnostics saved to data/generated (#197)
+
+**Why.** The Matryoshka paper (Section 4) reports convergence and leave-one-cutoff-out stability. The refit knobs lived only in memory and in the pickle, and a pod run keeps only `data/generated`. Simon approved (relayed by the paper session; confirmed by Simon in this session, 2026-11-22).
+
+**What.**
+- `BaselineForecastingModelManager._setup_model_and_data` writes `model.knobs` after every Matryoshka fit to `data/generated/fit_diagnostics_<run_type>_model_<timestamp>.json`. NaN is written as null ("not in use"). The file is never overwritten, and a fit without knobs raises. Other models write nothing.
+- `_log_fit` also logs each refit's knobs and score at INFO.
+- ADR-024: the sentence on merging a size class that never occurred is replaced. The code never merged, and a merge would change no score, because such a class is never an outcome. The floor and its `floored` count are what the code does.
+- File name and contents agreed with views-models-9a, whose `verify_experiment_data.py` will check the file in each archive.
+
+**Checked.** The full suite and ruff pass (counts in the commit). A real one-doll fit with refits round-trips through strict JSON. `GOLDEN_MATRYOSHKA` passes, so no forecast changed.

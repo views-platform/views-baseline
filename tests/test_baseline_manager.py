@@ -674,3 +674,99 @@ def test_streaming_logs_the_process_peak_rss_in_gib(
     assert len(msgs) == n + 1
     assert all("peak RSS so far 3.00 GiB" in m for m in msgs)
     assert msgs[-1].startswith(f"Streamed {n} origins;")
+
+
+# ---------------------------------------------------------------------
+# Tests: fit diagnostics in data/generated (#197)
+# ---------------------------------------------------------------------
+
+
+def _matryoshka(knobs):
+    """A MatryoshkaConflictology whose fit only sets ``knobs`` (the real fit is tested in
+    test_matryoshka.py)."""
+    from views_baseline.model.models.distributional.matryoshka.model import (
+        MatryoshkaConflictology,
+    )
+
+    m = MatryoshkaConflictology(
+        targets=["y"], partition_dict={"test": (493, 540)}, loa="pgm", n_samples=2,
+        country_column="c_id", backtest_cutoffs=2, backtest_horizon=6,
+        stability_refits=False, dolls=["cell"])
+
+    def fit(df):
+        m.knobs = knobs
+        return m
+
+    m.fit = fit
+    return m
+
+
+def _setup_with(model, monkeypatch, manager_df, manager_partition_dict, tmp_path, run_type):
+    config = {"run_type": run_type, "level": "pgm", "algorithm": "ZeroModel",
+              "regression_targets": ["y"], "steps": [*range(1, 37)], "time_steps": 36,
+              "prediction_format": "prediction_frame"}
+    manager = make_manager(config, manager_partition_dict)
+    manager._model_path = SimpleNamespace(data_generated=tmp_path)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+    monkeypatch.setattr(bm.BaselineModelCatalog, "get_model", lambda self, name: model)
+    return manager
+
+
+def test_every_matryoshka_fit_saves_its_own_diagnostics_file(
+    monkeypatch, manager_df, manager_partition_dict, tmp_path
+):
+    import json
+
+    knobs = {"y": {"dolls": ["cell"], "memory": [3.0, float("nan"), float("nan"),
+                                                 float("nan")], "score": -0.5}}
+    manager = _setup_with(_matryoshka(knobs), monkeypatch, manager_df,
+                          manager_partition_dict, tmp_path, "calibration")
+    stamps = iter(["20261122_120000", "20261122_120100"])
+    monkeypatch.setattr(bm, "generate_model_file_name",
+                        lambda run_type, file_extension: f"{run_type}_model_{next(stamps)}"
+                                                         f"{file_extension}")
+    manager._setup_model_and_data()
+    manager._setup_model_and_data()     # the evaluation stage refits
+
+    files = sorted(p.name for p in tmp_path.iterdir())
+    assert files == ["fit_diagnostics_calibration_model_20261122_120000.json",
+                     "fit_diagnostics_calibration_model_20261122_120100.json"]
+    saved = json.loads((tmp_path / files[0]).read_text())
+    assert saved == {"y": {"dolls": ["cell"], "memory": [3.0, None, None, None],
+                           "score": -0.5}}
+
+
+def test_a_diagnostics_file_is_never_overwritten(
+    monkeypatch, manager_df, manager_partition_dict, tmp_path
+):
+    manager = _setup_with(_matryoshka({"y": {}}), monkeypatch, manager_df,
+                          manager_partition_dict, tmp_path, "calibration")
+    monkeypatch.setattr(bm, "generate_model_file_name",
+                        lambda run_type, file_extension: f"same{file_extension}")
+    manager._setup_model_and_data()
+    with pytest.raises(FileExistsError):
+        manager._setup_model_and_data()
+
+
+def test_a_matryoshka_without_knobs_after_fit_fails_loud(
+    monkeypatch, manager_df, manager_partition_dict, tmp_path
+):
+    manager = _setup_with(_matryoshka(None), monkeypatch, manager_df,
+                          manager_partition_dict, tmp_path, "calibration")
+    with pytest.raises(RuntimeError, match="no knobs after fit"):
+        manager._setup_model_and_data()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_other_models_write_no_diagnostics_file(
+    monkeypatch, manager_df, manager_partition_dict, tmp_path
+):
+    config = {"run_type": "calibration", "level": "pgm", "algorithm": "ZeroModel",
+              "regression_targets": ["y"], "steps": [*range(1, 37)], "time_steps": 36,
+              "prediction_format": "prediction_frame"}
+    manager = make_manager(config, manager_partition_dict)
+    manager._model_path = SimpleNamespace(data_generated=tmp_path)
+    monkeypatch.setattr(bm, "read_dataframe", lambda path: manager_df)
+    model, _ = manager._setup_model_and_data()
+    assert isinstance(model, ZeroModel)
+    assert list(tmp_path.iterdir()) == []
