@@ -40,6 +40,7 @@ All models now return `dict[str, PredictionFrame]` from `predict()`. The manager
 - Instantiates `BaselineModelCatalog` and calls `catalog.get_model(config["algorithm"])`.
 - Reads the training input from disk via `self._load_source()` (a DataFrame or FeatureFrame per the declared `data_format`; path set by the base class during data fetching).
 - Calls `model.fit(df_source)`.
+- For a `MatryoshkaConflictology` only, `_write_fit_diagnostics(model)` saves `model.knobs` as JSON to `data/generated/fit_diagnostics_<run_type>_model_<timestamp>.json` (#197). The timestamp is the fit's own (now), not the artifact's. Every stage refits, so every stage writes a file. NaN is written as `null` ("not in use"). Other models write nothing.
 - Returns `(model, df_source)`.
 
 **`_train_model_artifact()`**:
@@ -110,7 +111,7 @@ Output type is **uniform** across point and distributional models (ADR-010): all
 | `_evaluate_model_artifact()` | `dict[str, list[PredictionFrame]]` | Persists artifact timestamp in config via `add_config` |
 | `_evaluate_model_artifact_streaming()` | `None`; each origin goes to `origin_sink` | Persists artifact timestamp; logs peak RSS per origin and at the end |
 | `_forecast_model_artifact()` | `dict[str, PredictionFrame]` | Persists artifact timestamp in config via `add_config` |
-| `_setup_model_and_data()` | `(model, df_source)` | None |
+| `_setup_model_and_data()` | `(model, df_source)` | Matryoshka only: writes `fit_diagnostics_*.json` to `data/generated` |
 | `_iter_predictions()` | generator of `(int, dict[str, PredictionFrame])` | None |
 | `_generate_predictions()` | `dict[str, list[PredictionFrame]]` | None |
 | `_evaluate_sweep()` | `dict[str, list[PredictionFrame]]` | None (reads disk) |
@@ -129,13 +130,16 @@ Output type is **uniform** across point and distributional models (ADR-010): all
 | Config missing core or algorithm HP keys | `MissingHyperparameterError` (crash) | Raised by `ReproducibilityGate.Config.audit_manifest()` before catalog construction. |
 | `config` missing `"run_type"`, `"level"`, or `"algorithm"` | `KeyError` (crash) | No explicit validation (algorithm absence is caught by the gate with "Missing required key: 'algorithm'"). |
 | Model `fit()` raises | Propagates to caller | No wrapping. |
+| A Matryoshka fit leaves `knobs` as `None` | `RuntimeError("… has no knobs after fit …")` | Before anything is written (#197). |
+| A diagnostics file with the same name exists (two fits in the same second) | `FileExistsError` | Never overwritten. Not expected at real size, where a fit takes minutes. |
+| A knob value that is not JSON (inf, or a type `json` cannot write) | `ValueError` / `TypeError` before the file is opened | No half-written file. |
 | `predict()` returns a non-dict during streaming | `TypeError` | Raised before the sink sees it, naming the algorithm and origin. |
 | The sink raises during streaming (e.g. disk full) | Propagates to caller | Never swallowed. Origins already saved remain on disk. |
 | No artifact `.pkl` for the run type on disk | `FileNotFoundError` from `get_latest_model_artifact_path()` | Raised in `_evaluate_model_artifact`, `_evaluate_model_artifact_streaming` (both via `_prepare_evaluation`) and `_forecast_model_artifact` before setup. New precondition introduced by ADR-016 fix. |
 | `artifact_name` points to non-existent file | No error at resolve time | The path is constructed but not checked for existence; the timestamp is still extracted from the filename stem. Downstream failure occurs only if the artifact is loaded (baseline models don't load artifacts, so this is benign). |
 | Distributional code path in `_generate_predictions` or `_forecast_model_artifact` called with novel model | No error | Now tested; see Test Alignment. |
 
-The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry (batch and streaming), prediction generation (batch and streaming), peak RSS after each streamed origin, the streaming summary (origin count and peak RSS), and forecast entry (10 `logger.info` calls in `baseline_manager.py`). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
+The manager emits `logger.info()` messages at lifecycle boundaries: initialisation, artifact save, model type selection, evaluation entry (batch and streaming), prediction generation (batch and streaming), peak RSS after each streamed origin, the streaming summary (origin count and peak RSS), and forecast entry (11 `logger.info` calls in `baseline_manager.py`, including the saved fit-diagnostics path). Model-level logging (INFO, WARNING) also propagates from the model classes through the module logger hierarchy.
 
 ---
 
@@ -254,6 +258,7 @@ File: `tests/test_baseline_manager.py`
 
 | Test | What it verifies |
 |---|---|
+| `test_every_matryoshka_fit_saves_its_own_diagnostics_file` (calibration, forecasting), `test_a_diagnostics_file_is_never_overwritten`, `test_a_matryoshka_without_knobs_after_fit_fails_loud`, `test_other_models_write_no_diagnostics_file` | The fit diagnostics file (#197): one file per fit named by run type, every target, NaN as null, never overwritten, loud when there are no knobs, none for other models. |
 | `test_manager_evaluate_uses_zero_model` | `_evaluate_model_artifact` with `ZeroModel` returns a list of 2 DataFrames that are identical to what `ZeroModel` produces directly for `sequence_number=0` and `sequence_number=1`. |
 | `test_manager_evaluate_uses_locf_model` | Same structure for `LocfModel`; confirms `config["algorithm"]` dispatch is respected. |
 | `test_manager_forecast_uses_baseline_model` | `_forecast_model_artifact` with `LocfModel` returns a DataFrame equal to direct `LocfModel.predict(sequence_number=0)`. |

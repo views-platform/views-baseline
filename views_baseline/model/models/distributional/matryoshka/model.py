@@ -103,12 +103,18 @@ def _dense_panel(time: np.ndarray, unit: np.ndarray, values: dict, last_month: i
 
 
 def _log_fit(target: str, k: dict) -> None:
-    """INFO the knobs; WARN when the search did not converge or probabilities hit the floor
-    (ADR-008: the diagnostics must not stay on the model only)."""
+    """INFO the knobs, and those of each stability refit (#197); WARN when the search did not
+    converge or probabilities hit the floor (ADR-008: the diagnostics must not stay on the
+    model only)."""
     logger.info("%s %s: dolls %s; weight %s, memory %s months, length scale %.3g cells; "
                 "score %.6g (start %.6g), %d steps, %.0f s.", MODEL_NAME, target, k["dolls"],
                 np.round(k["weight"], 4).tolist(), np.round(k["memory"], 1).tolist(),
                 k["length_scale"], k["score"], k["start_score"], k["steps"], k["seconds"])
+    for r in k.get("leave_one_cutoff_out", []):
+        logger.info("%s %s: without cutoff %d: weight %s, memory %s months, length scale %.3g "
+                    "cells; score %.6g, %d steps.", MODEL_NAME, target, r["left_out"],
+                    np.round(r["weight"], 4).tolist(), np.round(r["memory"], 1).tolist(),
+                    r["length_scale"], r["score"], r["steps"])
     searches = [("the knob search", k)] + [
         (f"the stability refit without cutoff {r['left_out']}", r)
         for r in k.get("leave_one_cutoff_out", [])]

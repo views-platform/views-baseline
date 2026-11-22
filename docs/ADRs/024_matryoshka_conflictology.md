@@ -383,10 +383,15 @@ Why this score, and not CRPS or the Brier score (lessons from the hydranet evalu
 - **Classes keep it finite and robust.** Scoring exact counts would give an infinitely bad score whenever
   the model had never seen that exact count. Classes avoid that, and one misplaced record, like the 113,000
   Tigray deaths in a single cell, costs one bad class instead of dominating the score (it made up 38% of
-  every model's CRPS in Phase-1). If a class never occurred anywhere in the history of a violence type, it
-  is merged with its neighbour for that type, so no class can have probability zero for every cell. (In
-  the training data every class occurs for every violence type, so no merge has been needed. The rarest
-  is more than 1,000 fatalities for non-state violence, with 10 cell-months.)
+  every model's CRPS in Phase-1). No class is merged *(amended 2026-11-22, #197; this text first said a
+  class that never occurred would be merged with its neighbour, which the code never did)*. A merge
+  would change nothing. The score uses only the probability of the class that happened, and the
+  outcomes come from the same history, so a class that never occurred never enters the score. The case
+  that can occur is a class that happens in a backtest window but had zero share in every doll before
+  its cutoff. Its probability is 0, so it scores as log(10⁻¹²) (`PROB_FLOOR`), and the number of such
+  probabilities is reported per fit (`floored`, with a WARNING). (In the training data every class occurs
+  for every violence type. The rarest is more than 1,000 fatalities for non-state violence, with 10
+  cell-months.)
 
 **The fitting score is never used to judge the model.** The hydranet report's rule (§8, row 16): *no
 quantity in the training objective may serve as a promotion criterion*. The log score is reported, but the
