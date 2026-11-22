@@ -285,8 +285,8 @@ class Sampler:
         """Raise (as `doll_cdf`) unless every cell has a doll to draw at every months ahead h.
 
         A cell's doll mix depends only on h and on which of its dolls are drawable, so one cell
-        per pattern of drawable dolls checks them all: at most 2^3 patterns, since a cell's own
-        doll is always drawable. Predict calls this before drawing anything.
+        per pattern of drawable dolls checks them all: at most 2^4 patterns (2^3 with the cell
+        doll on, which is always drawable). Predict calls this before drawing anything.
         """
         _, one_per_pattern = np.unique(self.drawable.T, axis=0, return_index=True)
         self.doll_cdf(np.sort(one_per_pattern), h)

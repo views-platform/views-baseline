@@ -476,7 +476,9 @@ them, and they would need a reference weight of their own.
 - **The cell joins the one doll.** It follows the rule above that an off doll's cells move outward:
   - near-only: the cell and its neighbours within radius 5; the cell has distance 0, kernel weight 1;
   - country-only: the whole country, the cell included. A cell without a country (76 cells, mostly
-    small islands) draws from itself, as `PooledConflictology` does for a cell without an area;
+    small islands) draws from itself, as `PooledConflictology` does for a cell without an area.
+    Matryoshka reads every code ≤ 0 as "no country" (`in_a_country`), `PooledConflictology` only -1
+    (`NO_AREA`); the real `c_id` uses -1, so the two agree on it;
   - map-only: every cell.
 
   This matches the single levels above, which all include the cell. A near-only model without the

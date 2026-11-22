@@ -18,6 +18,9 @@ a_b = exp(−d_b/ℓ) and X_b the band's class counts:
 
   q_near(i, class) = Σ_b a_b · (time-weighted X_b)(i, class) / Σ_b a_b · n_b(i)
 
+Without the cell doll (near-only, #193) the cell is a neighbour at distance 0: its own counts are
+added to the numerator with weight 1, and 1 to the denominator.
+
 The slope (for the knob search) is taken with respect to log weight[1..D-1] and
 log memory[0..D-1], D = len(DOLLS).
 With A_k = weight[k] · exp(−h / memory[k]) for a non-empty shell, p = Σ A_k q_k / Σ A_k, and
@@ -115,7 +118,8 @@ def doll_shares(dc: DollCounts, W: np.ndarray, doll: int,
         a, _ = _kernel(length)
         z = a @ dc.band_sizes + cell_in_doll                 # (N,); the cell: distance 0, weight 1
     for k in range(1, N_CLASSES):
-        own = _weigh(dc.own[k], W)
+        # The cell's own counts; the neighbourhood needs them only when it holds the cell.
+        own = _weigh(dc.own[k], W) if doll != NEAR or cell_in_doll else None
         if doll == CELL:
             q[..., k] = own
         elif doll == NEAR:

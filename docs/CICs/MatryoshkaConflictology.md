@@ -37,12 +37,13 @@ empty shell, and its cells move outward to the next doll that is on:
 
 **Or exactly one doll** (#193): `["near"]`, `["country"]` or `["map"]`. The cell then joins that doll:
 near-only is the cell (distance 0, kernel weight 1) and its neighbours within radius 5; country-only the
-whole country, and a cell without a country draws from itself; map-only every cell. The weight is 1 and
+whole country, and a cell without a country (code ≤ 0) draws from itself; map-only every cell. The weight is 1 and
 not fitted; the memory is, and `ℓ` for near-only. These are the single levels with fitted memory
 (ADR-024, amendment 2026-11-22).
 
 An off doll's knobs are left out of the search (not pinned), so a model with fewer dolls has fewer
-knobs: 2 per doll used, minus the cell's weight, plus `ℓ` if `near` is used. This is how the paper's
+knobs: 2 per doll used, minus the cell's weight, plus `ℓ` if `near` is used. A single doll without the
+cell fits no weight: 1 knob, or 2 for near-only. This is how the paper's
 "does adding a level help?" comparisons are fitted with the same code and backtest. The data itself runs up to each forecast
 origin: origin `k` draws from history ending at `c = train_end + k`.
 
