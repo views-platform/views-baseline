@@ -170,7 +170,7 @@ other load:
 | Knobs set by hand that are out of range: not 4 weights and 4 memories, a weight negative or infinite, a memory ≤ 0 or NaN, a length scale ≤ 0, NaN or infinite (an infinite memory is allowed: no fading) | `ValueError("knobs out of range…")` when predict builds its sampler | The fit cannot produce these. A length scale so small that a cell's neighbour weights all round to 0 is not an error: that cell's neighbourhood counts as empty and is never picked (the fit's smallest length scale, 0.25, never does this). |
 | Hand-set knobs under which no doll can be drawn for some cell and month ahead (all weights fade to 0, or their sum overflows) | `ValueError("no doll can be drawn…")` naming the first such cell's priogrid id, the months ahead and the knobs, before predict draws anything (`Sampler.check_drawable`, one cell per pattern of drawable dolls) | Used to fall through to the map doll silently. |
 | An infinite country code | `ValueError` (with the non-integer check) | |
-| The search, or a stability refit, stops without converging, or its backtest probabilities hit the floor | **Not raised.** A WARNING per target and per refit; `knobs[t]["converged"]`, `message` and `floored` (and the same in each `leave_one_cutoff_out` entry) keep the details | The knobs and scores of every fit are logged at INFO. |
+| The search, or a stability refit, stops without converging, or its backtest probabilities hit the floor | **Not raised.** A WARNING per target and per refit; `knobs[t]["converged"]`, `message` and `floored` (and the same in each `leave_one_cutoff_out` entry) keep the details | The knobs and scores of every fit and every stability refit are logged at INFO. |
 
 ---
 
@@ -188,6 +188,12 @@ other load:
 - **Depends on:** `frames.input` (`to_feature_frame`, `panel`, `to_level`), `frames.output`
   (`to_prediction_frames`), `grid`, `spatial`, and scipy (sparse matrices, `minimize`).
 - **Instantiated by:** `BaselineModelCatalog._get_matryoshka()`.
+- **Fit diagnostics file (#197):** after every fit, `BaselineForecastingModelManager` writes
+  `self.knobs` as JSON to `data/generated/fit_diagnostics_<run_type>_model_<timestamp>.json`, the
+  only folder a pod run keeps. Every stage refits, so a run that trains and evaluates writes two.
+  NaN is written as `null` and means "not in use" (an off doll's memory, `length_scale` without
+  `near`). Nothing is rounded. A fit that leaves `knobs` empty raises; an existing file is never
+  overwritten.
 - **Genome:** `["n_samples", "seed", "country_column", "backtest_cutoffs", "backtest_horizon",
   "stability_refits"]`.
 - **Explained** in `notebooks/matryoshka_conflictology.ipynb` (synthetic part runs in seconds; real-data
@@ -255,7 +261,8 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
 | `test_near_last_is_each_cells_farthest_present_neighbour`, `test_predict_rejects_a_negative_value_in_its_history`, `test_start_score_is_the_score_at_the_starting_values` | The overflow cap's per-cell limit, predict's own negative check, and the reported starting score. |
 | `test_geometry_wraps_columns_at_the_date_line`, `test_geometry_rejects_unsorted_cells`, `test_fails_loud_on_duplicate_cell_months`, `test_fails_loud_on_non_consecutive_months`, `test_fails_loud_on_a_non_integer_country_code`, `test_fails_loud_when_the_data_ends_before_train_end`, `test_nan_in_the_predict_history_is_named`, `test_fit_names_nan_before_classifying`, `test_predict_fails_loud_on_same_count_but_different_cells` | Geometry edges and every fail-loud check, each by its own message. |
 | `test_settings_are_type_checked_at_construction`, `test_targets_must_not_be_empty`, `test_predict_rejects_an_empty_forecast`, `test_fails_loud_on_a_target_that_is_not_a_count`, `test_classify_rejects_values_that_are_not_counts`, `test_predict_names_the_cells_that_were_not_fitted` | The checks added after code review #147. |
-| `test_fit_logs_the_knobs_and_warns_when_the_search_stops_early`, `test_fit_warns_when_probabilities_hit_the_floor` | The fit's INFO line, and its warnings, for the search and for each stability refit. |
+| `test_fit_logs_the_knobs_and_warns_when_the_search_stops_early`, `test_fit_warns_when_probabilities_hit_the_floor`, `test_fit_logs_each_refits_knobs_at_info` | The fit's INFO line, and its warnings, for the search and for each stability refit. |
+| `test_a_real_fit_with_refits_is_saved_as_strict_json_with_null_for_off_dolls`; in `test_baseline_manager.py`: `test_every_matryoshka_fit_saves_its_own_diagnostics_file`, `test_a_diagnostics_file_is_never_overwritten`, `test_a_matryoshka_without_knobs_after_fit_fails_loud`, `test_other_models_write_no_diagnostics_file` | The fit diagnostics file (#197). |
 | `test_each_target_draws_with_its_own_knobs` | With values that encode their cell, a cell-only target draws only from its cell and a neighbourhood target mostly from elsewhere: each target uses its own knobs. |
 | `test_sampler_rejects_knobs_out_of_range` (each doll's weight and memory, the counts, the length scale), `test_sampler_accepts_an_infinite_memory_and_a_zero_cell_weight`, `test_draw_fails_loud_when_no_doll_can_be_drawn`, `test_the_no_doll_message_names_the_first_bad_cell_and_months_ahead`, `test_check_drawable_covers_every_pattern_and_every_months_ahead` (two grids), `test_the_two_grids_have_the_shell_cases_the_coverage_test_needs`, `test_predict_checks_the_knobs_for_every_cell_before_drawing`, `test_a_neighbourhood_whose_weights_all_underflow_is_never_drawn`, `test_fails_loud_on_an_infinite_country_code`, `test_a_numpy_bool_is_accepted_for_stability_refits`, `test_row_search_answers_a_chunk_with_a_single_lookup` | The checks added after the reviews of the #147 fixes. |
 | `test_no_committed_graphics.py`: `test_every_tracked_file_follows_the_policy`, `test_the_notebooks_folder_follows_the_policy`, `test_the_scan_finds_each_case_in_a_made_up_repository`, `test_the_made_up_repository_covers_every_scanned_kind`, and the rule tests (`test_the_file_check_knows_each_extension`, `test_the_lists_hold_at_least_the_common_forms`, `test_markdown_embedding_is_caught`, `test_code_that_embeds_an_image_is_caught`, `test_attachments_are_caught_in_any_cell`, `test_names_and_code_are_left_alone`) | No committed graphics (#144), over every file git tracks (the list checked complete): no graphic files, on disk or not; no notebook outputs, execution counts or attachments; no embedded image (markdown image, RST image or figure directive, embedding HTML element, CSS url reference, base64 image URI) in notebook cells or metadata, or in markdown, RST and HTML files. One function holds the policy and is tested on a made-up repository with one example of each case. The scan is strict, so docs name these forms in words. |
@@ -277,5 +284,6 @@ All in `tests/test_matryoshka.py`. The fixture has three cells without a country
   `dolls` all four) until views-models ships a config for this model (#127 stage 4).
 - `dolls` (#153): with all four dolls the output is byte-identical to 1.3.0 (`GOLDEN_MATRYOSHKA`).
 - One-doll sets (#193): every set with the cell is unchanged (`GOLDEN_MATRYOSHKA` passes).
+- Fit diagnostics file (#197): additive; no forecast changes (`GOLDEN_MATRYOSHKA` passes).
 - Known loose knobs (#140, accepted): the one-sided map memory sits at the 600-month ceiling; the
   non-state country weight and memory trade off against each other.

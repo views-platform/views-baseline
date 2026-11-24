@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import math
 import pickle
 import resource
 import sys
@@ -17,11 +19,23 @@ from views_pipeline_core.modules.dataloaders.frame_cache import load_frame_cache
 
 from views_baseline.infrastructure.reproducibility_gate import ReproducibilityGate
 from views_baseline.model.catalog import BaselineModelCatalog
+from views_baseline.model.models.distributional.matryoshka.model import MatryoshkaConflictology
 
 if TYPE_CHECKING:
     from views_frames import PredictionFrame
 
 logger = logging.getLogger(__name__)
+
+
+def _nan_to_null(value):
+    """``value`` with every NaN float replaced by None, which JSON writes as null."""
+    if isinstance(value, dict):
+        return {k: _nan_to_null(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_nan_to_null(v) for v in value]
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
 
 
 def _peak_rss_gib() -> float:
@@ -104,7 +118,36 @@ class BaselineForecastingModelManager(ForecastingModelManager):
         logger.info(f"Model type is {self.config['algorithm']}")
         df_source = self._load_source()
         model.fit(df_source)
+        self._write_fit_diagnostics(model)
         return model, df_source
+
+    def _write_fit_diagnostics(self, model) -> None:
+        """Save a `MatryoshkaConflictology`'s fit results to ``data/generated`` (#197).
+
+        Every fit writes its own file, ``fit_diagnostics_<run_type>_model_<timestamp>.json``:
+        the model artifact's name pattern, stamped at fit time. Every stage refits, so a run
+        that trains and evaluates leaves two. ``data/generated`` is the only folder a pod run
+        keeps. Other models fit no knobs and write nothing.
+
+        The file is ``model.knobs`` as JSON, unrounded: per target, the fit's knobs, score,
+        convergence flag and message, steps and seconds, and with ``stability_refits`` a
+        ``leave_one_cutoff_out`` list of the same per refit plus ``left_out`` (the cutoff
+        month). ``null`` means "not in use", never "failed to fit": in ``memory`` for a doll
+        that is off, and as ``length_scale`` when the near doll is off.
+        """
+        if not isinstance(model, MatryoshkaConflictology):
+            return
+        if model.knobs is None:
+            raise RuntimeError(f"{model.__class__.__name__} has no knobs after fit, so there "
+                               f"are no fit diagnostics to save.")
+        name = "fit_diagnostics_" + generate_model_file_name(
+            self.config["run_type"], file_extension=".json")
+        path = self._model_path.data_generated / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(_nan_to_null(model.knobs), indent=2, allow_nan=False)  # before open:
+        with open(path, "x") as f:   # no half-written file; "x": never overwrite another fit's
+            f.write(text)
+        logger.info(f"Saved fit diagnostics: {path}")
 
     def _iter_predictions(self, model, df, eval_type: str):
         """Yield ``(sequence_number, Dict[str, PredictionFrame])`` one rolling origin at a time.
